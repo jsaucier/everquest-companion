@@ -29,6 +29,7 @@ import { overlayMouseForward, windowsMayShow } from './replayGate'
 import { allowedExternalUrl, isInternalPageUrl } from './security'
 import { captureMainWindowErrors, forwardConsoleMessages } from './windowErrors'
 import { resolvedGraphics } from './graphics'
+import { resolveAppIconPath } from './appIcon'
 import { getOverlayConfig, getWindowBounds, setOverlayConfig, setWindowBounds } from './store'
 // The main window's text size (JOS-123). Its own module because store.ts is at the 400-code-line
 // ceiling — see the banner there.
@@ -258,6 +259,7 @@ export function applyMainWindowScale(scale: number): void {
 
 export function createMainWindow(): void {
   const bounds = getWindowBounds()
+  const appIcon = resolveAppIconPath()
   mainWindow = new BrowserWindow({
     ...(bounds ?? { width: 1280, height: 860 }),
     minWidth: 900,
@@ -270,6 +272,7 @@ export function createMainWindow(): void {
     frame: false,
     title: 'EQ Legends Companion',
     backgroundColor: '#0f1115',
+    icon: appIcon,
     webPreferences: {
       ...WEB_PREFERENCES(join(__dirname, '../preload/index.js')),
       // THE TEXT SIZE, APPLIED BEFORE THE FIRST PAINT (JOS-123). Not a second opinion about the
@@ -501,6 +504,7 @@ export function createOverlayWindow(kind: OverlayKind): void {
   // machine whose compositor turns a transparent frameless window into a black box, an untouched
   // 'auto' arrives here as `true` without the user having found anything.
   const opaque = resolvedGraphics().opaqueOverlays.on
+  const appIcon = resolveAppIconPath()
   if (kind === 'toast') opaqueToastWindow = opaque
   const w = new BrowserWindow({
     ...overlayPlacement(kind),
@@ -538,6 +542,7 @@ export function createOverlayWindow(kind: OverlayKind): void {
     backgroundColor: overlayBackgroundColor(opaque),
     hasShadow: false,
     title: OVERLAY_TITLE[kind],
+    icon: appIcon,
     // Same hardened posture as the main window — one definition, every window (see
     // WEB_PREFERENCES). The overlay's preload is the LEANER bridge (preload/overlay.ts), but
     // its window-level privileges must not be a second, weaker opinion.
@@ -738,6 +743,7 @@ export function createCursorRingWindow(bounds: ScreenRect): void {
     setCursorRingBounds(bounds)
     return
   }
+  const appIcon = resolveAppIconPath()
   const w = new BrowserWindow({
     ...bounds,
     show: false,
@@ -752,6 +758,7 @@ export function createCursorRingWindow(bounds: ScreenRect): void {
     focusable: false,
     skipTaskbar: true,
     type: 'toolbar',
+    icon: appIcon,
     // NEVER OPAQUE, whatever the JOS-40 compatibility switch says: this window is sized to the
     // WHOLE EverQuest window and holds one small circle. Opaque, it would not be a cursor aid,
     // it would be a lid over the game. A user on a driver that cannot composite transparency

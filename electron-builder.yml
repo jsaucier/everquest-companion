@@ -18,12 +18,6 @@ files:
   # thing keeping ~6 MB of them out of every installer. They are kept as a private CI artifact
   # instead; `tests/symbolicate.test.mts` pins this line so it cannot be tidied away.
   - '!**/*.{o,obj,map,ts,tsx}'
-  # onnxruntime-node ships PREBUILT binaries for every platform it supports in one npm
-  # package — 184 MB on disk, of which this Windows-x64-only app can use 33 MB. Without these
-  # excludes the installer carries macOS dylibs and Linux .so files it can never load. Keep
-  # the list in sync with `win.target.arch` above; a future arm64 target needs its line back.
-  - '!node_modules/onnxruntime-node/bin/napi-v3/{darwin,linux}/**'
-  - '!node_modules/onnxruntime-node/bin/napi-v3/win32/arm64/**'
   # DirectML.dll (18.5 MB) is NOT excludable, and that was MEASURED, not assumed. This app
   # never asks for the DirectML execution provider — Kokoro runs on CPU on purpose, because it
   # is a background alert reader on a machine that is also running EverQuest — so dropping the
@@ -31,6 +25,23 @@ files:
   # load at all and `speech:say` answers 'engine-not-installed' forever (verified: dist:dir
   # with the exclusion, then a real synthesis in the packed app — zero wavs produced). It has
   # to ship. Do not re-litigate this without repeating that experiment.
+
+linux:
+  target:
+    - AppImage
+  icon: build/icon.png
+  category: Utility
+  artifactName: everquest-companion-${version}.${ext}
+  files:
+    - '!node_modules/onnxruntime-node/bin/napi-v3/darwin/**'
+    - '!node_modules/onnxruntime-node/bin/napi-v3/win32/**'
+
+extraResources:
+  - from: build
+    to: build
+    filter:
+      - icon.png
+      - icon.ico
 
 asarUnpack:
   - resources/**
