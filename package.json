@@ -51,10 +51,10 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "dist": "npm run build && electron-builder --win",
-    "dist:dir": "npm run build && electron-builder --win --dir",
-    "dist:linux": "npm run build && electron-builder --linux",
-    "dist:linux:dir": "npm run build && electron-builder --linux --dir"
+    "dist": "npm run build && node --import tsx scripts/dist-stamped.mjs --win",
+    "dist:dir": "npm run build && node --import tsx scripts/dist-stamped.mjs --win --dir",
+    "dist:linux": "npm run build && node --import tsx scripts/dist-stamped.mjs --linux",
+    "dist:linux:dir": "npm run build && node --import tsx scripts/dist-stamped.mjs --linux --dir"
   },
   "dependencies": {
     "@emotion/react": "^11.13.3",

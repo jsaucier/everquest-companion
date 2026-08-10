@@ -1507,6 +1507,16 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   it, and can't drift from the tag — the old "bump after tagging" rule is
   dead). Release process: `git tag vX.Y.Z && git push origin vX.Y.Z`. Semver,
   increment per release; first stable is v0.1.0.
+- **LOCAL `dist` BUILDS STAMP FROM THE RELEASE NOTES, NOT A TAG.** A checkout has
+  no tag, so `npm run dist*` goes through `scripts/dist-stamped.mjs`, which reads
+  `latestReleaseVersion()` (src/shared/releaseNotes.ts), writes it into
+  package.json for the duration of the build, and restores the file byte-for-byte
+  in a `finally` (and on Ctrl-C). Calling electron-builder DIRECTLY is the bug it
+  exists to prevent: `0.1.0` is not cosmetic there, it names the output directory
+  (`directories.output: release/${version}`), the artifact, and the version inside
+  latest*.yml — an update feed advertising 0.1.0 never offers anybody an upgrade.
+  The notes are a legitimate source because the tag job already refuses a tag with
+  no entry, so the newest entry IS every published build's version.
 - **A TAG MAY NOT SHIP WITHOUT RELEASE NOTES** (JOS-73). `src/shared/releaseNotes.ts`
   is committed source (the bundler inlines it, like the spell DB), and the app's
   Preferences → What's new panel reads it — so a missing entry is not a crash, it

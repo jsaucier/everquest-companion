@@ -18,6 +18,15 @@ files:
   # thing keeping ~6 MB of them out of every installer. They are kept as a private CI artifact
   # instead; `tests/symbolicate.test.mts` pins this line so it cannot be tidied away.
   - '!**/*.{o,obj,map,ts,tsx}'
+  # onnxruntime-node ships PREBUILT binaries for every platform it supports in one npm
+  # package — 184 MB on disk, of which this Windows-x64-only app can use 33 MB. Without these
+  # excludes the installer carries macOS dylibs and Linux .so files it can never load. Keep
+  # the list in sync with `win.target.arch` above; a future arm64 target needs its line back.
+  #
+  # THESE ARE THE WINDOWS TARGET'S EXCLUDES. The linux target needs the opposite set, and
+  # cannot express it by adding `files` to the `linux` block alone — see the comment there.
+  - '!node_modules/onnxruntime-node/bin/napi-v3/{darwin,linux}/**'
+  - '!node_modules/onnxruntime-node/bin/napi-v3/win32/arm64/**'
   # DirectML.dll (18.5 MB) is NOT excludable, and that was MEASURED, not assumed. This app
   # never asks for the DirectML execution provider — Kokoro runs on CPU on purpose, because it
   # is a background alert reader on a machine that is also running EverQuest — so dropping the
@@ -32,9 +41,30 @@ linux:
   icon: build/icon.png
   category: Utility
   artifactName: everquest-companion-${version}.${ext}
+  # A PLATFORM `files` REPLACES THE TOP-LEVEL `files` ENTIRELY — IT DOES NOT MERGE. That is why
+  # this block repeats every pattern above instead of listing only what differs, and the
+  # duplication is deliberate. MEASURED, from the build that got it wrong: with just the two
+  # onnx lines here, electron-builder's resolved `firstOrDefaultFilePatterns` came out as `**/*`
+  # plus negations (see a build's `builder-debug.yml`) — the `out/**` + `package.json` whitelist
+  # and the *.map/*.ts exclusion were GONE, so the AppImage shipped src/, tests/, docs/, site/,
+  # infra/, 701 sourcemaps and the full TypeScript source. Worse, `**/*` self-consumes: only
+  # `release/${version}` is auto-excluded, so the PREVIOUS build's release/0.1.0 directory —
+  # AppImage and all — was packed inside app.asar, taking it from 164 MB to 479 MB, and each
+  # build would have swallowed every earlier one.
+  #
+  # `tests/electronBuilderFiles.test.mts` asserts these two lists stay identical except for the
+  # onnx lines, because a drift here is silent: it produces a working build that leaks source.
+  #
+  # THE ONLY INTENDED DIFFERENCE is which platform's onnxruntime binaries survive. The top-level
+  # list keeps win32/x64 (the shipped product); this one keeps linux/x64, without which voice
+  # alerts have no binding to load on Linux at all.
   files:
-    - '!node_modules/onnxruntime-node/bin/napi-v3/darwin/**'
-    - '!node_modules/onnxruntime-node/bin/napi-v3/win32/**'
+    - out/**
+    - package.json
+    - '!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}'
+    - '!**/*.{o,obj,map,ts,tsx}'
+    - '!node_modules/onnxruntime-node/bin/napi-v3/{darwin,win32}/**'
+    - '!node_modules/onnxruntime-node/bin/napi-v3/linux/arm64/**'
 
 extraResources:
   - from: build
