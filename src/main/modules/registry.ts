@@ -87,6 +87,16 @@ export class ModuleRegistry {
   }
 
   /**
+   * Every registered module, in delivery order. Read-only, and it exists for ONE caller: the fold
+   * checkpoint (JOS-208) has to ask each module whether it can serialize itself, and asking means
+   * having the list. A getter rather than a `checkpointables()` method, because the registry has no
+   * business knowing what a checkpoint is — it owns the push loop and nothing else.
+   */
+  list(): readonly EqModule[] {
+    return this.modules
+  }
+
+  /**
    * The registered module with this id, if any. Deliberately NOT generic: a type parameter
    * appearing once in a signature is just a cast wearing a `<>`, and it let a caller name any
    * type it liked with no evidence. A module's `snapshot().state` is `unknown` by design —

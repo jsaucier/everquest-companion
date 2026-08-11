@@ -24,6 +24,7 @@
 
 import type { BuffTrustPrefs } from '../../shared/buffTrust'
 import { casterKey, casterTrusted, DEFAULT_BUFF_TRUST_PREFS, SELF_CASTER } from '../../shared/buffTrust'
+import { S, type FoldSchema } from '../foldCache/schema'
 import { OWN_CAST_WINDOW_MS, QUICK_BUFF_WINDOW_MS, spellKey, type CastAnchor } from './buffsShapes'
 
 /** What admitted a landing, and by whom — the caller needs the caster to key the learner. */
@@ -161,4 +162,43 @@ export class CastAnchors {
   lastCastTs(spell: string): number | undefined {
     return this.everCast.get(spellKey(spell))
   }
+
+  // ---- the checkpoint seam (JOS-208 phase 2) --------------------------------------------------
+  //
+  // THE ANCHORS ARE WHAT ADMITS THE NEXT LANDING, so a split between a cast line and the landing
+  // it owns — a window measured in seconds and therefore a place a split lands often — must not
+  // lose them, or the landing is refused as a stranger's and the row never appears. `everCast` is
+  // the weaker, never-retracted half and travels with them.
+  //
+  // `trust` is NOT stored: the externals allowlist is a PREFERENCE the store owns and Preferences
+  // re-injects on every launch (`setTrust`). Its own doc says replacing it must never retro-admit
+  // an old landing, and a stale copy restored from last week is exactly that.
+
+  static readonly FOLD_SCHEMA: FoldSchema = S.obj({
+    byLine: S.arr(
+      S.tuple(S.str, S.obj({ display: S.str, ts: S.num, caster: S.str, rankChanged: S.bool }))
+    ),
+    everCast: S.arr(S.tuple(S.str, S.num)),
+    quickBuffTs: S.num
+  })
+
+  serializeFold(): CastAnchorsFoldState {
+    const byLine: [string, CastAnchor][] = []
+    for (const [key, a] of this.byLine) byLine.push([key, { ...a }])
+    return { byLine, everCast: [...this.everCast], quickBuffTs: this.quickBuffTs }
+  }
+
+  /** Adopt previously serialized anchors. Validation is the OWNER's — see `BuffsModule`. */
+  deserializeFold(state: CastAnchorsFoldState): void {
+    this.byLine = new Map(state.byLine)
+    this.everCast = new Map(state.everCast)
+    this.quickBuffTs = state.quickBuffTs
+  }
+}
+
+/** The anchors as plain data — the trust allowlist deliberately absent (it is a preference). */
+export interface CastAnchorsFoldState {
+  byLine: [string, CastAnchor][]
+  everCast: [string, number][]
+  quickBuffTs: number
 }

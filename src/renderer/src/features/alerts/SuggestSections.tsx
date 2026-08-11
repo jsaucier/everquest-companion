@@ -19,6 +19,8 @@ import type { PoisonSlowOffer } from '@shared/spellLines'
 import { poisonSlowAlertDefs } from '@shared/alertGroups'
 import SpellRow, {
   ROW_CHIP_SX,
+  SUGGEST_ROW_ACTIONS_SX,
+  SUGGEST_ROW_FACTS_SX,
   SUGGEST_ROW_SX,
   TemplateChip,
   type RowContext
@@ -169,8 +171,8 @@ export function PoisonSlowRow({
   const defs = poisonSlowAlertDefs()
   const created = defs.length > 0 && defs.every((d) => existingIds.has(d.id))
   return (
-    <Box sx={SUGGEST_ROW_SX}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0, flexGrow: 1 }}>
+    <Box sx={SUGGEST_ROW_SX} data-testid="suggest-row">
+      <Box sx={SUGGEST_ROW_FACTS_SX}>
         <Typography variant="body2" sx={{ fontWeight: 500, minWidth: 0 }} noWrap>
           Rogue slow landed
         </Typography>
@@ -181,7 +183,7 @@ export function PoisonSlowRow({
           {observedSlows(offer.count)} · last on {offer.lastTarget}
         </Typography>
       </Box>
-      <Stack direction="row" spacing={0.5} alignItems="center" sx={{ flexShrink: 0 }}>
+      <Box sx={SUGGEST_ROW_ACTIONS_SX}>
         <Tooltip title="Weakening Strike - the rogue utility-poison slow, 3:30">
           {/* The SAME wording the per-spell `lands` template uses, from the same constant: this
               row creates the same kind of alert, so it must not invent a second phrasing. */}
@@ -200,7 +202,7 @@ export function PoisonSlowRow({
             <CloseIcon sx={{ fontSize: 15 }} />
           </IconButton>
         </Tooltip>
-      </Stack>
+      </Box>
     </Box>
   )
 }

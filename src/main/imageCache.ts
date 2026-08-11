@@ -38,9 +38,18 @@
 //   * ATOMIC WRITES. Bytes land in `<name>.<pid>.<rand>.tmp` and are renamed into place.
 //     A half-written PNG cached forever is exactly the failure "permanent" must not create
 //     (a torn file has no expiry to save it), and rename is atomic within a directory.
-//   * NEVER CACHE A NEGATIVE. A 404/offline/timeout responds 404 to the renderer (whose
-//     existing `onError` hides the image) and writes nothing, so the next load retries.
-//     Permanence is for successes only.
+//   * NEVER CACHE A NEGATIVE *ON DISK*. A 404/offline/timeout writes nothing, so nothing
+//     permanent can be wrong. Permanence is for successes only. (A negative IS now remembered
+//     for the session, in memory — see "REMEMBERING A NO" below. That is a different promise:
+//     it expires when the process does.)
+//
+// SINCE JOS-198 THE FETCH IS THE FALLBACK, NOT THE PATH. The app now SHIPS the wiki art —
+// 751 item icons and 29 boss portraits, ~3 MB, named by this file's own `cacheFileName()` —
+// and `bundledImages.ts` is probed FIRST. A normal install therefore never fetches an image
+// at all, and everything below is what happens for the ones the bundle misses: an icon whose
+// id landed in items.json after the last `npm run fetch:images`, or a source build that never
+// ran it. Bundled BEFORE the userData cache on purpose — the shipped bytes are the ones the
+// manifest can account for, so a fresh install and an upgraded one serve the same pixels.
 //
 // SECURITY. `parseEqImgUrl` is the ONLY thing that turns a renderer string into a filesystem
 // path, and for the `url` route it is also the only thing that decides what the app is
@@ -308,6 +317,13 @@ export function cacheCandidatePaths(userData: string, req: EqImgRequest): string
   return cacheCandidateNames(req).map((n) => join(dir, n))
 }
 
+/** The same names under the SHIPPED image directory (`bundledImages.ts`), which is a second
+ *  ROOT for this one namespace rather than a second naming scheme. It lives here, next to the
+ *  function that spells the names, so `bundledImages.ts` need not import this module back. */
+export function bundledCandidatePaths(dir: string, req: EqImgRequest): string[] {
+  return cacheCandidateNames(req).map((n) => join(dir, n))
+}
+
 /**
  * Content type from the bytes themselves. The wiki redirect is named `.png` but serves
  * whatever the uploader uploaded, and an `<img>` fed the wrong type still renders — this is
@@ -371,6 +387,13 @@ export const EQIMG_SCHEME_PRIVILEGES = {
 export interface ImageCacheOptions {
   /** The channel's userData root — `app.getPath('userData')`. */
   readonly userData: string
+  /**
+   * The SHIPPED image directory (`bundledImages.ts findBundledImagesDir`), probed ahead of the
+   * userData cache and ahead of any fetch. `null`/absent means this build ships no images — a
+   * source build that never ran `npm run fetch:images` — and everything falls back to the
+   * runtime cache exactly as it did before JOS-198.
+   */
+  readonly bundledDir?: string | null
   /** Override for tests; defaults to global fetch. */
   readonly fetchImpl?: typeof fetch
   /** Override for tests; defaults to console.log. */
@@ -460,6 +483,59 @@ export function resetImageFetchWarnings(): void {
   warnedFetchHosts.clear()
 }
 
+// ---- REMEMBERING A NO (JOS-198) ----------------------------------------------------------
+//
+// The disk rule above is unchanged: a failure writes NOTHING, so no permanent artifact can be
+// wrong. What changes is that a failure is no longer forgotten the instant it is answered.
+//
+// WHY IT HAD TO. Nothing about the old code retried on a timer — but nothing stopped the
+// RENDERER from re-asking either, and it does: an `<img>` that 404s is re-created every time
+// its row scrolls back into view, every time a tooltip reopens, every time an overlay window
+// re-mounts. Each of those was a fresh 10-second fetch to a wiki that had already said no, and
+// (for the status branch) a fresh line in `<userData>/errors.log`. On a bad id that is a loop
+// with no exit inside one session.
+//
+// WHAT IS REMEMBERED, AND WHAT IS DELIBERATELY NOT. Only answers where the HOST SPOKE:
+//   * a status  (404 / 415 / 500 / anything not `ok`) — the server looked and said no; asking
+//     again in the same session cannot produce a different answer worth having, and
+//   * not-an-image bytes — a wiki error page or an empty body, which is the same statement in
+//     a different envelope.
+// A NETWORK failure (offline, DNS, TLS, our own 10 s timeout) is NEVER remembered. It is the
+// one failure whose cause is plausibly on THIS side and plausibly gone a second later — a
+// laptop that just woke up must not be locked out of every icon until it restarts. That is the
+// same seam JOS-133 drew when it made one branch a counter and the other an error.
+//
+// SESSION-SCOPED ON PURPOSE. A wiki that adds the missing file, or fixes the 500, is picked up
+// on the next launch and needs no cache invalidation, no TTL and no eviction policy. "Not
+// twice in one run" is the entire promise, and it is the whole of the reported problem.
+
+/** Why a request is being refused without touching the network. */
+export type ImageFailureKind = 'status' | 'not-an-image'
+
+/** How many refusals one session will remember. `cacheStem` is derived from validated input
+ *  (digits, or hex) so the key space is not attacker-controlled in any interesting way, but it
+ *  is not FINITE either — items.json could grow, and a bound costs nothing. Past the cap the
+ *  app simply behaves as it did before this section existed. */
+export const MAX_REMEMBERED_FAILURES = 512
+
+const rememberedFailures = new Map<string, ImageFailureKind>()
+
+/** Remember that this entry's upstream answered, and the answer was no. No-op once full. */
+export function rememberImageFailure(stem: string, kind: ImageFailureKind): void {
+  if (rememberedFailures.size >= MAX_REMEMBERED_FAILURES) return
+  rememberedFailures.set(stem, kind)
+}
+
+/** The remembered refusal for this entry, or null if it has not been refused this session. */
+export function rememberedImageFailure(stem: string): ImageFailureKind | null {
+  return rememberedFailures.get(stem) ?? null
+}
+
+/** Forget every refusal. Tests only — a real session remembers for as long as it runs. */
+export function resetImageFailures(): void {
+  rememberedFailures.clear()
+}
+
 /**
  * The one-word reason a fetch threw, for the one warn line. `AbortError` (our timeout),
  * `TypeError` (offline / DNS / TLS) — Node puts the useful detail in `cause`, which is exactly the
@@ -477,6 +553,7 @@ export function describeFetchFailure(err: unknown): string {
  */
 export function installImageCacheProtocol(protocol: ProtocolLike, opts: ImageCacheOptions): void {
   const dir = imageCacheDir(opts.userData)
+  const bundledDir = opts.bundledDir ?? null
   const doFetch = opts.fetchImpl ?? fetch
   const log = opts.log ?? ((m: string) => logInfo(m))
   const onError = opts.onError ?? ((m: string, e: unknown) => logConsoleError(m, e))
@@ -521,7 +598,10 @@ export function installImageCacheProtocol(protocol: ProtocolLike, opts: ImageCac
     }
     if (!res.ok) {
       // THE HOST ANSWERED, AND SAID NO. Still an error, deliberately (JOS-133): a status means we
-      // asked for something that is not there, which is a fact about this app's own data.
+      // asked for something that is not there, which is a fact about this app's own data. And
+      // since JOS-198 it is remembered for the session, so the renderer re-mounting that `<img>`
+      // costs neither a second request nor a second error line.
+      rememberImageFailure(cacheStem(req), 'status')
       onError(`[everquest-companion:error] image cache: ${res.status} for ${url}`, res.statusText)
       return null
     }
@@ -529,6 +609,8 @@ export function installImageCacheProtocol(protocol: ProtocolLike, opts: ImageCac
     // A wiki error page / empty body must never become a permanent cache entry.
     const mime = sniffImageMime(bytes)
     if (mime == null) {
+      // Same statement as a status, in a different envelope — so it is remembered the same way.
+      rememberImageFailure(cacheStem(req), 'not-an-image')
       onError(
         `[everquest-companion:error] image cache: ${url} returned ${bytes.length} bytes that are not an image; not caching`,
         null
@@ -557,33 +639,61 @@ export function installImageCacheProtocol(protocol: ProtocolLike, opts: ImageCac
     return bytes
   }
 
-  protocol.handle(EQIMG_SCHEME, async (request) => {
-    const req = parseEqImgUrl(request.url)
-    if (!req) return NOT_FOUND()
-
-    // 1. Disk hit — the permanent path. No network, no log line (this is the steady state).
-    //    `item` probes one name, `url` probes at most four (one per sniffable type).
-    for (const path of cacheCandidatePaths(opts.userData, req)) {
+  /**
+   * Serve the first of `paths` that holds real image bytes, or null if none does.
+   *
+   * `repair` is the difference between the two roots this is called with. The userData cache
+   * OWNS its entries and can heal: a truncated file from some earlier build is deleted so the
+   * fetch below can replace it. The BUNDLE owns nothing — its bytes came from the installer,
+   * deleting one would not restore it, and on a per-machine install the directory may not even
+   * be writable — so a bundled file that fails to sniff is stepped over and left alone.
+   */
+  async function serveFromDisk(paths: readonly string[], repair: boolean): Promise<GlobalResponse | null> {
+    for (const path of paths) {
       if (!existsSync(path)) continue
       try {
         const bytes = await readFile(path)
         const mime = sniffImageMime(bytes)
         if (mime) return imageResponse(bytes, mime)
-        // A corrupt/truncated entry from some earlier build: drop it and fall through to a
-        // fresh fetch rather than serving garbage forever.
-        await unlink(path).catch(ignoreCleanupFailure)
+        if (repair) await unlink(path).catch(ignoreCleanupFailure)
       } catch (err) {
         onError(`[everquest-companion:error] image cache: could not read ${path}`, err)
       }
     }
+    return null
+  }
 
-    // 2. Miss. Under EQ_E2E a miss ENDS here, as a blank 200 — no fetch, no console error.
-    //    Negatives are deliberately uncached (see the header), so a cold e2e userData dir means
-    //    EVERY icon is a live fetch, which is what made `no renderer console errors` a network
-    //    assertion in disguise. Same gate feedback and telemetry already obey (src/main/e2e.ts);
-    //    see E2E_BLANK_PNG for why the answer is 200-and-empty rather than 404.
+  protocol.handle(EQIMG_SCHEME, async (request) => {
+    const req = parseEqImgUrl(request.url)
+    if (!req) return NOT_FOUND()
+
+    // 1. SHIPPED bytes (JOS-198) — the path a normal install takes for every image it will ever
+    //    show. No network, ever, and no dependence on what a previous version happened to have
+    //    downloaded. Absent only in a source build that skipped `npm run fetch:images`.
+    if (bundledDir !== null) {
+      const shipped = await serveFromDisk(bundledCandidatePaths(bundledDir, req), false)
+      if (shipped) return shipped
+    }
+
+    // 2. Disk hit in the runtime cache — the permanent path for anything the bundle misses, and
+    //    the whole path for installs that predate the bundle. `item` probes one name, `url`
+    //    probes at most four (one per sniffable type).
+    const cached = await serveFromDisk(cacheCandidatePaths(opts.userData, req), true)
+    if (cached) return cached
+
+    // 3. Miss. Under EQ_E2E a miss ENDS here, as a blank 200 — no fetch, no console error.
+    //    This is now the answer for an icon the bundle does NOT ship; the ones it does ship
+    //    were already served with their real pixels at step 1, which is how
+    //    `tests/e2e/bosses-week.e2e.mts` proves the portraits are offline. Same gate feedback
+    //    and telemetry already obey (src/main/e2e.ts); see E2E_BLANK_PNG for why the answer is
+    //    200-and-empty rather than 404.
     if (E2E) return imageResponse(E2E_BLANK_PNG, 'image/png')
     const key = cacheStem(req)
+
+    // 4. Already refused this session, by a host that answered (JOS-198). Answering 404 straight
+    //    away is what stops a re-mounted `<img>` from re-asking a wiki that has already said no.
+    if (rememberedImageFailure(key)) return NOT_FOUND()
+
     let pending = inFlight.get(key)
     if (!pending) {
       pending = fetchAndStore(req).finally(() => inFlight.delete(key))

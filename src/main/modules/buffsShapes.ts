@@ -93,8 +93,43 @@ export function unwitnessedTimeoutMs(source: 'db' | 'observed' | undefined): num
   return source === 'observed' ? 15_000 : 60_000
 }
 
+/**
+ * HOW LONG A LEARNING RECORD OUTLIVES THE ROW IT BELONGED TO — 3× THE DB BASE (JOS-203, owner law).
+ *
+ * TWO KINDS OF THING AGE ON TWO DIFFERENT CLOCKS, and conflating them is the whole ticket. The
+ * DISPLAY grace ({@link unwitnessedTimeoutMs}: 15 s learned, 60 s DB) governs what is SHOWN — the
+ * owner's anti-squatting ruling, and it is untouched here. What a cull leaves behind is a LEARNING
+ * RECORD: the buffs half's open cast (`OpenCast`, which `BuffInstances.recordFade` pairs a wear-off
+ * against) and the CC half's late-join memory (`modules/buffTimers.ts LateJoin`). Those exist for
+ * exactly one purpose — to be measurable if the line that ends them does eventually print — and
+ * judging them on the display grace is judging them by the number that is already too short.
+ *
+ * THE FLOOR IS THE ONE NUMBER A BAD OBSERVATION CANNOT DRAG DOWN, which is why the window is a
+ * MULTIPLE OF IT rather than of the estimate: the estimate is what a run of break-shortened cycles
+ * pulls under the true duration, so remembering on its schedule would be circular (JOS-180 made
+ * exactly this argument for `db + 60 s`; the owner's ruling widens the same reasoning to a factor).
+ * Three of them: past three times what the game's own data states, a line that has still not
+ * arrived is not late — we lost the thread, and the record is a leak rather than a chance.
+ *
+ * BOTH HALVES CALL THIS, and that symmetry is the point. Before JOS-203 the CC half had a reaper
+ * for its memory and the buffs half had NONE AT ALL — the unwitnessed cull deleted the active row
+ * and the open record was left in an unbounded map, reachable only by the long stop that runs
+ * through the active loop. The next landing of that spell on a same-named mob then inherited the
+ * stale group: an instantly-overdue bar with an inflated count, culled again before it could be
+ * read. Same rule, two models, no merge.
+ *
+ * `unknownCapMs` is what a caller falls back to when the DB states NOTHING to multiply — each half
+ * passes the bound it already used for a duration nobody states (the CC roster's longest stated
+ * hold; the buffs long stop), because inventing a third number for the unknown case would be the
+ * one thing this consolidation is against.
+ */
+export const LEARNING_RECORD_DB_MULTIPLE = 3
+export function learningRecordCapMs(dbMs: number | null, unknownCapMs: number): number {
+  return dbMs != null && dbMs > 0 ? LEARNING_RECORD_DB_MULTIPLE * dbMs : unknownCapMs
+}
+
 /** Active-buff HYGIENE cap (Task #33, finding #6). An active past this auto-retires. */
-const HYGIENE_ABSOLUTE_MS = 90 * 60_000 // 90 minutes when no/low stats
+export const HYGIENE_ABSOLUTE_MS = 90 * 60_000 // 90 minutes when no/low stats
 export function hygieneCapMs(p75: number | null, n: number): number {
   const stat = p75 != null && n >= 2 ? 2 * p75 : 0
   return Math.max(stat, HYGIENE_ABSOLUTE_MS)

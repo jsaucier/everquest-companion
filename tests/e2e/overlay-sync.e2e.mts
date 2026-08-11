@@ -64,6 +64,9 @@ import { stepOverlayScope, stepTitleBarRoom } from './overlayScopeSteps.mjs'
 import { stepTotalOnPanel } from './overlayTotalSteps.mjs'
 // …and the pinned pane's scroll grip (JOS-138), in its own module for the same reason.
 import { stepPinnedScroll } from './overlayScrollSteps.mjs'
+// …and JOS-187's: an overlay whose monitor went away, and the rule that the store keeps the
+// rectangle the user chose while the screen gets the one that fits.
+import { stepOverlayDisplay } from './overlayDisplaySteps.mjs'
 
 /** The overlay open-state this spec's second launch runs against (`overlays.fight` in the store). */
 interface OverlayBridge {
@@ -628,7 +631,9 @@ async function main(): Promise<void> {
     await setLocked(ov, false)
     await stepTitleBarRoom(ov)
     await stepTotalOnPanel(ov, await longestFightName(page))
-    // LAST, because it closes and reopens the very window every step above holds a page for.
+    // Everything below closes and reopens the very window every step above holds `ov` for, so `ov`
+    // is dead from here on — both of these find their own overlay page.
+    await stepOverlayDisplay(app, page)
     await stepOpaqueOverlays(app, page)
 
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))

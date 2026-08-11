@@ -42,6 +42,7 @@ import type {
   OverlayVerdict,
   SpellEntry
 } from '../../shared/types'
+import { S, type FoldSchema } from '../foldCache/schema'
 import { castOnOtherSuffix } from './spellDb'
 
 /** Overlay schema version — bump to invalidate a stale on-disk snapshot. */
@@ -127,6 +128,22 @@ export class MessageOverlayMiner {
   private records = new Map<string, MessageRecord>()
   /** The most-recent cast(s) still inside the association window (newest last). */
   private recentCasts: RecentCast[] = []
+  /**
+   * THE NEWEST LOG INSTANT THIS MINER HAS OBSERVED, and the overlay's `updatedAt` (JOS-208
+   * phase 2). It used to be `new Date().toISOString()` — a WALL-CLOCK read inside a published
+   * fold snapshot, which the differential harness caught the moment the buffs module joined the
+   * matrix: two arms folding the identical bytes built their overlay milliseconds apart and
+   * disagreed on every split point of every fixture, for a field that describes nothing about the
+   * two folds being compared.
+   *
+   * It is now what it should always have been: the LOG's own clock. "Current as of this instant
+   * in the log" is a statement about the observations the overlay is made of; "current as of when
+   * this object happened to be built" is a statement about the reader. Zero before the first
+   * observation — a merged baseline does NOT move it, because a merge carries counts and no
+   * instants, and inventing one from the file it came from would be a wall clock with a longer
+   * paper trail.
+   */
+  private lastObservedTs = 0
   /** DB spells keyed by canonical name (for contradiction detection); optional. */
   private readonly spellsByKey?: Map<string, SpellEntry>
 
@@ -137,6 +154,7 @@ export class MessageOverlayMiner {
   /** Record that the player began casting a spell (the association anchor). */
   observeCast(spellDisplay: string, ts: number): void {
     this.expire(ts)
+    if (ts > this.lastObservedTs) this.lastObservedTs = ts
     this.recentCasts.push({ spellKey: canonKey(spellDisplay), spellDisplay, ts })
   }
 
@@ -151,6 +169,7 @@ export class MessageOverlayMiner {
    */
   observeMessage(text: string, ts: number, role: 'landing' | 'wearsOff'): void {
     this.expire(ts)
+    if (ts > this.lastObservedTs) this.lastObservedTs = ts
     if (this.recentCasts.length === 0) return
     // Unambiguous anchor: all recent casts must be the SAME spell (a recast counts as one).
     const distinct = new Set(this.recentCasts.map((c) => c.spellKey))
@@ -239,7 +258,8 @@ export class MessageOverlayMiner {
     messages.sort((a, b) => rank[a.verdict] - rank[b.verdict] || b.total - a.total || a.text.localeCompare(b.text))
     return {
       version: OVERLAY_VERSION,
-      updatedAt: new Date().toISOString(),
+      // THE LOG'S CLOCK, NOT THE MACHINE'S — see `lastObservedTs` for the divergence that moved it.
+      updatedAt: new Date(this.lastObservedTs).toISOString(),
       messages,
       stats
     }
@@ -272,6 +292,61 @@ export class MessageOverlayMiner {
     return out
   }
 
+  // ---- the checkpoint seam (JOS-208 phase 2) --------------------------------------------------
+  //
+  // THE SECOND NAMED DEBT, PAID. attach.ts listed this miner as outside the container, and it is
+  // fold state twice over: the `buffs` snapshot PUBLISHES what it builds (`BuffsSnap.overlay`),
+  // and the registry it accretes is what a cold replay of the same bytes rebuilds line by line.
+  //
+  // WHAT TRAVELS IS THE WHOLE ACCUMULATOR, seeded counts included, and that needs saying because
+  // the seed is store-derived. `merge()` folds the committed baseline and the user's persisted
+  // overlay INTO the same per-message counts the log's own observations land in, and the two are
+  // not separable afterwards — by construction, since a merge is an addition. The one-truth rule
+  // is not broken by that: the composition root seeds a FRESH miner from the same two sources on
+  // every launch, and a restore then replaces the whole object, so the restored counts are
+  // (baseline + user overlay + everything the log taught up to B) — exactly what the cold arm
+  // holds at B. What must never happen is a restore that lands ON TOP of a seeded miner, which
+  // would double the baseline; `deserializeFold` REPLACES rather than merges, which is the
+  // difference.
+  //
+  // `spellsByKey` is not stored: it is the effective DB, rebuilt before any module exists.
+
+  static readonly FOLD_SCHEMA: FoldSchema = S.obj({
+    records: S.arr(
+      S.tuple(
+        S.str,
+        S.obj({
+          text: S.str,
+          role: S.enum('landing', 'wearsOff'),
+          bySpell: S.arr(S.tuple(S.str, S.obj({ display: S.str, count: S.num })))
+        })
+      )
+    ),
+    recentCasts: S.arr(S.obj({ spellKey: S.str, spellDisplay: S.str, ts: S.num })),
+    lastObservedTs: S.num
+  })
+
+  serializeFold(): OverlayMinerFoldState {
+    const records: OverlayMinerFoldState['records'] = []
+    for (const [text, rec] of this.records) {
+      records.push([text, { text: rec.text, role: rec.role, bySpell: [...rec.bySpell].map(([k, v]) => [k, { ...v }]) }])
+    }
+    return {
+      records,
+      recentCasts: this.recentCasts.map((c) => ({ ...c })),
+      lastObservedTs: this.lastObservedTs
+    }
+  }
+
+  /** REPLACE the accumulator (never merge — see the seam's note). Validated by `BuffsModule`. */
+  deserializeFold(state: OverlayMinerFoldState): void {
+    this.records = new Map(
+      state.records.map(([text, rec]) => [text, { text: rec.text, role: rec.role, bySpell: new Map(rec.bySpell) }])
+    )
+    this.recentCasts = state.recentCasts
+    this.lastObservedTs = state.lastObservedTs
+  }
+
   /** True when a line ends with ANY DB cast-on-other suffix (⇒ it names a mob, not self). */
   private looksCastOnOther(text: string): boolean {
     if (!this.spellsByKey) return false
@@ -282,4 +357,11 @@ export class MessageOverlayMiner {
     }
     return false
   }
+}
+
+/** The miner's accumulator as plain data — the effective DB deliberately absent. */
+export interface OverlayMinerFoldState {
+  records: [string, { text: string; role: 'landing' | 'wearsOff'; bySpell: [string, { display: string; count: number }][] }][]
+  recentCasts: RecentCast[]
+  lastObservedTs: number
 }

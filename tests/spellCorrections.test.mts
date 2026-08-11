@@ -320,6 +320,44 @@ test('…and the sentence the WIKI writes still yields nothing, which is the def
   )
 })
 
+test('JOS-189: the OTHER two darkness ranks land, on the doubt JOS-150 could not close', () => {
+  // THE REPORT: an SK/necro on 0.18.0 said the debuff tracker does not track Dooming Darkness.
+  // JOS-150 corrected only Engulfing Darkness — the one rank whose own cast-on-YOU message already
+  // said `by`, so the wiki contradicted itself inside a single entry — and left the other two,
+  // because a zero count for their sentence might only have meant nobody in the log cast them.
+  // The log has since answered: 159 Dooming casts and 36 Cascading, and still zero lines of
+  // `<T> is engulfed in darkness.` The sentence below is the owner's own (124 lines whole-log).
+  const r = replay(
+    [
+      [0, 'You begin casting Dooming Darkness.'],
+      [3, 'a fire giant warrior is engulfed by darkness.']
+    ],
+    30
+  )
+  const row = r.rows.find((x) => x.name === 'Dooming Darkness')
+  assert.ok(row, `no Dooming Darkness row: ${r.rows.map((x) => x.name).join(', ') || '(none)'}`)
+  assert.equal(row.target, 'a fire giant warrior')
+  assert.equal(row.kind, 'debuff')
+  assert.equal(row.mode, 'countdown')
+  assert.equal(row.durationMs, 90_000, 'the committed DB states 1 Min 30 Sec for the line')
+  assert.ok(rowsForSurface(r.rows, 'debuffs').includes(row), 'and it belongs to the DEBUFFS window')
+})
+
+test('…and all three ranks are now candidates for the one sentence the game prints', () => {
+  // The correction is ADDITIVE at the table: the suffix already existed (Engulfing has owned it
+  // since JOS-150), so this adds two candidates to a sentence the cast anchor already resolves
+  // rather than minting a tail that could compete with anything.
+  const db = loadSpellDb()
+  const hit = matchCastOnOtherSuffix('a fire giant warrior is engulfed by darkness.', db)
+  assert.ok(hit, 'the live sentence must resolve at all')
+  assert.deepEqual(
+    hit.entry.cands.map((c) => c.name).sort(),
+    ['Cascading Darkness', 'Dooming Darkness', 'Engulfing Darkness'],
+    'the whole ladder that shares it — and NOT Devouring Darkness, which writes a different sentence'
+  )
+  assert.equal(db.castOnOtherSuffix.get('is engulfed in darkness.'), undefined, 'the wiki form owns nothing')
+})
+
 test('the root line lands too: `<mob> adheres to the ground.` is 493 lines the DB owned nowhere', () => {
   // Immobilize 14/14 casts, Root 1/1, whole-log. The cast-on-YOU half was always right; only the
   // third-person sentence was the wiki's invention.

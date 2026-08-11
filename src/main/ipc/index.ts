@@ -15,12 +15,14 @@
 
 import { registerAlertsIpc } from './alerts'
 import { registerBuffTrustIpc } from './buffTrust'
+import { registerRespawnIpc } from './respawn'
 import { registerCharacterIpc } from './character'
 import { registerCharacterSheetIpc } from './characterSheet'
 import { registerClipboardIpc } from './clipboard'
 import { registerComboIpc } from './combo'
 import { registerDevIpc } from './dev'
 import { registerFeedbackIpc } from './feedback'
+import { registerFoldCacheIpc } from './foldCache'
 import { registerGraphicsIpc } from './graphics'
 import { registerKnowledgeIpc } from './knowledge'
 import { registerMapsIpc } from './maps'
@@ -68,6 +70,8 @@ export function registerIpc(): void {
   registerPerfIpc()
   registerGraphicsIpc()
   registerBuffTrustIpc()
+  registerRespawnIpc()
+  registerFoldCacheIpc()
   registerUiScaleIpc()
   registerReleaseNotesIpc()
   // Registered in EVERY build, and a no-op in a packaged one — the refusal lives inside the

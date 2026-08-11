@@ -126,6 +126,7 @@ export default function PlanBoard({
           command={INVENTORY.command}
           why={INVENTORY.why}
           updatedAt={inventory.loadedAt}
+          steps={INVENTORY.steps}
           testId="planner-inventory-fresh"
         />
       )}

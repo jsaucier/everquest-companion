@@ -148,8 +148,12 @@ function etaTileTitle(toLevel: number, progress: number): string {
 /** Everything `levelingTiles` needs, already measured. One object so the argument list cannot
  *  drift out of order as tiles are added. */
 export interface LevelingTileInput {
-  /** latest reported level, or null (no ding folded yet). */
+  /** the level the log last STATED, or null (nothing has stated one yet). */
   level: number | null
+  /** that statement's provenance + age, already worded (shared/currentLevel.ts). */
+  levelTitle: string
+  /** the visible cue for it ('/who', '3d 4h ago'), or '' when the number stands alone. */
+  levelCue: string
   /** window A's stats — the same object the headline rate came from. */
   hour: RangeStats
   /** the projection, or the reason there is none. */
@@ -158,17 +162,23 @@ export interface LevelingTileInput {
   rateText: string
 }
 
-/** The level tile. Omitted entirely when the snapshot holds no ding: the log states your level
- *  only when it changes, and "level —" is a worse answer than three tiles. */
-function levelTile(level: number | null): LevelingTile[] {
+/**
+ * The level tile. Omitted entirely when nothing has stated a level: the log states your level
+ * only when it changes, and "level —" is a worse answer than three tiles.
+ *
+ * The hover is the STATEMENT's own sentence (JOS-192) rather than the flat "the level the log
+ * last reported" it carried before — because which line said it, and how long ago, is the
+ * difference between a fact and a fact that has since been overtaken by an unlogged swap.
+ */
+function levelTile(level: number | null, title: string, cue: string): LevelingTile[] {
   if (level == null) return []
   return [
     {
       id: 'level',
       value: String(level),
       unit: '',
-      label: 'level',
-      title: 'The level the log last reported.'
+      label: cue ? `level · ${cue}` : 'level',
+      title
     }
   ]
 }
@@ -197,7 +207,7 @@ function etaTile(eta: LevelEta): LevelingTile[] {
 export function levelingTiles(input: LevelingTileInput): LevelingTile[] {
   const { value, unit } = splitRate(input.rateText)
   return [
-    ...levelTile(input.level),
+    ...levelTile(input.level, input.levelTitle, input.levelCue),
     {
       id: 'rate',
       value,

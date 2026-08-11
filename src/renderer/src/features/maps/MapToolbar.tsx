@@ -11,6 +11,11 @@
 // STATE, NEVER PROCESS (AGENTS.md UI conventions). Every control here states a fact — which
 // layers are drawn, which pack each half came from, which zone is open. Nothing narrates.
 //
+// …AND NOTHING HERE MOVES WHEN THE MAP ARRIVES (JOS-205). This is a WRAPPING row above the content
+// area, so every control that appears with the map used to push the map down and shrink it. The
+// row now holds the space its drawing controls will need while the map is in flight — see
+// `DrawnRow` at the bottom, which carries the measurement.
+//
 // AND NOTHING ON THIS ROW MOUNTS A POPPER (JOS-143). It is a WRAPPING row of controls, three of
 // which are dropdowns — the zone combobox and the two pack selects — and every popper on it was a
 // hit target sitting in the space where a neighbour's option list opens. The zone-mode chip is the
@@ -87,6 +92,12 @@ const TOGGLEABLE: { layer: MapLayer; label: string }[] = [
  * Compact by construction — two arrows and a chip — because a dozen bands as a button group
  * would be wider than every other control on this row put together. Fully keyboard operable:
  * both arrows are real buttons, and ↑/↓/Home work anywhere in the group.
+ *
+ * ONE BAND IS NOT A SLICE, AND THE CONTROL STILL HOLDS ITS SPACE (JOS-205). There is nothing to
+ * step between, so the stepper states nothing and is invisible — but this row WRAPS, and a control
+ * that appears and disappears changes how many lines the bar occupies, which moves the map below
+ * it. `visibility:hidden` is the one way to be absent from the screen, from the tab order and from
+ * the accessibility tree while still being absent from NOTHING that decides the layout.
  */
 function FloorStepper({
   bands,
@@ -96,9 +107,8 @@ function FloorStepper({
   bands: readonly FloorBand[]
   floor: number | null
   onFloor: (floor: number | null) => void
-}): JSX.Element | null {
-  // One band is not a slice — there is nothing to step between, so the control does not appear.
-  if (bands.length < 2) return null
+}): JSX.Element {
+  const empty = bands.length < 2
   const at = floor ?? -1
   // -1 is "All levels", so the list is [All, floor 1 … floor N] and stepping is plain arithmetic.
   const step = (d: number): void => {
@@ -114,7 +124,15 @@ function FloorStepper({
   }
   const band = floor == null ? null : bands[floor]
   return (
-    <Stack direction="row" spacing={0.25} alignItems="center" data-testid="maps-floors" onKeyDown={onKeyDown}>
+    <Stack
+      direction="row"
+      spacing={0.25}
+      alignItems="center"
+      data-testid="maps-floors"
+      {...(empty ? { 'aria-hidden': true, 'data-reserved': 'true' } : {})}
+      sx={empty ? { visibility: 'hidden' } : undefined}
+      onKeyDown={onKeyDown}
+    >
       {/* The spans stay: a DISABLED button swallows no mouse events, so the hover text has to
           hang on the wrapper to be readable at the top and bottom of the stack. */}
       <span title="Lower level">
@@ -217,9 +235,13 @@ export interface MapToolbarProps {
   /** Is a map actually DRAWN? Everything but the selector describes the drawing, so nothing
    *  else renders without one — a floor stepper over no floors states nothing. */
   hasMap: boolean
+  /** A map COULD still be drawn here (JOS-205). No control appears, but the row they will need is
+   *  held — see `DrawnRow`. False only on a machine with no map packs, where none ever can. */
+  reserve: boolean
   layers: LayerMask
   onLayers: (layers: LayerMask) => void
-  /** The zone's clustered floors, ascending. Fewer than two ⇒ the stepper does not render. */
+  /** The zone's clustered floors, ascending. Fewer than two ⇒ the stepper is invisible but still
+   *  occupies its space, so the bar's line count cannot depend on the map (JOS-205). */
   bands: readonly FloorBand[]
   /** The active floor index, or null for All levels. */
   floor: number | null
@@ -370,8 +392,41 @@ function DrawnControls(props: MapToolbarProps): JSX.Element {
   )
 }
 
+/**
+ * THE DRAWING CONTROLS, AND THE SPACE THEY TAKE UP BEFORE THEY EXIST (JOS-205).
+ *
+ * MEASURED, on the owner's report that the map "bounces around" on load: this bar is 40 px tall
+ * with only the zone selector on it and 88 px once a map arrives and eight more controls wrap it
+ * onto a second line — so the map pane below started 48 px lower and 48 px shorter than it had
+ * been a frame earlier, and everything on screen moved. The map is not what changed size; its
+ * CHROME is.
+ *
+ * So the row is held while the map is in flight, by rendering the very controls that will fill it
+ * with `visibility:hidden`. Nothing else can be as exact: the height of a wrapping row is a
+ * function of its contents and the window's width, and no reserved constant can know either. A
+ * `display:contents` wrapper keeps them DOM SIBLINGS of the selector — `Stack useFlexGap` spaces
+ * its flex items, and a real box here would collapse eight controls into one unwrappable unit and
+ * change the very number this exists to keep constant. `visibility` is inherited, so the one
+ * declaration reaches every control; hidden controls are out of the tab order and take no hover.
+ *
+ * It reserves whenever a map could still be drawn (`reserve`, decided by the view). The one state
+ * that does not is the machine with no map packs at all: nothing can ever draw there, so a held
+ * row would be claiming otherwise. Everything else — the fetch in flight, the frame before the
+ * character module has said where you are, a zone the table cannot place — is a map that may yet
+ * arrive, and holding the row is also what stops the bounce when the picker finally yields one.
+ */
+function DrawnRow(props: MapToolbarProps): JSX.Element | null {
+  if (props.hasMap) return <DrawnControls {...props} />
+  if (!props.reserve) return null
+  return (
+    <Box aria-hidden data-testid="maps-toolbar-reserved" sx={{ display: 'contents', visibility: 'hidden' }}>
+      <DrawnControls {...props} />
+    </Box>
+  )
+}
+
 export default function MapToolbar(props: MapToolbarProps): JSX.Element {
-  const { zones, zone, onPick, mode, onFollowCurrent, hasMap } = props
+  const { zones, zone, onPick, mode, onFollowCurrent } = props
   return (
     <Stack
       direction="row"
@@ -386,7 +441,7 @@ export default function MapToolbar(props: MapToolbarProps): JSX.Element {
       {/* Beside the selector and OUTSIDE the `hasMap` gate, for the same reason the selector is:
           "which rule is choosing the map" is exactly the question a user has when no map drew. */}
       <ZoneModeControls mode={mode} onFollowCurrent={onFollowCurrent} />
-      {hasMap && <DrawnControls {...props} />}
+      <DrawnRow {...props} />
     </Stack>
   )
 }

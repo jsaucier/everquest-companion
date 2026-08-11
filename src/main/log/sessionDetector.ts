@@ -46,6 +46,8 @@
 // 4 suppressed (30s / 31s / 31s / 34s — all genuine sub-minute relogs); `camped` true for 17
 // and false for the 2 crashes (Jul 28 13:37, Jul 31 22:07), matching a hand read of the log.
 
+import { S, validate, type FoldSchema } from '../foldCache/schema'
+import type { FoldUnit } from '../foldCache/serialize'
 import type { LogEvent, OfflineGapEvent } from '../../shared/logEvents'
 
 /**
@@ -76,7 +78,18 @@ export const CAMP_PAIRING_MS = 60_000
  * short to be worth reporting (or when this is the first login of the log, which has no
  * observed "before"). Reset per character (re)load, exactly like EpochDetector.
  */
-export class SessionDetector {
+export class SessionDetector implements FoldUnit {
+  /**
+   * CHECKPOINTED (JOS-208), for the same reason EpochDetector is and with the same evidence behind
+   * it: this is fold state that publishes nothing, and a fresh one restored beside a restored fold
+   * answers "when was the character last seen" with an empty window — so the first login in the
+   * TAIL would either report no gap where the log states one, or report one measured from nothing.
+   * `recent` is the rolling window and `campTs` the pending logout; both are event-derived, plain,
+   * and bounded (see the field notes below), which is what makes them cheap to carry.
+   */
+  readonly id = 'session'
+  readonly foldSchema: FoldSchema = S.obj({ recent: S.arr(S.num), campTs: S.num })
+
   /**
    * DISTINCT recent event timestamps, oldest-first, trimmed so that AT MOST ONE entry is
    * older than `newest - RECONNECT_WINDOW_MS`. That surviving front entry IS `fromTs` — the
@@ -95,6 +108,18 @@ export class SessionDetector {
   reset(): void {
     this.recent = []
     this.campTs = 0
+  }
+
+  serializeFold(): { recent: number[]; campTs: number } {
+    return { recent: [...this.recent], campTs: this.campTs }
+  }
+
+  deserializeFold(state: unknown): boolean {
+    if (!validate(this.foldSchema, state).ok) return false
+    const s = state as { recent: number[]; campTs: number }
+    this.recent = [...s.recent]
+    this.campTs = s.campTs
+    return true
   }
 
   /**

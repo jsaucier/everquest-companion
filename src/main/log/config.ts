@@ -78,7 +78,7 @@ function envCandidates(): string[] {
  * bounds the config-dependent pathological case (a huge Uninstall hive, an offline mapped network
  * drive) so a miss falls back to "user picks manually" instead of hanging boot. Generous on
  * purpose — it is a hang guard, not a latency target, and a real slow-but-present install must
- * still be found. The registry phase carries the same deadline so it stops issuing subprocesses.
+ * still be found. The registry phase carries the same deadline so it stops reading more keys.
  */
 const DISCOVERY_BUDGET_MS = 6000
 
@@ -99,11 +99,14 @@ function realProbes(): DiscoveryProbes {
  * MEMOIZED DISCOVERY — measured, not a micro-optimization (docs/plans/chunked-replay.md's
  * blocked-main directive; the evidence is in `.bench/replay.jsonl` and the diagnosis below).
  *
- * `discoverEqRoot(realProbes())` spawns EIGHT synchronous `reg query … /s` subprocesses over the
- * whole Uninstall hive and then stats six candidate paths on every fixed drive. MEASURED at
- * ~150 ms, synchronously, on the main process — and it SCALES with the machine: a large Uninstall
- * hive makes the reg queries slow, and an offline mapped network drive makes the drive walk block
- * on the SMB timeout (the config-dependent 30 s boot hang a user reported). `resolveEqDir()` is
+ * `discoverEqRoot(realProbes())` reads eight registry trees and then stats six candidate paths on
+ * every fixed drive. It used to SPAWN those eight reads as `reg query … /s` subprocesses over the
+ * whole Uninstall hive, MEASURED at ~150 ms, synchronously, on the main process — and it SCALED
+ * with the machine: a large Uninstall hive made the reg queries slow, and an offline mapped
+ * network drive makes the drive walk block on the SMB timeout (the config-dependent 30 s boot
+ * hang a user reported). The registry half is now an in-process read (~6 ms, JOS-184), so what
+ * is left to memoize is mostly the disk half — the caching below is unchanged either way, since
+ * the drive walk was always the part that could stall for tens of seconds. `resolveEqDir()` is
  * not a startup-only call either: `character:list` runs it while the renderer hydrates (the ONE
  * main-loop stall left in an otherwise chunked replay), the Settings pane runs it, and
  * `presence.ts` runs it on every watcher tick.
@@ -150,11 +153,11 @@ export function invalidateEqDiscovery(): void {
 /**
  * CHEAP re-discovery, for the idle rescan only (session.ts `watchForFirstLog`).
  *
- * `discoverOnce` memoizes a NULL result too, which is right for the 150 ms registry sweep but
+ * `discoverOnce` memoizes a NULL result too, which is right for the full sweep but
  * wrong for a machine that simply had no `eqlog_*.txt` yet: the player types `/log on`, the log
  * appears, and discovery's own predicate ("a Logs dir with a character log in it") would now
  * succeed — except nothing re-probes. So the idle path re-runs discovery with the FS half only:
- * env candidates + the drive sweep, no `reg query` subprocesses. That is a dozen `existsSync`
+ * env candidates + the drive sweep, no registry reads at all. That is a dozen `existsSync`
  * calls, affordable every couple of seconds, and it covers the install that discovery could
  * always have found and simply looked for too early. A manual override needs no discovery at
  * all and returns immediately; a memoized root that still has logs is left alone.

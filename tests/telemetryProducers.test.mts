@@ -30,12 +30,14 @@ import {
   bucketOf,
   funnelStepMark,
   normalizeTelemetryPrefs,
-  startupReplayStats,
   LOG_SIZE_BYTES_EDGES,
   MAX_COUNT,
   TELEMETRY_FUNNEL_STEPS,
   type TelemetryEvent
 } from '../src/shared/telemetry'
+// The producer moved out of the contract file when JOS-57's scope addition pushed it past the
+// 400-line ceiling; the reading it builds is unchanged, and so is every assertion below.
+import { startupReplayStats } from '../src/shared/telemetryStartup'
 import { validateTelemetryEvent } from '../src/shared/telemetryValidate'
 import {
   blockMsBucketLabel,

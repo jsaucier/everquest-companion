@@ -357,4 +357,37 @@ export class MobLootIndex {
   get size(): number {
     return this.byMob.size
   }
+
+  // ---- the checkpoint seam (JOS-208 phase 2) --------------------------------------------------
+  //
+  // NAMED DEBT, PAID. attach.ts listed this index as one of the three things phase 1 left outside
+  // the container, and it is fold state by every test: it is written ONLY from `loot` events, its
+  // lifetime is owned by the `consider` module (which folds into it and resets it on epoch), and
+  // what it holds — "what have I looted off this creature" — is a fact the log restates in full
+  // on a cold replay and therefore MUST be restored to keep the two arms equal.
+  //
+  // A NESTED BLOB, NOT A UNIT OF ITS OWN. It has no `id`, no snapshot and no bus subscription;
+  // the module that owns its lifetime carries it, which keeps one owner for the reset and one
+  // owner for the restore. The declaration lives beside it (`ConsiderModule.foldSchema`).
+  //
+  // The two nested Maps become entries ARRAYS rather than records because a record's key order is
+  // an accident and these keys are raw log text; the arrays make the round trip exact.
+
+  serializeFold(): MobLootFoldState {
+    const out: MobLootFoldState = []
+    for (const [mob, items] of this.byMob) {
+      const rows: [string, MobSeenDrop][] = []
+      for (const [ik, row] of items) rows.push([ik, { ...row }])
+      out.push([mob, rows])
+    }
+    return out
+  }
+
+  /** Adopt a previously serialized index. Validation is the OWNER's — see `ConsiderModule`. */
+  deserializeFold(state: MobLootFoldState): void {
+    this.byMob = new Map(state.map(([mob, rows]) => [mob, new Map(rows)]))
+  }
 }
+
+/** The own-loot index as plain data: mob key → (item key → the seen drop). */
+export type MobLootFoldState = [string, [string, MobSeenDrop][]][]

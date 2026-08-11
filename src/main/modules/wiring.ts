@@ -31,6 +31,7 @@ import { LootModule } from './loot'
 import { TurnInsModule } from './turnins'
 import { ClassUnlocksModule } from './classUnlocks'
 import { KillsModule } from './kills'
+import { RespawnModule } from './respawn'
 import { LevelingModule } from './leveling'
 import { ProgressionModule } from './progression'
 import { CharacterModule } from './character'
@@ -45,6 +46,7 @@ import type { EqModule } from './types'
 import type { LogEvent } from '../../shared/logEvents'
 import type { AlertDef, MessageOverlay } from '../../shared/types'
 import type { BuffTrustPrefs } from '../../shared/buffTrust'
+import type { RespawnPrefs } from '../../shared/respawn'
 
 /** Everything the module set needs from outside itself. Every field is a seam pipeline.ts fills
  *  from Electron and the bench fills with a stub or an empty list. */
@@ -68,6 +70,12 @@ export interface ModuleWiringDeps extends ConsiderDeps, EventFeedDeps {
    * root passes.
    */
   buffTrust?: BuffTrustPrefs
+  /**
+   * The user's respawn watch list (JOS-194). The store owns it; absent ⇒ the shipped default,
+   * which is an EMPTY list — tracking is opt-in per mob, so a caller that passes nothing gets a
+   * module that clocks nothing. That is what the bench and every non-Electron caller wants.
+   */
+  respawnPrefs?: RespawnPrefs
 }
 
 /** The constructed world's modules: each one by name (pipeline.ts re-exports them under the names
@@ -82,6 +90,7 @@ export interface ModuleWiring {
   turnIns: TurnInsModule
   classUnlocks: ClassUnlocksModule
   kills: KillsModule
+  respawn: RespawnModule
   progression: ProgressionModule
   leveling: LevelingModule
   character: CharacterModule
@@ -141,6 +150,10 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
   // a class unlocks from the level-11 pick or a token with no turn-in behind it at all.
   const classUnlocks = new ClassUnlocksModule()
   const kills = new KillsModule()
+  // Respawn clocks (JOS-194): the same death line, read as "when can I kill it again". Its watch
+  // list is user prefs the store owns, seeded here and re-synced by the IPC setter — the alerts
+  // module's exact arrangement, and for the same reason (a second input that is not the log).
+  const respawn = new RespawnModule(deps.respawnPrefs)
   // Leveling analytics (docs/plans/leveling-analytics.md): the capped, range-queryable series
   // behind the drag-select stats panel. A SEPARATE module from leveling on purpose — LevelingSnap
   // is uncapped by contract (the AA identity needs the whole history) and this one is a ring.
@@ -199,6 +212,7 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
     turnIns,
     classUnlocks,
     kills,
+    respawn,
     progression,
     leveling,
     character,
@@ -224,6 +238,10 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
       // state within a delivery. Beside turnIns because that is where a reader looks for it.
       classUnlocks,
       kills,
+      // Beside `kills` because it folds the SAME death line — and AFTER it, so anything reading
+      // both within one delivery sees the kill counted before the clock that kill started.
+      // Position is otherwise free: no module reads its state.
+      respawn,
       progression,
       leveling,
       character,

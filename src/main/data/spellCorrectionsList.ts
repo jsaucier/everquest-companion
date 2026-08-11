@@ -39,6 +39,37 @@
 // (Pacify/Soothe/Calm/Lull) are all in that state and NONE of them is corrected here. Absence of
 // evidence is not evidence of drift.
 //
+// AND NEITHER IS A WRONG NUMBER — WHAT THIS FILE IS NOT FOR (JOS-189). Two reports in the same wave
+// looked like corrections and are not, because nothing about the wiki's SENTENCES is wrong in
+// either. They are recorded here rather than forced into the table above, because the shape of the
+// answer is what a reader of this file most needs to be able to tell apart.
+//
+//   `Short duration buffs don't show correct timers on the buffs window. Like Shield of Thistles,
+//   and Sprouting Heal` (01KZNB36R74HF3A8BJ9N67R19Y), and `the timer for the spell Blooming Heal
+//   keep reseting` (01KZPHASSS7R1E1Y6VTFSTJ9RV, with a slice). ONE defect, from both directions:
+//   the DB duration is the wiki's figure for ONE level of a spell whose real duration scales with
+//   the caster, and `SpellStats.estimateFor` treats it as a hard FLOOR that a clean observed cycle
+//   may raise and can never lower (JOS-117 ruling 6, and rightly — it is what stops Invisibility's
+//   20 minutes collapsing to the 4 m 24 of a run of early breaks).
+//
+//     * SHIELD OF THISTLES states 15 Min. Measured over the owner's whole log through the DB's own
+//       pair (`You are surrounded by a thorny barrier.` -> `The brambles fall away.`): 6 self
+//       cycles, 385 s / p50 551 s / 655 s. Every one of them BELOW the stated figure, so the floor
+//       holds forever and the bar over-runs by four to eight minutes with no path to correcting
+//       itself.
+//     * THE SEEDED-HEAL FAMILY (Sprouting, Blooming, Blossoming, Budding, Efflorescing, Flowering)
+//       states 24 seconds. On the reporter's own slice three Blooming Heal IV casts land and tick
+//       for 27, 28 and 30 s — so the bar expires three to six seconds before the heal stops
+//       healing, every cast. It cannot learn its way out either: not one of the six carries a
+//       `msgWearsOff`, and the owner's whole log holds ZERO `Your <X> spell has worn off.` lines
+//       for any of them, so no cycle can ever be paired and no sample can ever be minted.
+//
+//   Neither is a message this file could correct. `You feel a heal blooming within you.` really is
+//   the self landing — the slice's own `Player Kallil creating instance` line names the reporter,
+//   and the heal lines carry that same name — and the third-person half was already fixed by
+//   JOS-174. What is wrong is a NUMBER and the rule that reads it, which is a change to the model
+//   with its own burden of proof and its own ticket, not an entry in a table of sentences.
+//
 // THE ABSENT FIELD is the fourth drift class, and it is why `from` may be `null` (JOS-159). Almost
 // everything here swaps one sentence for another, but the wiki can also state NOTHING where the
 // game states something: `Allure`, the enchanter charm at 46, carries a cast time and a duration
@@ -85,9 +116,10 @@
 import type { SpellCorrection } from './spellCorrections'
 // THE SUBJECT-PLACEHOLDER SWEEP (JOS-174), appended below. It is one of the drift classes this
 // header governs and is held to this file's evidence bar; it lives next door only because it is
-// the one class that arrives in bulk (33 entries over 44 spell rows) and the repo's max-lines
+// the one class that arrives in bulk (35 entries over 47 spell rows) and the repo's max-lines
 // ceiling is about code mass. Its own header states why the sweep is a LIST rather than a wider
-// subject stripper, and which two sentences it refuses.
+// subject stripper, which sentence it still refuses, and — for the one sentence it stopped
+// refusing — what taking a line off another classifier costs, measured (JOS-189).
 import { SUBJECT_PLACEHOLDER_CORRECTIONS } from './spellCorrectionsSubjects'
 
 /**
@@ -110,16 +142,20 @@ const HAND_DERIVED_CORRECTIONS: readonly SpellCorrection[] = [
       'Reported by a 0.14.0 druid and slice-proven for Drifting Death itself. Owner log: 12 lines of `<T> is engulfed by a swarm.` with no DB owner, 0 of the wiki form. The other three are the same druid DoT ladder (Stinging Swarm 10 → Creeping Crud 24 → Drones of Doom 32 → Drifting Death 40) sharing ONE wiki sentence, so whatever that sentence is it is the same for all four; Winged Death 53 writes a different one and is untouched.'
   },
   // --- the same preposition, three more families ------------------------------------------------
-  // ONE spell, contradicting ITSELF, is the only darkness entry that earns a correction.
+  // THE DARKNESS LINE, IN TWO PASSES — and the second one is why the first was written carefully.
   //
   // The whole family (Cascading 47, Dooming 27/44, Engulfing 11/20) writes `in darkness` for the
-  // third-person landing, and the owner's log has 123 lines of `by` and 0 of `in`. That looks like
-  // a family-wide drift and it is NOT SAFE to treat it as one: the bard root pair below proved
-  // that this game really does change the preposition between ranks of one line, so a zero count
-  // may only mean nobody in this log ever cast the OTHER rank. What separates Engulfing Darkness
-  // is that its own `msgCastOnYou` already says `by` — the wiki disagrees with itself inside a
-  // single entry, and 78 first-person `by` lines say which half is right. Cascading and Dooming
-  // say `in` in BOTH fields and are left alone; see the unverifiable list in the ticket.
+  // third-person landing, and the log has 124 lines of `by` and 0 of `in`. JOS-150 corrected ONLY
+  // Engulfing Darkness, because its own `msgCastOnYou` already says `by` — the wiki disagreeing
+  // with itself inside one entry, with 84 first-person `by` lines saying which half is right — and
+  // it deliberately left the other two alone: the bard root pair below proves this game really does
+  // change the preposition between ranks of one line, so a zero count may only mean nobody in this
+  // log ever cast the OTHER rank.
+  //
+  // JOS-189 CLOSED THAT DOUBT with the thing it was waiting for: evidence that the other ranks ARE
+  // cast in this log. They are, hundreds of times, and the sentence the wiki gives them has still
+  // never once been printed. The report that asked is 01KZNWX8Y6YWXQ8YRM8KGWN48E (v0.18.0): "Debuff
+  // tracker does not track Dooming Darkness (the darkness line for SK/Necro)."
   {
     spells: ['Engulfing Darkness'],
     field: 'msgCastOnOther',
@@ -128,6 +164,15 @@ const HAND_DERIVED_CORRECTIONS: readonly SpellCorrection[] = [
     attribution: 'db',
     evidence:
       'Owner log: 123 lines of `<T> is engulfed by darkness.` with no DB owner, 0 of the wiki form, and 78 first-person `You are engulfed by darkness.` matching this same entry`s own msgCastOnYou.'
+  },
+  {
+    spells: ['Cascading Darkness', 'Dooming Darkness'],
+    field: 'msgCastOnOther',
+    from: 'Someone is engulfed in darkness.',
+    to: 'Someone is engulfed by darkness.',
+    attribution: 'cast',
+    evidence:
+      'THE REPORTED DEFECT (01KZNWX8Y6YWXQ8YRM8KGWN48E, v0.18.0, an SK/necro). Owner log, 1,557,569 lines: `<T> is engulfed in darkness.` occurs ZERO times while `<Name> begins casting Dooming Darkness.` occurs 159 times and `Cascading Darkness` 36 — so both ranks ARE cast here, which is precisely what JOS-150 could not establish and why it left them alone. 17 of the 159 Dooming casts and 1 of the 36 Cascading casts are followed within 12 s (p50 3 s) by `<T> is engulfed by darkness.`; the rate is low because that sentence is SHARED with Engulfing Darkness (249 casts, 106 matched) and only the nearest cast can claim each of the 124 landings. Purely additive to the table: the suffix already exists, so this adds two candidates to a sentence the cast anchor already resolves and creates no new tail.'
   },
   // NOT CORRECTED, and the reason is worth keeping: Largo's Melodic Binding (bard 20) says `bound
   // IN strands of solid music.` while its direct upgrade Largo's Assonant Binding (bard 51) says
@@ -483,9 +528,13 @@ const HAND_DERIVED_CORRECTIONS: readonly SpellCorrection[] = [
   // --- the bard mez ladder: one subject token and one dropped word (JOS-161) --------------------
   //
   // THE REPORT: a bard on 0.14.0 could not get an alert to fire for `Sionachie's Dreams` or
-  // `Solon's Bewitching Bravura` with any trigger type. Both songs are in `ccSpell` since JOS-84,
-  // so the "Mez / root broke" GROUP has fired for them all along — what could not fire was
-  // anything naming the spell, and each song had its own reason.
+  // `Solon's Bewitching Bravura` with any trigger type. Both songs were in `ccSpell` at the time
+  // (JOS-84), so the "Mez / root broke" GROUP had fired for them all along — what could not fire
+  // was anything naming the spell, and each song had its own reason. JOS-200 later moved Bravura to
+  // `charmSpell` (it is the bard's level-39 CHARM, not a mez — see rulesets.ts for the log
+  // evidence), which changes which alert its break fires and changes NOTHING about the two
+  // corrections below: a name is a join key whatever roster the spell sits in, and the landing
+  // sentence it shares with the mez ladder is exactly why the message oracle got it wrong.
   //
   // THE COUNTS BELOW are whole-log over the owner's `eqlog_Primitive_freeport.txt` (1,494,065
   // lines, measured 2026-08-09) unless a reporter slice is named. `<mob>'s eyes glaze over.` is a

@@ -20,6 +20,8 @@
 import type { EqModule } from './types'
 import { isCountedKill, recordKill } from '../log/reducers'
 import { zoneTier, idKey } from '../log/parser'
+import { S, validate, type FoldSchema } from '../foldCache/schema'
+import type { FoldCheckpointable } from '../foldCache/serialize'
 import type { LogEvent } from '../../shared/logEvents'
 import {
   KILLS_SHAPE_VERSION,
@@ -29,7 +31,51 @@ import {
   type KillsSnap
 } from '../../shared/kills'
 
-export class KillsModule implements EqModule<KillsSnap, KillsDelta> {
+/**
+ * THE CHECKPOINT DECLARATION (JOS-208 phase 2). The KillMap is already a `Record` of plain
+ * records, which is why this module is one of the cheapest to declare: the stored shape and the
+ * published shape are the same object.
+ *
+ * `pendingExpTs` IS stored, and it matters more than its size suggests. It is the half-open
+ * experience join — an exp line the very next death line may claim (see `takeExp`) — so a
+ * checkpoint taken between those two lines and restored without it would drop the credit for a
+ * kill the cold arm credits. It is `number | null` live and OPTIONAL here: the grammar has no
+ * null, and "no line waiting" is exactly an absent fact.
+ */
+const KILL_TIER_RUN_SCHEMA: FoldSchema = S.obj({
+  count: S.num,
+  firstTs: S.num,
+  lastTs: S.num,
+  credited: S.num,
+  lastCreditedTs: S.num
+})
+
+const KILL_INFO_SCHEMA: FoldSchema = S.obj({
+  count: S.num,
+  bestTier: S.num,
+  firstTs: S.num,
+  lastTs: S.num,
+  credited: S.num,
+  display: S.str,
+  tiers: S.rec(KILL_TIER_RUN_SCHEMA)
+})
+
+const KILLS_FOLD_SCHEMA: FoldSchema = S.obj({
+  kills: S.rec(KILL_INFO_SCHEMA),
+  zone: S.opt(S.str),
+  seq: S.num,
+  pendingExpTs: S.opt(S.num)
+})
+
+/** The kills module's complete event-derived state. */
+export interface KillsFoldState {
+  kills: KillMap
+  zone?: string
+  seq: number
+  pendingExpTs?: number
+}
+
+export class KillsModule implements EqModule<KillsSnap, KillsDelta>, FoldCheckpointable<KillsFoldState> {
   readonly id = 'kills'
   private kills: KillMap = {}
   private zone: string | undefined
@@ -118,5 +164,38 @@ export class KillsModule implements EqModule<KillsSnap, KillsDelta> {
     for (const mob of this.dirty) changed[mob] = this.kills[mob]
     this.dirty = new Set()
     return { seq: this.seq, delta: { v: KILLS_SHAPE_VERSION, changed } }
+  }
+
+  // ---- the checkpoint seam (JOS-208) ---------------------------------------------------------
+
+  readonly foldSchema = KILLS_FOLD_SCHEMA
+
+  /**
+   * `dirty` is absent for the reason every module's flush bookkeeping is: a restored fold has
+   * published nothing, and the caller re-hydrates every consumer from `snapshot()`.
+   *
+   * The map is copied one level deep and each entry's `tiers` with it, so the blob cannot alias
+   * the live records `recordKill` mutates in place.
+   */
+  serializeFold(): KillsFoldState {
+    const kills: KillMap = {}
+    for (const [key, info] of Object.entries(this.kills)) kills[key] = { ...info, tiers: { ...info.tiers } }
+    return {
+      kills,
+      ...(this.zone === undefined ? {} : { zone: this.zone }),
+      seq: this.seq,
+      ...(this.pendingExpTs === null ? {} : { pendingExpTs: this.pendingExpTs })
+    }
+  }
+
+  deserializeFold(state: unknown): boolean {
+    if (!validate(KILLS_FOLD_SCHEMA, state).ok) return false
+    const s = state as KillsFoldState
+    this.kills = s.kills
+    this.zone = s.zone
+    this.seq = s.seq
+    this.pendingExpTs = s.pendingExpTs ?? null
+    this.dirty = new Set()
+    return true
   }
 }

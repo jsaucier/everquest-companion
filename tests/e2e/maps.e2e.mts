@@ -135,6 +135,86 @@ function canvasMetrics(
   }, CANVAS)
 }
 
+/**
+ * THE ANTI-BOUNCE PROBE (JOS-205) — the map row's geometry, sampled from before the view mounts.
+ *
+ * The owner's report was "on load, the map bounces around", and no still assertion can see it: by
+ * the time a spec can measure anything the map has already arrived and the layout has already
+ * settled at its final size. So the measurement has to be a RECORDING, installed BEFORE the Maps
+ * tab is opened and read back afterwards — the one shape that can state what the user saw between
+ * two paints.
+ *
+ * IT WATCHES THE SIDEBAR, not the map surface, because the sidebar is the one element that exists
+ * in every state this row can be in — before the fetch answers, while the picker is up, and under
+ * a drawn map — and it is exactly as tall as the row. A surface that only exists once the data
+ * does cannot tell you where the row was a frame earlier.
+ *
+ * MEASURED BEFORE THE FIX, at 1280×860: the row sat at top 197 / 647 px tall while the map was in
+ * flight and at top 245 / 567 px the moment it landed — 48 px pushed down by the toolbar wrapping
+ * onto a second line as eight drawing controls appeared, 32 px taken off the bottom by the credits
+ * line materialising. At the app's minimum width (900) the header's chips added a third line and
+ * another 32.
+ */
+function installBouncelessProbe(page: Page): Promise<void> {
+  return page.evaluate(() => {
+    const w = window as unknown as { __mapsRow: string[]; __mapsRowStop?: number }
+    w.__mapsRow = []
+    w.__mapsRowStop = window.setInterval(() => {
+      const row = document.querySelector('[data-testid="maps-pane"]')
+      if (!row) return
+      const r = row.getBoundingClientRect()
+      const zoom = document.querySelector('[data-testid="maps-zoom-in"]')
+      const drawn = document.querySelector('[data-testid="map-canvas"]') != null
+      w.__mapsRow.push(
+        [
+          Math.round(r.top),
+          Math.round(r.height),
+          drawn ? 'map' : 'nomap',
+          zoom ? getComputedStyle(zoom).visibility : 'absent'
+        ].join('|')
+      )
+    }, 16)
+  })
+}
+
+/** Stop the recording and hand back what it saw, one string per distinct consecutive state. */
+function readBouncelessProbe(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const w = window as unknown as { __mapsRow: string[]; __mapsRowStop?: number }
+    if (w.__mapsRowStop != null) clearInterval(w.__mapsRowStop)
+    return w.__mapsRow.filter((s, i) => i === 0 || s !== w.__mapsRow[i - 1])
+  })
+}
+
+/**
+ * THE MAP PANE HOLDS ITS SPACE BEFORE THE MAP ARRIVES (JOS-205).
+ *
+ * Two claims off one recording. First: the row's top and height are the SAME number in every frame
+ * from the view's first paint to the drawn map — the chrome that describes a map (the toolbar's
+ * drawing controls, the credits line, the header's per-layer chips) holds its space instead of
+ * materialising into it. Second: nothing it holds is VISIBLE while it holds it — a reserved
+ * control that showed would be a control stating a fact about a map that does not exist, which is
+ * the arrangement the toolbar was built to avoid.
+ */
+function stepNoBounce(states: string[]): void {
+  if (states.length === 0) {
+    note('the map row was never sampled — the anti-bounce check has no subject this run')
+    return
+  }
+  const geometry = [...new Set(states.map((s) => s.split('|').slice(0, 2).join('×')))]
+  check(
+    'the map row never moves or resizes between mounting the tab and the map arriving',
+    geometry.length === 1,
+    `${String(states.length)} distinct states: ${states.join('  →  ')}`
+  )
+  const shown = states.filter((s) => s.includes('|nomap|visible'))
+  check(
+    '…and the space it holds is held by nothing the user can see',
+    shown.length === 0,
+    shown.join(' ')
+  )
+}
+
 /** A searchable prefix taken from a label ACTUALLY on screen — never an invented string. */
 async function labelPrefix(page: Page): Promise<string> {
   const text = await textOf(page, POINT)
@@ -151,6 +231,9 @@ async function stepMount(page: Page): Promise<boolean> {
     () => false
   )
   if (!check('the nav drawer has a Maps row', hasRow)) return false
+  // BEFORE the click, because the subject is what happens between the mount and the first map
+  // (JOS-205). Reading geometry after the fact can only ever find the settled answer.
+  await installBouncelessProbe(page)
   await page.click(NAV, { timeout: 15_000 })
   const mounted = await page.waitForSelector(HEADER, { timeout: 30_000 }).then(
     () => true,
@@ -505,6 +588,9 @@ async function main(): Promise<void> {
     if (await stepMount(page)) {
       const zone = await waitZone(page)
       if (await stepMapOrEmpty(page, zone)) {
+        // FIRST, while the recording still describes only the load: everything below this line
+        // clicks something, and a click is a layout change nobody reported (JOS-205).
+        stepNoBounce(await readBouncelessProbe(page))
         // Let the ResizeObserver + first paint land before measuring anything — the CONDITION
         // being that the canvas has stopped resizing, which is exactly what stepCanvas measures.
         await settleStable(() => canvasMetrics(page), { timeoutMs: 15_000 })

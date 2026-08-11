@@ -33,7 +33,7 @@
 // one lost feature. A summary-row link stops propagation, because the row it sits in is the
 // accordion's own expand control.
 
-import { type JSX, useEffect, useRef } from 'react'
+import { type JSX, memo, useEffect, useRef } from 'react'
 import {
   Accordion,
   AccordionDetails,
@@ -331,7 +331,31 @@ function QuestDetailsToolbar({
   )
 }
 
-export function QuestAccordion({
+/**
+ * The accordion's transition, told to throw the panel away when it is closed. Module-level because
+ * it is a constant and a fresh object per row per render is exactly the kind of churn this ticket
+ * is about. See the comment at the mount site for what it buys and what it costs.
+ */
+const UNMOUNT_COLLAPSED = { transition: { unmountOnExit: true } } as const
+
+/**
+ * THE ROW'S PROPS ARE ITS PERFORMANCE CONTRACT (JOS-206), which is why every per-quest handler
+ * below takes the quest KEY instead of being a closure over one.
+ *
+ * A keystroke in the search box was measured at 82 ms at the default page cap and 179 ms with
+ * "show all" — essentially all of it React reconciliation and MUI/emotion style recomputation over
+ * rows whose content had not changed (1.86 ms per accordion, per keystroke). The filter itself
+ * costs 0.016 ms, so there was never anything to move off the renderer; the fix is to stop
+ * re-rendering rows that did not change, which means `memo` (bottom of this file) plus props whose
+ * IDENTITY is stable across a keystroke. A `() => toggle(q.key)` written per row in the list is a
+ * new function on every render and would defeat the memo silently — the list would still be
+ * correct, just as slow as before, which is the failure mode worth naming.
+ *
+ * So the list hands down ONE stable function per action and this component binds it to its own
+ * quest. The binding closures created below are per-RENDER of this row, which is exactly the thing
+ * the memo makes rare.
+ */
+function QuestAccordionRow({
   q,
   shared,
   ambiguousNames,
@@ -351,14 +375,16 @@ export function QuestAccordion({
   shared: SharedItem[]
   ambiguousNames: Set<string>
   favorited: boolean
-  onToggleFavorite: () => void
-  onToggleIgnore: () => void
+  /** star/unstar THIS quest — takes the key so the caller's function can be one stable reference */
+  onToggleFavorite: (questKey: string) => void
+  /** hide THIS quest, same shape and the same reason */
+  onToggleIgnore: (questKey: string) => void
   isFavorite: (name: string) => boolean
   toggleFavorite: (name: string) => void
   /** record one more turn-in of this quest (JOS-131) */
-  onRecordTurnIn: () => void
+  onRecordTurnIn: (questKey: string) => void
   /** take back the most recent hand-recorded turn-in */
-  onUndoTurnIn: () => void
+  onUndoTurnIn: (questKey: string) => void
   onSelectQuest: (name: string) => void
   /** a dropper name → the Mobs tab's page for that catalog row (App-level routing) */
   onOpenMob: (t: MobTarget) => void
@@ -386,7 +412,26 @@ export function QuestAccordion({
     if (anchored) ref.current?.scrollIntoView({ block: 'nearest' })
   }, [anchored])
   return (
-    <Accordion disableGutters ref={ref} defaultExpanded={anchored} data-anchored={anchored || undefined}>
+    // The testid is how a spec COUNTS rows (JOS-191's paging spec): "the page cap did not snap
+    // back" is a statement about how many of these are mounted, and `.MuiAccordion-root` would be
+    // a bet on MUI's class names rather than on this app's own list.
+    <Accordion
+      disableGutters
+      ref={ref}
+      defaultExpanded={anchored}
+      // A COLLAPSED PANEL IS NOT DRAWN AT ALL (JOS-206). MUI keeps a Collapse's children mounted
+      // by default — height 0, `visibility: hidden`, and every node of them still in the DOM and
+      // still reconciled on every render of this row. That is the item table, the shared-items
+      // section and the turn-in toolbar for each of the 40 quests on a default page (~2,700 DOM
+      // nodes, and about 60% of what a row costs to re-render) for a panel nobody has opened.
+      // The anchored path is unaffected: it mounts EXPANDED (`defaultExpanded`), so the deep
+      // link's scrollIntoView still has its content, and the accordion stays uncontrolled either
+      // way. The price is honest and small — opening a panel now builds it rather than revealing
+      // it, which is one row's worth of work on the click that asked for it.
+      slotProps={UNMOUNT_COLLAPSED}
+      data-testid="posky-quest-row"
+      data-anchored={anchored || undefined}
+    >
       <AccordionSummary expandIcon={<ExpandMoreIcon />}>
         <Stack spacing={0.75} sx={{ width: '100%', pr: 2 }}>
           <QuestSummaryRow
@@ -394,8 +439,8 @@ export function QuestAccordion({
             killTargets={killTargets}
             sharedCount={shared.length}
             favorited={favorited}
-            onToggleFavorite={onToggleFavorite}
-            onToggleIgnore={onToggleIgnore}
+            onToggleFavorite={() => onToggleFavorite(q.key)}
+            onToggleIgnore={() => onToggleIgnore(q.key)}
             onOpenLoot={onOpenLoot}
           />
           <QuestItemChips q={q} isFavorite={isFavorite} toggleFavorite={toggleFavorite} />
@@ -405,8 +450,8 @@ export function QuestAccordion({
         <QuestDetailsToolbar
           q={q}
           wikiHref={wikiHref}
-          onRecordTurnIn={onRecordTurnIn}
-          onUndoTurnIn={onUndoTurnIn}
+          onRecordTurnIn={() => onRecordTurnIn(q.key)}
+          onUndoTurnIn={() => onUndoTurnIn(q.key)}
         />
         {q.rewardStats && (
           <Typography variant="caption" color="text.secondary" component="pre" sx={{ whiteSpace: 'pre-wrap', mb: 1 }}>
@@ -427,3 +472,21 @@ export function QuestAccordion({
     </Accordion>
   )
 }
+
+/**
+ * THE EXPORTED ROW IS MEMOIZED (JOS-206) — a keystroke that does not change a quest must not
+ * re-render it.
+ *
+ * A shallow prop comparison is the whole rule, and it is only worth anything because the caller
+ * holds up its end: `PoskyView.QuestList` passes one stable function per action (never a per-row
+ * closure), a shared EMPTY array rather than a fresh `?? []`, and primitives for the two per-row
+ * bits (`favorited`, `anchored`). `isFavorite` comes from `useFavorites`, which pins it to the
+ * favorites Set; `toggleFavorite` and the two flag `toggle`s are module-lifetime functions.
+ *
+ * THE RISK THIS TAKES ON, stated plainly: a row frozen when it should have updated. Every update
+ * path is therefore carried by a prop that genuinely changes — a favorite or ignore flips
+ * `favorited` / the `isFavorite` identity, a turn-in or a drop rebuilds `quests` in `useProgress`
+ * so `q` is a new object, and the anchor rides its own key. tests/e2e/sky-turnin.e2e.mts drives
+ * loot → turn-in → refarm against real rows and tests/e2e/sky-filters.e2e.mts drives the star.
+ */
+export const QuestAccordion = memo(QuestAccordionRow)

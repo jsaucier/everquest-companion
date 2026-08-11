@@ -19,7 +19,8 @@ import type {
   TriageDownloads,
   TriageFunnelStepRow,
   TriageLiveSessions,
-  TriageMixRow
+  TriageMixRow,
+  TriageStartupRow
 } from '../src/shared/triage'
 
 const pct = (v: number): string => `${(v * 100).toFixed(1)}%`
@@ -35,8 +36,10 @@ function bar(label: string, n: number, max: number, width = 24): string {
 }
 
 /** A `dim -> n` list as a bar chart, capped. Empty renders as one honest line. */
-function mixBlock(rows: readonly TriageMixRow[], limit = 10): string[] {
-  if (rows.length === 0) return ['  (nothing recorded)']
+/** `empty` is overridable because "nothing recorded" is sometimes a fact worth naming: a mix that
+ *  is empty because the READING is new says so, rather than looking like a table nobody filled. */
+function mixBlock(rows: readonly TriageMixRow[], limit = 10, empty = '(nothing recorded)'): string[] {
+  if (rows.length === 0) return [`  ${empty}`]
   const max = Math.max(...rows.map((r) => r.n))
   return rows.slice(0, limit).map((r) => bar(r.id, r.n, max))
 }
@@ -188,18 +191,41 @@ function startupLines(d: TriageAnalyticsData): string[] {
   if (s.byVersion.length === 0) return [...head, '  (no launch has reported a replay yet)']
   return [
     ...head,
-    ...s.byVersion.map(
-      (r) =>
-        `  ${r.version.padEnd(14)} ${String(r.launches).padStart(5)} launches` +
+    ...s.byVersion.flatMap((r) => [
+      `  ${r.version.padEnd(14)} ${String(r.launches).padStart(5)} launches` +
         ` · replay p50 ${(r.p50ReplayLabel ?? '-').padStart(11)} p95 ${(r.p95ReplayLabel ?? '-').padStart(11)}` +
         ` · block p50 ${(r.p50BlockLabel ?? '-').padStart(10)} p95 ${(r.p95BlockLabel ?? '-').padStart(10)}` +
         ` · duty ${r.dutyAchieved === null ? '-' : pct(r.dutyAchieved)}` +
         ` · ${r.meanEventsReplayed === null ? '-' : String(Math.round(r.meanEventsReplayed))} events/launch` +
-        ` · ${String(r.blocksOver50)} stalls >50ms`
-    ),
+        ` · ${String(r.blocksOver50)} stalls >50ms`,
+      stutterLine(r),
+    ]),
     '  log size of measured launches (all builds)',
     ...mixBlock(s.logSizes),
+    '  new bytes since that install last exited cleanly (all builds)',
+    ...mixBlock(s.newBytes, 10, '(no launch has reported one yet)'),
   ]
+}
+
+/**
+ * THE SECOND LINE OF A BUILD'S ROW (JOS-57 scope addition) — the machine's half of the reading,
+ * indented under the process's half so the pair is read together.
+ *
+ * TIMER DRIFT THAT MOVED WHILE THE BLOCK FIGURES ABOVE DID NOT is a machine stuttering around a
+ * healthy process; that comparison is the entire point, and it only works when the two lines are
+ * adjacent. The launch count is printed BECAUSE it differs from the row above: a short fold
+ * reports no distribution at all, so this line describes a subset and says how big it is.
+ */
+function stutterLine(r: TriageStartupRow): string {
+  if (r.stutterLaunches === 0 && r.p95FirstMbLabel === null) {
+    return '                 (no stutter or cold-read reading on this build)'
+  }
+  return (
+    `                 ${String(r.stutterLaunches).padStart(5)} measured` +
+    ` · drift p50 ${(r.p50StutterLabel ?? '-').padStart(10)} p95 ${(r.p95StutterLabel ?? '-').padStart(10)}` +
+    ` · ${r.stutterLatePct === null ? '-' : pct(r.stutterLatePct)} ticks late` +
+    ` · first MB p50 ${(r.p50FirstMbLabel ?? '-').padStart(10)} p95 ${(r.p95FirstMbLabel ?? '-').padStart(10)}`
+  )
 }
 
 function versionLines(d: TriageAnalyticsData): string[] {

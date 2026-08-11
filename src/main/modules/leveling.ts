@@ -8,6 +8,8 @@
 // source of truth that could disagree with the log after a rescan or an epoch.
 
 import type { EqModule } from './types'
+import { S, validate, type FoldSchema } from '../foldCache/schema'
+import type { FoldCheckpointable } from '../foldCache/serialize'
 import type { LogEvent } from '../../shared/logEvents'
 import type {
   AAEvent,
@@ -18,7 +20,29 @@ import type {
   LevelingSnap
 } from '../../shared/types'
 
-export class LevelingModule implements EqModule<LevelingSnap, LevelingDelta> {
+/**
+ * THE CHECKPOINT DECLARATION (JOS-208 phase 2). Four append-only series, uncapped by contract
+ * (the AA identity needs the whole history — see the header), which makes this the second
+ * BULK-DATA unit beside `loot` and the one whose blob grows with the character's whole life.
+ */
+const LEVELING_FOLD_SCHEMA: FoldSchema = S.obj({
+  levels: S.arr(S.obj({ ts: S.num, level: S.num })),
+  aaGains: S.arr(S.obj({ ts: S.num, amount: S.num, nowHave: S.num })),
+  aaSpends: S.arr(S.obj({ ts: S.num, ability: S.str, cost: S.num, rank: S.opt(S.num) })),
+  aaPotions: S.arr(S.obj({ ts: S.num })),
+  seq: S.num
+})
+
+/** The leveling module's complete event-derived state. */
+export interface LevelingFoldState {
+  levels: LevelEvent[]
+  aaGains: AAEvent[]
+  aaSpends: AASpendEvent[]
+  aaPotions: AAPotionEvent[]
+  seq: number
+}
+
+export class LevelingModule implements EqModule<LevelingSnap, LevelingDelta>, FoldCheckpointable<LevelingFoldState> {
   readonly id = 'leveling'
   private levels: LevelEvent[] = []
   private aaGains: AAEvent[] = []
@@ -121,5 +145,39 @@ export class LevelingModule implements EqModule<LevelingSnap, LevelingDelta> {
     this.pSpends = []
     this.pPotions = []
     return { seq: this.seq, delta }
+  }
+
+  // ---- the checkpoint seam (JOS-208) ---------------------------------------------------------
+
+  readonly foldSchema = LEVELING_FOLD_SCHEMA
+
+  /**
+   * The four PENDING arrays are absent for the reason every module's are: a restored fold has
+   * published nothing and owes the renderer no increment. The rows are flat records nothing
+   * mutates after append, so a shallow array copy is enough to un-alias the blob.
+   */
+  serializeFold(): LevelingFoldState {
+    return {
+      levels: [...this.levels],
+      aaGains: [...this.aaGains],
+      aaSpends: [...this.aaSpends],
+      aaPotions: [...this.aaPotions],
+      seq: this.seq
+    }
+  }
+
+  deserializeFold(state: unknown): boolean {
+    if (!validate(LEVELING_FOLD_SCHEMA, state).ok) return false
+    const s = state as LevelingFoldState
+    this.levels = s.levels
+    this.aaGains = s.aaGains
+    this.aaSpends = s.aaSpends
+    this.aaPotions = s.aaPotions
+    this.seq = s.seq
+    this.pLevels = []
+    this.pGains = []
+    this.pSpends = []
+    this.pPotions = []
+    return true
   }
 }

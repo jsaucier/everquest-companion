@@ -7,11 +7,12 @@
 // container calls, not inside the Quests tab's markup) so flipping to Ignored and back does not
 // reset the filters you had set up.
 //
-// SEVEN of those choices outlive the hook entirely, in localStorage: the class filter, the sort
+// EIGHT of those choices outlive the hook entirely, in localStorage: the class filter, the sort
 // order, the two hide-boxes ("hide completed", JOS-90; "hide turned in", JOS-145 — see
-// useStoredFlag), the island/boss facets (JOS-124) and the Ready tab's first-time toggle
-// (JOS-155, the only one that ships ticked). Living above the Quests/Ignored switch was never
-// enough for them, because leaving the Sky tab for another VIEW unmounts this hook outright.
+// useStoredFlag), the island/boss facets (JOS-124), the Ready tab's first-time toggle
+// (JOS-155, the only one that ships ticked) and "show all quests at once" (JOS-191). Living above
+// the Quests/Ignored switch was never enough for them, because leaving the Sky tab for another
+// VIEW unmounts this hook outright.
 
 import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import type { QuestProgress } from './useProgress'
@@ -19,6 +20,10 @@ import { useFavorites } from '../favorites/useFavorites'
 import { useQuestFavorites, useQuestIgnored, type QuestFlagSet } from '../favorites/useQuestFlags'
 import { DEFAULT_SORT, isSortKey, orderQuests, type SortKey } from './questSort'
 import { facetOptions, filterByFacets, type FacetOptions } from './questFacets'
+// What the search box searches (JOS-207): the quest name, the reward, the required item names,
+// and — through the facets' own derivations, so there is one truth per quest and not two — the
+// bosses it stands in front of and the islands it names.
+import { filterByQuery } from './questSearch'
 // The two readings of "done" this tab offers, and the argument for keeping them apart (JOS-131 for
 // has-every-item-now, JOS-145 for has-ever-turned-in). Two lines of code, a page of reasoning, and
 // a node test — so they live in their own pure module.
@@ -34,8 +39,10 @@ export type { SortKey }
  */
 export type TabKey = 'quests' | 'ready' | 'classes' | 'ignored'
 
-// How many Accordions to render before the "show more" cap kicks in.
-const PAGE = 40
+// How many Accordions to render before the "show more" cap kicks in. Exported because the LIST'S
+// FOOTER has to know it too (PoskyView.ListFooter): once "show all" is on there is no cap left to
+// compare against, so "is this list even long enough to be worth an off switch" is asked of this.
+export const QUEST_PAGE = 40
 
 const SELECTED_CLASSES_KEY = 'eq.selectedClasses'
 const SORT_KEY = 'eq.questSort'
@@ -45,6 +52,8 @@ const ISLANDS_KEY = 'eq.posky.islands'
 const BOSSES_KEY = 'eq.posky.bosses'
 /** JOS-155's Ready-tab toggle. Absent means ON — see the `useStoredFlag` default below. */
 const READY_FIRST_TIME_KEY = 'eq.posky.readyFirstTimeOnly'
+/** JOS-191's "show all quests at once". Absent means OFF — a fresh install still pages. */
+const SHOW_ALL_KEY = 'eq.posky.showAll'
 
 /** A stored list of picked names. Anything that is not an array of strings reads as no picks —
  *  a corrupt or hand-edited value degrades to the default rather than throwing the tab away. */
@@ -158,31 +167,63 @@ function questHasFavorite(q: QuestProgress, isFavorite: (name: string) => boolea
 }
 
 /**
- * The page cap, and the two things that move it: a new filtered set shows from the top, and "show
- * more" adds a page.
+ * The page cap, and the three things that move it: "show more" adds a page, "show all" takes the
+ * cap off for good, and a change to WHAT THE USER ASKED TO SEE starts again from the top.
  *
  * Its own hook because it is the one piece of list state that is about RENDERING COST rather than
  * about what the user asked to see — accordions are variable-height, so this list caps and
  * paginates instead of windowing, and the cap is what keeps a keystroke from re-rendering more
- * than PAGE quests at once. `reset` is exported beside `showMore` because `revealQuest` has to
- * put the user back at the top of a list it just re-filtered.
+ * than QUEST_PAGE quests at once. `reset` is exported beside `showMore` because `revealQuest` has
+ * to put the user back at the top of a list it just re-filtered.
+ *
+ * IT USED TO RESET ON THE FILTERED ARRAY'S IDENTITY, AND THAT IS THE JOS-191 DEFECT. `filtered` is
+ * a `useMemo` over the quests AND the favorites, and `quests` is itself rebuilt every time the loot
+ * ledger appends, a turn-in is written, or an inventory reload lands. So the effect fired on things
+ * that are not a request at all: starring a quest, favoriting an item off a chip, and any drop
+ * arriving while the tab was open each handed back a NEW array and snapped a list the user had
+ * paged all the way open back to the first 40 rows — with everything past row 40 unmounted, taking
+ * its expanded accordion with it. The reporter's words were that clicking anything "resets the page
+ * to collapsed", and that is this line.
+ *
+ * So the reset key is now the SELECTION — the class/island/boss picks, the search, the sort and the
+ * four hide-boxes, i.e. exactly the controls whose whole purpose is to change which rows are in the
+ * list — passed as a value-compared string rather than an array identity. A new search shows from
+ * the top, as it always did; new DATA under an unchanged question leaves the user's place alone.
+ * Nothing here reads the rows themselves, which is the point: the cap answers "how much of this did
+ * you ask to see", and no amount of the list changing underneath is the user asking again.
+ *
+ * `showAll` is the persisted half (JOS-90's rule, the seventh preference in this file — see
+ * `useStoredFlag`): a player who says "all of them" means it across the tab switch that unmounts
+ * this hook and across the restart, not only until the next drop. Turning it off resets the page
+ * count with it, so "show fewer" lands on the first page rather than wherever they had paged to.
  */
-function usePaging(filtered: QuestProgress[]): {
+function usePaging(selectionKey: string): {
   visibleCount: number
   showMore: () => void
+  showAll: boolean
+  setShowAll: (v: boolean) => void
   reset: () => void
 } {
-  const [visibleCount, setVisibleCount] = useState(PAGE)
+  const [showAll, setShowAll] = useStoredFlag(SHOW_ALL_KEY)
+  const [pageCap, setPageCap] = useState(QUEST_PAGE)
   useEffect(() => {
-    setVisibleCount(PAGE)
-  }, [filtered])
+    setPageCap(QUEST_PAGE)
+  }, [selectionKey])
   return {
-    visibleCount,
+    // No cap at all when the user asked for the lot: `slice(0, Infinity)` is the whole list, and
+    // `length > Infinity` is false, so the "show more" affordance disappears by the same test that
+    // draws it. A number equal to today's row count would be a THIRD thing to keep in step.
+    visibleCount: showAll ? Number.POSITIVE_INFINITY : pageCap,
     showMore: () => {
-      setVisibleCount((n) => n + PAGE)
+      setPageCap((n) => n + QUEST_PAGE)
+    },
+    showAll,
+    setShowAll: (v: boolean) => {
+      setShowAll(v)
+      if (!v) setPageCap(QUEST_PAGE)
     },
     reset: () => {
-      setVisibleCount(PAGE)
+      setPageCap(QUEST_PAGE)
     }
   }
 }
@@ -235,7 +276,6 @@ interface QuestSelection {
 /** Filter → sort → pin, in that order. Pure, so the useMemo below is the only caller state. */
 function selectQuests(sel: QuestSelection): QuestProgress[] {
   const { isFavorite, isQuestFavorite } = sel
-  const q = sel.query.trim().toLowerCase()
   let list: readonly QuestProgress[] = sel.quests
   if (sel.selectedClasses.length) list = list.filter((x) => sel.selectedClasses.includes(x.className))
   // The island/boss facets, both dimensions in one pass (questFacets.ts owns the semantics).
@@ -249,16 +289,12 @@ function selectQuests(sel: QuestSelection): QuestProgress[] {
   // "Favorites only" = the quest itself is starred OR it needs a starred item.
   if (sel.favoritesOnly)
     list = list.filter((x) => isQuestFavorite(x.key) || questHasFavorite(x, isFavorite))
-  if (q) {
-    list = list.filter(
-      (x) =>
-        x.name.toLowerCase().includes(q) ||
-        // `?? false` only so the expression is a boolean; a quest with no reward matched
-        // nothing here before either.
-        (x.reward?.toLowerCase().includes(q) ?? false) ||
-        x.items.some((i) => i.name.toLowerCase().includes(q))
-    )
-  }
+  // The typed query, in ONE pass over five fields (questSearch.ts owns the rule): the quest name,
+  // the reward, the item names, and since JOS-207 the quest's bosses and islands — the latter two
+  // read through the same `questBosses`/`questIslands` the facet dropdowns are built from, so the
+  // box and the pickers can never disagree about what a quest's bosses and islands are. An empty
+  // query hands the caller's own array straight back.
+  list = filterByQuery(list, sel.query)
   // A quest the user STARRED outright outranks one that merely contains a favorited item — the
   // star is an explicit "I'm working on this", so it pins even once turned in; the item-level pin
   // stays what it always was (only while the quest still needs something, which since JOS-131 is
@@ -327,8 +363,15 @@ export interface QuestListState {
   setHideNoItems: (v: boolean) => void
   favoritesOnly: boolean
   setFavoritesOnly: (v: boolean) => void
+  /**
+   * How many rows the list may draw. `Infinity` when `showAll` is on — see `usePaging`, which also
+   * states why this no longer restarts at a page whenever the data underneath changes (JOS-191).
+   */
   visibleCount: number
   showMore: () => void
+  /** "Show all quests at once", stored under `eq.posky.showAll`. Off on a fresh install. */
+  showAll: boolean
+  setShowAll: (v: boolean) => void
   isFavorite: (name: string) => boolean
   toggleFavorite: (name: string) => void
   questFavorites: QuestFlagSet
@@ -483,9 +526,15 @@ export function useQuestList(quests: QuestProgress[]): QuestListState {
     ]
   )
 
-  // The page cap, which resets itself whenever the filtered set changes (a new search shows
-  // from the top).
-  const { visibleCount, showMore, reset: resetPaging } = usePaging(filtered)
+  // The page cap. Its reset key is the SELECTION — every control that decides which rows belong in
+  // the list — and deliberately NOT the filtered array, which changes identity whenever a drop
+  // lands or a star is clicked (usePaging states the defect that was, JOS-191).
+  const { visibleCount, showMore, showAll, setShowAll, reset: resetPaging } = usePaging(
+    JSON.stringify([
+      selectedClasses, islands, bosses, deferredQuery, sort,
+      hideCompleted, hideTurnedIn, hideNoItems, favoritesOnly
+    ])
+  )
 
   return {
     tab,
@@ -516,6 +565,8 @@ export function useQuestList(quests: QuestProgress[]): QuestListState {
     setFavoritesOnly,
     visibleCount,
     showMore,
+    showAll,
+    setShowAll,
     isFavorite,
     toggleFavorite,
     questFavorites,

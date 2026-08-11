@@ -225,14 +225,25 @@ test('JOS-133 wired two more, and BOTH are counts on paths that used to log an e
   const statusBranch = img.slice(img.indexOf('if (!res.ok)'), img.indexOf('const bytes = new Uint8Array'))
   assert.match(statusBranch, /onError\(/, 'an HTTP status is still ours to fix, and still an error')
 
-  // 7. suppressed lines — bumped in `logError` from the leaf rule's verdict, and NOT from anywhere
-  //    else: a second caller is how the honest total quietly stops adding up.
+  // 7. suppressed lines — bumped in `logError` from a leaf rule's verdict, and from NOWHERE ELSE
+  //    in the tree: a caller outside this funnel is how the honest total quietly stops adding up.
   const errorLog = read('src/main/errorLog.ts')
   assert.match(errorLog, /const repeat = errorRepeat\(source, body\)/)
   assert.match(errorLog, /if \(repeat\.suppressed\) noteSuppressedErrorLine\(\)/)
-  assert.equal(errorLog.match(/noteSuppressedErrorLine\(\)/g)?.length, 1)
-  // The report is taken BEFORE the cap, so suppressing a LINE never suppresses an observation.
-  assert.ok(errorLog.indexOf('noteError(source, payload)') < errorLog.indexOf('const repeat ='))
+  // TWO call sites since JOS-197, one per cap, and that is the whole point of the counter: an
+  // occurrence the per-fingerprint BUDGET silenced is withheld exactly as an occurrence the
+  // identical-line cap withheld, so `mainErrorLogLines + suppressedErrorLines` still adds up to
+  // what really happened whichever rule stopped it.
+  assert.equal(errorLog.match(/noteSuppressedErrorLine\(\)/g)?.length, 2)
+  assert.match(errorLog, /if \(!budget\.report\) \{\s+noteSuppressedErrorLine\(\)/)
+  // …and still only from here. The counter has one funnel, in src/main and in the tests alike.
+  // A CALL, not a mention: both cap modules NAME the counter in their headers (that is where the
+  // argument for it lives) and neither may reach it — the funnel bumps it, from the verdict.
+  const callers = ['src/main/crashGuards.ts', 'src/main/errorBudget.ts', 'src/main/errorRepeat.ts']
+  for (const f of callers) assert.ok(!read(f).includes('noteSuppressedErrorLine('), `${f} does not count`)
+  // The report is taken BEFORE both caps, so suppressing a LINE never suppresses an observation.
+  assert.ok(errorLog.indexOf('noteError(source, payload,') < errorLog.indexOf('const repeat ='))
+  assert.ok(errorLog.indexOf('noteError(source, payload,') < errorLog.indexOf('if (!budget.report)'))
 })
 
 test('the two new fields are OPTIONAL on the wire — an old client must not fail a batch', () => {

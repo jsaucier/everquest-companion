@@ -42,7 +42,9 @@ import { CONSIDER_FACTION_COLOR } from '@shared/logEvents'
 import { wikiPageUrl } from '@shared/wiki'
 import { formatTime } from '../lib/formatDate'
 import { isTradeskillOnly } from '../lib/itemKnowledgeView'
-import { ItemHoverCard, MobHoverCard, lookupItemCached } from './feedHoverCards'
+import { ItemHoverCard, lookupItemCached } from './feedHoverCards'
+import { MobCard } from '../lib/hoverCards'
+import { overlayMobLookup } from './mobLookup'
 import { HoverCardLayer } from './hoverCardLayer'
 import { OverlayContent } from './overlayScale'
 import { TextScaleStepper } from './TextScaleStepper'
@@ -288,7 +290,7 @@ function Row({ e, interactive }: { e: FeedEvent; interactive: boolean }): JSX.El
 
       {anchor && previewMob && (
         <HoverCardLayer anchor={anchor}>
-          <MobHoverCard mob={previewMob} con={e.con} />
+          <MobCard mob={previewMob} con={e.con} lookup={overlayMobLookup} />
         </HoverCardLayer>
       )}
       {anchor && !previewMob && previewItem && (

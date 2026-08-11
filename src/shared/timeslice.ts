@@ -162,6 +162,21 @@ export function sliceLabel(id: SliceId): string {
 }
 
 /**
+ * Every id as VALUES — the runtime half of `SliceId`, derived from `LABELS` so the two cannot
+ * drift, and in that object's own order (which is the control's render order).
+ *
+ * It exists because a slice pick is now PERSISTED somewhere (JOS-195: the XP overlay remembers
+ * its own), and anything read back off disk has to be checked against the closed union rather
+ * than trusted to still be one of its members.
+ */
+export const SLICE_IDS = Object.keys(LABELS) as SliceId[]
+
+/** Is `v` one of the ids this build knows? The store's gate — see `SLICE_IDS`. */
+export function isSliceId(v: unknown): v is SliceId {
+  return typeof v === 'string' && (SLICE_IDS as string[]).includes(v)
+}
+
+/**
  * THE MOST RECENT LOGIN THE LOG STATES, or null when it states none.
  *
  * `offlineEnd` is the instant the absence ended — the "Welcome to EverQuest Legends!" line — and

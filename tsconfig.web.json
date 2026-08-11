@@ -51,6 +51,8 @@
     // …and `uiScale.ts` (the main window's text size, JOS-123), likewise.
     "src/preload/uiScale.ts",
     // …and `buffTrust.ts` (the buff externals allowlist, JOS-140), likewise.
-    "src/preload/buffTrust.ts"
+    "src/preload/buffTrust.ts",
+    // …and `respawn.ts` (the respawn watch list, JOS-194), likewise.
+    "src/preload/respawn.ts"
   ]
 }

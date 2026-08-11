@@ -172,6 +172,70 @@ async function stepDefault(page: Page): Promise<void> {
     'THE LADDER BELONGS TO THE WEEK VIEW - the overall roster draws none',
     (await countOf(page, LADDER)) === 0
   )
+  // The OVERALL roster is where every target is on screen at once, so it is the widest sample of
+  // portraits this spec ever has — which is why the JOS-198 check is made here rather than in the
+  // week view.
+  await stepPortraitsShipped(page)
+}
+
+/**
+ * THE PORTRAITS COME OUT OF THE INSTALL, NOT OFF A WIKI (JOS-198).
+ *
+ * This is the one assertion in the suite that a unit test provably cannot make, and the reason
+ * it lives in THIS spec: the boss cards are the only surface that draws the `url` route, and the
+ * claim is about bytes arriving through `protocol.handle` into a real Chromium image decoder.
+ *
+ * WHY `naturalWidth > 1` IS THE WHOLE PROOF. `EQ_E2E=1` puts the app on a cold temp `userData`
+ * and cuts the network: a cache MISS under that flag is answered with `E2E_BLANK_PNG`, a 1x1
+ * transparent pixel (src/main/imageCache.ts). So before this ticket every portrait in this run
+ * decoded to exactly 1x1. A portrait that now decodes WIDER than one pixel cannot have come from
+ * the empty runtime cache and cannot have come from the network — the only remaining source is
+ * `resources/wiki-images/`, which is the thing being proved. Height is read too so a
+ * hypothetical 1xN answer could not sneak past.
+ *
+ * It is deliberately NOT an exact size. The bundled portraits are whatever the wiki serves
+ * (200px and 300px thumbnails today) and the card scales them with CSS; pinning a number here
+ * would rot the next time somebody re-scrapes bosses.json, and would be asserting the wiki's
+ * choices rather than this app's behaviour. `> 1` is the entire content of the claim.
+ */
+async function stepPortraitsShipped(page: Page): Promise<void> {
+  const readPortraits = (): Promise<{ total: number; loaded: number; tiny: number; sample: string }> =>
+    page.evaluate((sel) => {
+      const imgs = [...document.querySelectorAll<HTMLImageElement>(`${sel} img`)]
+      const loaded = imgs.filter((i) => i.complete && i.naturalWidth > 0)
+      const tiny = loaded.filter((i) => i.naturalWidth <= 1 || i.naturalHeight <= 1)
+      const first = loaded[0]
+      return {
+        total: imgs.length,
+        loaded: loaded.length,
+        tiny: tiny.length,
+        sample: first ? `${first.naturalWidth}x${first.naturalHeight} ${first.currentSrc.slice(0, 60)}` : 'none'
+      }
+    }, CARD)
+
+  // Decoding is asynchronous even for a local protocol response, so wait for the READING to
+  // stop moving rather than for a clock (AGENTS.md wave E3) — `loaded` climbing to `total`.
+  const seen = await settle(readPortraits, (r) => r.total > 0 && r.loaded === r.total, {
+    timeoutMs: 30_000
+  })
+  check(
+    'EVERY BOSS CARD DRAWS A PORTRAIT, and every one of them decoded',
+    seen.total > 0 && seen.loaded === seen.total,
+    `${String(seen.loaded)} / ${String(seen.total)} decoded`
+  )
+  check(
+    'THE PORTRAITS ARE REAL PIXELS FROM THE INSTALL - not the 1x1 blank a cache miss serves',
+    seen.loaded > 0 && seen.tiny === 0,
+    `${String(seen.tiny)} blank of ${String(seen.loaded)}; first: ${seen.sample}`
+  )
+  // …and they arrived over the app's own scheme, never as an https URL the CSP would have had
+  // to allow. A regression that "fixed" a missing image by un-wrapping `cachedImageUrl` would
+  // pass both checks above on a machine with a network and fail every user without one.
+  check(
+    '…and they came over eqimg://, so nothing reached out to a wiki to draw them',
+    seen.sample.includes('eqimg://'),
+    seen.sample
+  )
 }
 
 /** THE LADDER: five rungs a card, base first, on every card the week view draws. */

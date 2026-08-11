@@ -24,7 +24,9 @@ import {
   CHAR_COUNT_EDGES,
   COLD_START_MS_EDGES,
   LOG_SIZE_BYTES_EDGES,
+  NEW_BYTES_EDGES,
   SESSION_AGE_MS_EDGES,
+  STUTTER_MS_EDGES,
   TELEMETRY_BUFFER_CAP,
   TELEMETRY_EVENT_KINDS,
   TELEMETRY_FEATURES,
@@ -106,7 +108,12 @@ test('SUBSTANCE: the page prints every bucket RANGE, from the schema’s own edg
     CHAR_COUNT_EDGES,
     LOG_SIZE_BYTES_EDGES,
     ALERT_COUNT_EDGES,
-    SESSION_AGE_MS_EDGES
+    SESSION_AGE_MS_EDGES,
+    // JOS-57's scope addition: the cold-read delta and the two drift percentiles, each of which
+    // reaches a user as a RANGE and therefore owes this page the table it can be read off.
+    NEW_BYTES_EDGES,
+    STUTTER_MS_EDGES,
+    STUTTER_MS_EDGES
   ]
   assert.equal(TELEMETRY_DOC_BUCKETS.length, edgeSets.length, 'every bucket field is documented')
   for (const b of TELEMETRY_DOC_BUCKETS) {

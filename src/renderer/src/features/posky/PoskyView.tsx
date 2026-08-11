@@ -18,13 +18,13 @@ import { useProgress, type QuestProgress } from './useProgress'
 // read the same dump the Exaltations tab does, so they get the same one-line treatment — the
 // command, one clause of why, and the FILE's own age (or "not yet run").
 import OutputKindLine from '../../components/OutputKindLine'
-import type { SharedItemsMap } from './sharedItems'
+import type { SharedItem, SharedItemsMap } from './sharedItems'
 import { QuestIgnoreButton } from '../favorites/QuestFlagButtons'
 import { QuestAccordion } from './QuestAccordion'
 import { TurnInBadge } from './TurnInControls'
 import QuestFilterBar from './QuestFilterBar'
 import ClassUnlockList from './ClassUnlockList'
-import { useQuestList, type QuestListState, type TabKey } from './useQuestList'
+import { QUEST_PAGE, useQuestList, type QuestListState, type TabKey } from './useQuestList'
 import type { MobTarget } from '../mobs/mobTarget'
 import Confetti from '../../lib/Confetti'
 
@@ -152,7 +152,68 @@ interface QuestListProps {
   onOpenLoot?: (item: string) => void
 }
 
-// The scrolling body: one accordion per quest up to the page cap, then the "show more" button.
+/**
+ * THE BOTTOM OF THE LIST: how to see more of it, and how to stop (JOS-191).
+ *
+ * "Show more" is the page it always was. "Show all" beside it is the reporter's ask — they had
+ * paged the whole list open, and every star, every drop and every turn-in threw it back to the
+ * first page (the cause was `usePaging`'s reset key, fixed there). One click for the lot is the
+ * affordance they thought they were using, and it is a STORED preference, so it holds across the
+ * tab switch that unmounts this view and across a restart.
+ *
+ * SO THE OFF SWITCH LIVES HERE TOO, in the place the on switch was: a preference with no visible
+ * way back is a trap, and the bottom of the list is where the user just clicked. It appears only
+ * when the list is long enough for the cap to have meant something — under one page, "show fewer"
+ * would draw exactly the same rows and read as a button that does nothing.
+ */
+function ListFooter({ total, list }: { total: number; list: QuestListState }): JSX.Element | null {
+  if (list.showAll) {
+    if (total <= QUEST_PAGE) return null
+    return (
+      <Box sx={{ textAlign: 'center', py: 1.5 }}>
+        <Button size="small" data-testid="posky-show-fewer" onClick={() => list.setShowAll(false)}>
+          Show fewer
+        </Button>
+      </Box>
+    )
+  }
+  if (total <= list.visibleCount) return null
+  return (
+    <Stack direction="row" spacing={1} justifyContent="center" sx={{ py: 1.5 }}>
+      <Button variant="outlined" size="small" data-testid="posky-show-more" onClick={list.showMore}>
+        Show more ({total - list.visibleCount} more)
+      </Button>
+      <Button
+        variant="outlined"
+        size="small"
+        data-testid="posky-show-all"
+        title="Draw every quest, and keep drawing them - this is remembered"
+        onClick={() => list.setShowAll(true)}
+      >
+        Show all ({total})
+      </Button>
+    </Stack>
+  )
+}
+
+/**
+ * The shared "this quest shares nothing" answer. A `?? []` written in the map would mint a new
+ * array per row per render, which is a changed prop on a memoized row — the whole point of
+ * JOS-206's first fix — for a quest that shares nothing with anything.
+ */
+const NO_SHARED_ITEMS: SharedItem[] = []
+
+/**
+ * The scrolling body: one accordion per quest up to the page cap, then the list footer.
+ *
+ * EVERY PROP THIS PASSES DOWN IS IDENTITY-STABLE ACROSS A KEYSTROKE (JOS-206), because
+ * `QuestAccordion` is `memo`'d and a shallow comparison is only as good as what it is handed. The
+ * two turn-in actions are the only ones that need wrapping — they are async, and the row wants a
+ * `void` handler — so they are `useCallback`ed here rather than written inline in the map. The
+ * rest are already stable at their source: `questFavorites.toggle` / `questIgnored.toggle` are
+ * module-lifetime store methods, `setQuery` is a `useState` setter, `isFavorite` is pinned to the
+ * favorites Set (useFavorites), and `onOpenMob`/`onOpenLoot` are App's memoized routers.
+ */
 function QuestList({
   quests,
   list,
@@ -164,6 +225,18 @@ function QuestList({
   onOpenMob,
   onOpenLoot
 }: QuestListProps): JSX.Element {
+  const onRecordTurnIn = useCallback(
+    (questKey: string) => {
+      void recordTurnIn(questKey)
+    },
+    [recordTurnIn]
+  )
+  const onUndoTurnIn = useCallback(
+    (questKey: string) => {
+      void undoTurnIn(questKey)
+    },
+    [undoTurnIn]
+  )
   return (
     <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
       {quests.slice(0, list.visibleCount).map((q) => (
@@ -175,27 +248,21 @@ function QuestList({
           key={anchor?.key === q.key ? `${q.key}#${String(anchor.nonce)}` : q.key}
           anchored={anchor?.key === q.key}
           q={q}
-          shared={sharedItems.get(q.key) ?? []}
+          shared={sharedItems.get(q.key) ?? NO_SHARED_ITEMS}
           ambiguousNames={ambiguousNames}
           favorited={list.questFavorites.has(q.key)}
-          onToggleFavorite={() => list.questFavorites.toggle(q.key)}
-          onToggleIgnore={() => list.questIgnored.toggle(q.key)}
+          onToggleFavorite={list.questFavorites.toggle}
+          onToggleIgnore={list.questIgnored.toggle}
           isFavorite={list.isFavorite}
           toggleFavorite={list.toggleFavorite}
-          onRecordTurnIn={() => void recordTurnIn(q.key)}
-          onUndoTurnIn={() => void undoTurnIn(q.key)}
-          onSelectQuest={(name) => list.setQuery(name)}
+          onRecordTurnIn={onRecordTurnIn}
+          onUndoTurnIn={onUndoTurnIn}
+          onSelectQuest={list.setQuery}
           onOpenMob={onOpenMob}
           onOpenLoot={onOpenLoot}
         />
       ))}
-      {quests.length > list.visibleCount && (
-        <Box sx={{ textAlign: 'center', py: 1.5 }}>
-          <Button variant="outlined" size="small" onClick={list.showMore}>
-            Show more ({quests.length - list.visibleCount} more)
-          </Button>
-        </Box>
-      )}
+      <ListFooter total={quests.length} list={list} />
     </Box>
   )
 }
@@ -402,7 +469,11 @@ export default function PoskyView({
   })
   const [toast, setToast] = useState<string | null>(null)
 
-  const onReload = async (): Promise<void> => setToast(await reloadInventory())
+  // Stable, because QuestFilterBar's right-hand group is memoized around it (JOS-206): a fresh
+  // arrow here would re-render the "Count items from" select on every character typed.
+  const onReload = useCallback(async (): Promise<void> => {
+    setToast(await reloadInventory())
+  }, [reloadInventory])
 
   // Counts describe the list you are looking at, so ignored quests are not in them.
   const totalQuests = list.visible.length

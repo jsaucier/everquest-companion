@@ -356,6 +356,31 @@ export interface TriageStartupRow {
   meanEventsReplayed: number | null
   /** Total main-loop stalls of 50 ms or more, across those launches. */
   blocksOver50: number
+  /**
+   * THE SYSTEM-STUTTER PROXY (JOS-57 scope addition) — p50 / p95 of the OBSERVED DRIFT of a fixed
+   * heartbeat that ran for the length of each replay, as bucket ranges.
+   *
+   * READ THEM AGAINST THE BLOCK FIGURES ABOVE, never alone. Drift that climbs while
+   * `p95BlockLabel` and `dutyAchieved` hold still is a build behaving itself on machines that are
+   * not — which is the reading the fleet could not previously produce, and the reason a launch
+   * that "feels" bad on someone else's computer stopped being unfalsifiable.
+   */
+  p50StutterLabel: string | null
+  p95StutterLabel: string | null
+  /**
+   * Launches on this build that reported a stutter reading — a SMALLER population than `launches`
+   * by design (a fold too short for a percentile reports none), and the divisor for the rate
+   * below. Zero is "this build has never reported one", which the labels render as a dash.
+   */
+  stutterLaunches: number
+  /** Mean share of heartbeat ticks that were LATE, 0..1, over `stutterLaunches`. Null when none. */
+  stutterLatePct: number | null
+  /**
+   * TIME TO THE FIRST MEGABYTE of the log read, p50 / p95 as bucket ranges — the cold-disk hint.
+   * Over the launches that reported one (a log smaller than a megabyte reports none).
+   */
+  p50FirstMbLabel: string | null
+  p95FirstMbLabel: string | null
 }
 
 export interface TriageAnalyticsStartup {
@@ -367,6 +392,15 @@ export interface TriageAnalyticsStartup {
    * are read in: a build whose p95 rose may simply have been run on bigger logs.
    */
   logSizes: TriageMixRow[]
+  /**
+   * HOW MUCH OF THAT LOG WAS NEW (JOS-57 scope addition) — bytes appended since the reporting
+   * install last shut down cleanly, as bucket labels, fleet-wide for the same reason `logSizes` is.
+   *
+   * It is the other half of the size context, and the half the AV-scan hypothesis actually
+   * predicts on: a launch reading 300 MB the machine has already cached and a launch reading
+   * 40 MB it has never seen are the same row in `logSizes` and different rows here.
+   */
+  newBytes: TriageMixRow[]
 }
 
 export interface TriageVersionRow {

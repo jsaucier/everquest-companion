@@ -17,8 +17,11 @@
 //
 //   1. NOTHING RUNS WHEN THE HUD IS OFF. No interval is created — not a skipped one, not a
 //      no-op one. With the default install (`perfHud.enabled: false`) this module's entire
-//      runtime cost is the eight `markStartupPhase` calls below, which are an array push each.
-//   2. BOTH TIMERS ARE `unref`'d, so neither can be the reason the process outlives its windows.
+//      runtime cost is the eight `markStartupPhase` calls below (an array push each) plus the two
+//      always-on startup probes, which exist only between `appReady` and `replayDone` and are
+//      described where they are started.
+//   2. EVERY TIMER IS `unref`'d, so none of them can be the reason the process outlives its
+//      windows.
 //   3. THE PUSH IS ONE MESSAGE PER 2 s, and only while a renderer exists to receive it.
 //   4. MARKING IS FREE, WHICH IS WHY IT IS UNCONDITIONAL. `performance.now()` plus a push is
 //      microseconds; the launch you wish you had profiled is always the one that already
@@ -37,11 +40,14 @@ import {
   buildProfile,
   describeMarkError,
   foldBlockSamples,
+  foldStutterSamples,
   lagStats,
   PERF_LAG_PROBE_INTERVAL_MS,
   PERF_SAMPLE_INTERVAL_MS,
   phaseMarked,
   replayDutyOf,
+  STARTUP_STUTTER_INTERVAL_MS,
+  STARTUP_STUTTER_MIN_SAMPLES,
   totalsOf,
   type BlockSample,
   type PerfSample,
@@ -50,9 +56,10 @@ import {
   type StartupBlockStats,
   type StartupMark,
   type StartupPhase,
-  type StartupProfile
+  type StartupProfile,
+  type StartupStutterProbe
 } from '../shared/perf'
-import { startupReplayStats } from '../shared/telemetry'
+import { startupReplayStats } from '../shared/telemetryStartup'
 import { logError, logInfo } from './errorLog'
 // The fleet half of the same measurement (JOS-57). Through the telemetry FAÇADE, like every other
 // producer in this app — the wiring may not reach around it into the ring.
@@ -75,6 +82,9 @@ let marks: StartupMark[] = []
 let eventsReplayed: number | undefined
 let replayStats: ReplayDutyStats | undefined
 let replayBytes: number | undefined
+// JOS-57's scope addition, both arriving with `replayDone` and both meaning UNKNOWN while unset.
+let newBytes: number | undefined
+let firstMbMs: number | undefined
 let profileWritten = false
 
 // ------------------------------------------------------------------- the startup block probe
@@ -105,6 +115,51 @@ function startStartupBlockProbe(): void {
     blockDueAt = now + PERF_LAG_PROBE_INTERVAL_MS
   }, PERF_LAG_PROBE_INTERVAL_MS)
   blockTimer.unref()
+}
+
+// ------------------------------------------------------------------- the startup stutter probe
+//
+// THE SECOND CLOCK OVER THE SAME WINDOW (JOS-57 scope addition, 2026-08-11) — the argument for it
+// is in `shared/perf.ts` beside `foldStutterSamples`; what lives here is the timer.
+//
+// IT SHARES THE BLOCK PROBE'S WINDOW ON PURPOSE (`appReady` → `replayDone`, opened and closed by
+// the same two marks): the reading is a COMPARISON — a drift distribution that moved while the
+// worst block did not — and two probes measuring different seconds could not be compared at all.
+//
+// THE COST, stated because rule 1 above demands it: one `setInterval` for the few seconds a replay
+// lasts, unref'd, whose callback is a subtraction and a push. At 125 ms it fires ~48 times across
+// a six-second fold and ~480 times across a minute-long one, and it holds one number per tick.
+
+let stutterTimer: ReturnType<typeof setInterval> | null = null
+let stutterDrifts: number[] = []
+let stutterDueAt = 0
+let stutterStats: StartupStutterProbe | undefined
+
+/** Start the stutter heartbeat. Idempotent; opened by `appReady` beside the block probe. */
+function startStutterProbe(): void {
+  if (stutterTimer !== null) return
+  stutterDrifts = []
+  stutterDueAt = performance.now() + STARTUP_STUTTER_INTERVAL_MS
+  stutterTimer = setInterval(() => {
+    const now = performance.now()
+    stutterDrifts.push(Math.max(0, now - stutterDueAt))
+    // Re-based on the tick that actually happened, exactly as the block probe rebases: each sample
+    // is then this tick's own lateness rather than a running total of every earlier one, which is
+    // what makes a percentile over them mean anything.
+    stutterDueAt = now + STARTUP_STUTTER_INTERVAL_MS
+  }, STARTUP_STUTTER_INTERVAL_MS)
+  stutterTimer.unref()
+}
+
+/** Close the heartbeat's window and FREEZE its answer. A window that held no ticks reports
+ *  nothing, for the same reason the block probe's does: nothing measured is not a smooth launch. */
+function stopStutterProbe(): void {
+  if (stutterTimer === null) return
+  clearInterval(stutterTimer)
+  stutterTimer = null
+  const stats = foldStutterSamples(stutterDrifts)
+  stutterDrifts = []
+  if (stats.samples > 0) stutterStats = stats
 }
 
 /**
@@ -140,6 +195,19 @@ export interface MarkOptions {
    * process as a byte count — `startupReplayStats` turns it into a bucket index first.
    */
   bytesReplayed?: number
+  /**
+   * Bytes the log grew by since this app last shut down cleanly (JOS-57's scope addition, from the
+   * first-start-stutter investigation). Only `replayDone` carries it, and only when a mark from a
+   * previous clean shutdown could be compared — absent is UNKNOWN, never zero.
+   *
+   * Unlike `bytesReplayed` this one DOES land in `perf-startup.json`, raw: a support answer read on
+   * the user's own machine wants the number, and the bucketing exists to stop a fingerprint leaving
+   * the machine rather than to stop the user seeing their own log.
+   */
+  newBytes?: number
+  /** How long the first megabyte of the historical read took, ms — the cold-disk hint. Only
+   *  `replayDone` carries it, and only on a log at least that big. */
+  firstMbMs?: number
 }
 
 /**
@@ -155,6 +223,8 @@ export function markStartupPhase(phase: StartupPhase, opts: MarkOptions = {}): v
   if (opts.eventsReplayed !== undefined) eventsReplayed = opts.eventsReplayed
   if (opts.replay !== undefined) replayStats = opts.replay
   if (opts.bytesReplayed !== undefined) replayBytes = opts.bytesReplayed
+  if (opts.newBytes !== undefined) newBytes = opts.newBytes
+  if (opts.firstMbMs !== undefined) firstMbMs = opts.firstMbMs
   const result = addMark(marks, phase, at)
   if (!result.ok) {
     logError('main:perfStartup', describeMarkError(result.error))
@@ -164,12 +234,17 @@ export function markStartupPhase(phase: StartupPhase, opts: MarkOptions = {}): v
   // The block probe's window IS the replay (plan §2), so the two phases that bound it own the
   // probe's lifetime. Wiring it here rather than in the composition root means the window can
   // never drift away from the phases the profile reports it against.
-  if (phase === 'appReady') startStartupBlockProbe()
+  if (phase === 'appReady') {
+    startStartupBlockProbe()
+    startStutterProbe()
+  }
   if (phase === 'replayDone') {
-    // ORDER MATTERS: the probe is closed FIRST so `blockStats` is frozen before the reading that
-    // reports it is built. Both of these belong to this one mark rather than to the composition
-    // root, for the same reason the probe's lifetime does — they cannot drift from the phase.
+    // ORDER MATTERS: both probes are closed FIRST so `blockStats` and `stutterStats` are frozen
+    // before the reading that reports them is built. All of this belongs to this one mark rather
+    // than to the composition root, for the same reason the probes' lifetime does — they cannot
+    // drift from the phase.
     stopStartupBlockProbe()
+    stopStutterProbe()
     reportStartupReplay(at)
   }
   if (startupProfile().complete) writeStartupProfile()
@@ -212,9 +287,28 @@ function reportStartupReplay(replayDoneAtMs: number): void {
       // a sum. `samples` is why the profile on disk keeps the distinction and this cannot.
       maxBlockMs: blockStats?.maxBlockMs ?? 0,
       blocksOver50: blockStats?.blocksOver50Ms ?? 0,
-      logBytes: replayBytes ?? 0
+      logBytes: replayBytes ?? 0,
+      // THE TWO DISCRIMINATORS, each passed through only when it was genuinely measured — a
+      // `?? 0` here would be the one thing this whole addition exists to avoid, because "no mark
+      // to compare against" and "no new bytes" are opposite facts about a launch.
+      ...(newBytes === undefined ? {} : { newBytes }),
+      ...(firstMbMs === undefined ? {} : { firstMbMs }),
+      ...stutterReading()
     })
   )
+}
+
+/**
+ * The stutter reading, IF the probe saw enough ticks to describe (`STARTUP_STUTTER_MIN_SAMPLES`).
+ *
+ * A short fold reports nothing rather than a percentile over a handful of samples: the wire has no
+ * `samples` field to qualify it with (the local profile keeps that distinction, which is where it
+ * is readable), so a reading that arrives has to be one that can stand alone.
+ */
+function stutterReading(): { stutter?: { p50Ms: number; p95Ms: number; latePct: number } } {
+  if (stutterStats === undefined || stutterStats.samples < STARTUP_STUTTER_MIN_SAMPLES) return {}
+  const { p50Ms, p95Ms, latePct } = stutterStats
+  return { stutter: { p50Ms, p95Ms, latePct } }
 }
 
 /**
@@ -240,7 +334,10 @@ export function startupProfile(): StartupProfile {
     version: app.getVersion(),
     ...(eventsReplayed === undefined ? {} : { eventsReplayed }),
     ...(blockStats === undefined ? {} : { block: blockStats }),
-    ...(replayStats === undefined ? {} : { replay: replayStats })
+    ...(replayStats === undefined ? {} : { replay: replayStats }),
+    ...(stutterStats === undefined ? {} : { stutter: stutterStats }),
+    ...(newBytes === undefined ? {} : { newBytes }),
+    ...(firstMbMs === undefined ? {} : { firstMbMs })
   })
 }
 
@@ -273,8 +370,33 @@ function logStartupSummary(profile: StartupProfile): void {
         ` over ${String(profile.replay.slices)} slices)`
   logInfo(
     `[everquest-companion] Startup ${String(Math.round(profile.totalMs))}ms` +
-      `${replayed}${blocked}${duty} (${worst}) - profile at ${profilePath()}`
+      `${replayed}${blocked}${duty}${coldRead(profile)} (${worst}) - profile at ${profilePath()}`
   )
+}
+
+/**
+ * The cold-read half of the summary line (JOS-57 scope addition), so `errors.log` ALONE can tell
+ * the two launches apart that this whole addition exists to separate: the same fold, the same
+ * duty, the same worst block — one of them reading 400 MB the machine has cached and one of them
+ * reading 40 MB it has not, with our own clock drifting through it.
+ *
+ * Each clause appears only when its number was measured, and none of them is faked to keep the
+ * line's shape stable: a launch with no mark to compare against simply says less.
+ */
+function coldRead(profile: StartupProfile): string {
+  const mb = (bytes: number): string => `${String(Math.round((bytes / 1_048_576) * 10) / 10)}MB`
+  const cold =
+    profile.newBytes === undefined ? '' : `, ${mb(profile.newBytes)} new since last clean exit`
+  const first =
+    profile.firstMbMs === undefined
+      ? ''
+      : `, first MB in ${String(Math.round(profile.firstMbMs))}ms`
+  const drift =
+    profile.stutter === undefined
+      ? ''
+      : `, timer drift p50 ${String(profile.stutter.p50Ms)}ms / p95 ${String(profile.stutter.p95Ms)}ms` +
+        ` (${String(profile.stutter.latePct)}% of ${String(profile.stutter.samples)} ticks late)`
+  return `${cold}${first}${drift}`
 }
 
 /**
@@ -317,10 +439,12 @@ function writeStartupProfile(): void {
   }
 }
 
-/** Write an INCOMPLETE profile on the way out, if the launch never reached the last phase. The
- *  block probe is closed FIRST so a launch that quit mid-replay still states how blocked it got. */
+/** Write an INCOMPLETE profile on the way out, if the launch never reached the last phase. Both
+ *  startup probes are closed FIRST so a launch that quit mid-replay still states how blocked it
+ *  got and what its clock was doing. */
 export function flushStartupProfile(): void {
   stopStartupBlockProbe()
+  stopStutterProbe()
   if (!profileWritten) writeStartupProfile()
 }
 

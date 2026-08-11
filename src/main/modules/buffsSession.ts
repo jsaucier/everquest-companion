@@ -30,6 +30,7 @@
 // rather than by which line happened to arrive first.
 
 import type { LogEvent } from '../../shared/logEvents'
+import { S, type FoldSchema } from '../foldCache/schema'
 import { LOGIN_CONFIRM_MS, SESSION_GAP_MS } from './buffsShapes'
 
 export class SessionFrame {
@@ -89,4 +90,36 @@ export class SessionFrame {
     this.closeHole()
     return from
   }
+
+  // ---- the checkpoint seam (JOS-208 phase 2) --------------------------------------------------
+  //
+  // AN OPEN QUESTION IS STATE, AND A SPLIT CAN LAND INSIDE ONE. `lastEventTs` is what makes the
+  // NEXT event a hole or not — a fresh frame reads 0 and can never open one, so the first event
+  // of the tail would silently forgive a thirteen-hour gap the cold arm rules on. `fromTs`/`atTs`
+  // are the hole itself, waiting up to LOGIN_CONFIRM_MS of event time for a login to explain it;
+  // the overnight-camp fixture puts a split inside exactly that window on purpose.
+
+  static readonly FOLD_SCHEMA: FoldSchema = S.obj({
+    lastEventTs: S.num,
+    fromTs: S.num,
+    atTs: S.num
+  })
+
+  serializeFold(): SessionFrameFoldState {
+    return { lastEventTs: this.lastEventTs, fromTs: this.fromTs, atTs: this.atTs }
+  }
+
+  /** Adopt a previously serialized frame. Validation is the OWNER's — see `BuffsModule`. */
+  deserializeFold(state: SessionFrameFoldState): void {
+    this.lastEventTs = state.lastEventTs
+    this.fromTs = state.fromTs
+    this.atTs = state.atTs
+  }
+}
+
+/** The session frame as plain data: the last instant seen, and any hole still open. */
+export interface SessionFrameFoldState {
+  lastEventTs: number
+  fromTs: number
+  atTs: number
 }

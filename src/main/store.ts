@@ -32,6 +32,10 @@ import { normalizePerfHudPrefs, type PerfHudPrefs } from '../shared/perf'
 import { normalizeGraphicsPrefs, type GraphicsPrefs } from '../shared/graphicsPrefs'
 import { normalizeBuffTrustPrefs, type BuffTrustPrefs } from '../shared/buffTrust'
 import { isTimerOverlayKind, normalizeTimerGrouping } from '../shared/buffTimers'
+// The XP overlay's two persisted knobs (JOS-195) — each validated by the module that owns its
+// meaning, never by a predicate written here.
+import { normalizeXpRows } from '../shared/xpOverlay'
+import { isSliceId } from '../shared/timeslice'
 import type { ComboCorrection } from '../shared/classCombo'
 // The exaltation planner's sets. The validator is main-side and pure; it runs on the way OUT as
 // well as in (see the accessors below), so a hand-edited store cannot poison the renderer.
@@ -411,7 +415,25 @@ const DEFAULT_OVERLAY_CONFIG: Record<OverlayKind, OverlayConfig> = {
   // Its content moved rather than appeared: before this split the buffs window drew debuffs and
   // mez holds too. Nobody LOSES a row — the rows are in a window that ships off, which is the same
   // internal-validation stance JOS-89 shipped under and the owner's direction for this one.
-  debuffs: { open: false, locked: false, bgAlpha: 0.72, bounds: undefined, drill: null }
+  debuffs: { open: false, locked: false, bgAlpha: 0.72, bounds: undefined, drill: null },
+  // The XP / PROGRESS read (JOS-195).
+  //
+  // DEFAULT OFF, NO MIGRATION — the third time this file has said it, and for the third time it is
+  // the design rather than an omission. `overlays.xp` has never been written by any build, so every
+  // existing store reads this default and every upgrading user gets the window off for free; a
+  // migration is precisely the thing that could turn something on (migrateToV9 is the one time this
+  // repo flipped a stored default, and its comment says that was a one-time correction and never a
+  // policy). The schema version is untouched and a store written by this build round-trips through
+  // the previous one unchanged.
+  //
+  // `xpRows` and `xpSlice` are ABSENT here on purpose rather than spelled out: absent is what each
+  // one's default MEANS (every row; this session), those meanings live beside the code that reads
+  // them, and writing them here would be a second copy of both.
+  xp: { open: false, locked: false, bgAlpha: 0.72, bounds: undefined, drill: null },
+  // RESPAWN CLOCKS (JOS-194). Default off, no migration — the fourth restatement of the same
+  // policy, and the argument above holds verbatim: `overlays.respawn` has never been written by
+  // any build, so every existing store reads this default and gets the window off for free.
+  respawn: { open: false, locked: false, bgAlpha: 0.72, bounds: undefined, drill: null }
 }
 
 /** Read a kind's overlay config, filling missing fields with the kind's defaults.
@@ -466,6 +488,20 @@ export function setOverlayConfig(kind: OverlayKind, patch: Partial<OverlayConfig
   const grouping = normalizeTimerGrouping(next.grouping)
   if (grouping && isTimerOverlayKind(kind)) next.grouping = grouping
   else delete next.grouping
+  // THE XP WINDOW'S TWO KNOBS (JOS-195), rebuilt rather than trusted — the same argument as the
+  // drill and the grouping above: a renderer patch must not be able to widen what is persisted, and
+  // ABSENT is a real answer for both (every row; this session). `normalizeXpRows` drops unknown row
+  // ids, so a hand-edited store cannot switch on a row this build does not have.
+  const xpRows = normalizeXpRows(next.xpRows)
+  if (xpRows && kind === 'xp') next.xpRows = xpRows
+  else delete next.xpRows
+  // The slice id is checked against the closed union, never against what the log can currently
+  // define: `resolveSliceId` in the renderer already degrades a pick this record cannot answer, and
+  // a store that forgot the user's choice because they happened to relaunch mid-session would be
+  // the same bug from the other direction.
+  const xpSlice = next.xpSlice
+  if (kind === 'xp' && isSliceId(xpSlice)) next.xpSlice = xpSlice
+  else delete next.xpSlice
   const all = store.get('overlays') ?? {}
   all[kind] = next
   store.set('overlays', all)
@@ -796,6 +832,13 @@ export function setBuffTrustPrefs(next: unknown): BuffTrustPrefs {
   store.set('buffTrust', clean)
   return clean
 }
+
+// The RESPAWN watch list (JOS-194) is NOT here: it is `src/main/storeRespawn.ts`, the second
+// module through the `settingsStore` door above (uiScale.ts was the first). This file was one
+// addition away from the 400-code-line ceiling when that feature landed, and the ceiling's stated
+// answer is a split rather than a widened threshold. The split module owes the same discipline
+// every accessor here follows and pays it — read through `normalizeRespawnPrefs`, write back
+// through the same one.
 
 // ----- What's new (JOS-73; shared/releaseNotes.ts) -----
 //

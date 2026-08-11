@@ -84,6 +84,10 @@ export const TELEMETRY_VIEWS = [
   'loot',
   'planner',
   'buffs',
+  // The respawn clocks (JOS-194). SAME CLOSED-ENUM DEPLOY ORDER as every member added since
+  // JOS-119: the ingest Lambda validates through this module, so the server has to learn the value
+  // before a client that can emit it ships, or one dwell on this tab 400s the whole batch.
+  'timers',
   'preferences',
   'triage'
 ] as const
@@ -102,7 +106,17 @@ export const TELEMETRY_OVERLAY_KINDS = [
   // validates, so this member has to reach the ingest Lambda BEFORE any client that can emit it:
   // `validateTelemetryBatch` fails the WHOLE batch on one unknown value and the endpoint answers
   // 400, which the client classes as a permanent refusal and drops. Deploy order, not a preference.
-  'debuffs'
+  'debuffs',
+  // JOS-195 added the XP window. SAME DEPLOY ORDER AS THE ROW ABOVE, and for the same reason:
+  // the enum is CLOSED and the ingest Lambda validates it through this very module, so a batch
+  // carrying an unknown value is refused WHOLE with a 400 that the client classes as permanent
+  // and drops. The server ships first.
+  'xp',
+  // JOS-194 added the respawn-clock window. THE SAME DEPLOY ORDER APPLIES A THIRD TIME, for the
+  // third identical reason: the enum is CLOSED, the ingest Lambda validates through this module,
+  // and a batch carrying a value the server has not learned yet is refused WHOLE with a 400 the
+  // client classes as permanent and drops. The server ships first.
+  'respawn'
 ] as const
 export type TelemetryOverlayKind = (typeof TELEMETRY_OVERLAY_KINDS)[number]
 
@@ -348,6 +362,35 @@ export const LOG_SIZE_BYTES_EDGES = [
 ] as const
 /** How many alert definitions the user keeps. */
 export const ALERT_COUNT_EDGES = [1, 5, 10, 25, 50] as const
+/**
+ * BYTES THE LOG GREW BY WHILE THE APP WAS NOT RUNNING (JOS-57 scope addition) — 64 KB / 256 KB /
+ * 1 MB / 4 MB / 16 MB / 64 MB / 256 MB ⇒ eight buckets.
+ *
+ * A DELTA, not a size, so it needs its own ladder rather than `LOG_SIZE_BYTES_EDGES`: a whole log
+ * is measured in tens or hundreds of megabytes and one evening of play appends a few hundred
+ * kilobytes, so the size edges would report almost every launch as bucket 0 and answer nothing.
+ * It is bucketed for the same reason the size is — a raw byte count is a fingerprint of one
+ * player's evening; a decade is not.
+ */
+export const NEW_BYTES_EDGES = [
+  65_536,
+  262_144,
+  1_048_576,
+  4_194_304,
+  16_777_216,
+  67_108_864,
+  268_435_456
+] as const
+/**
+ * OBSERVED TIMER DRIFT DURING THE REPLAY (JOS-57 scope addition) — 2 / 5 / 10 / 25 / 50 / 100 /
+ * 250 ms ⇒ eight buckets.
+ *
+ * The low edges are where the ANSWER is, which is why three of them sit under 15.6 ms: a heartbeat
+ * on an unloaded Windows box should land on its tick edge and drift a millisecond or two, so a p50
+ * that has climbed to the 25-50 ms bucket is already the machine failing to schedule us. The top
+ * edges bracket what a person feels a whole system do — a hitch, and a freeze.
+ */
+export const STUTTER_MS_EDGES = [2, 5, 10, 25, 50, 100, 250] as const
 
 /** The bucket index of `value` under `edges`. Non-finite input lands in bucket 0. */
 export function bucketOf(value: number, edges: readonly number[]): number {
@@ -450,49 +493,63 @@ export interface StartupReplayStats {
   blocksOver50: number
   /** Index into `LOG_SIZE_BYTES_EDGES`. A raw byte count is a fingerprint; a decade is not. */
   logSizeBucket: number
-}
-
-/** The raw facts the producer holds, before any of them is a legal wire value. */
-export interface StartupReplayInput {
-  replayMs: number
-  eventsReplayed: number
-  /** The duty ledger, as `shared/perf.ts ReplayDutyStats` states it. */
-  workMs: number
-  restMs: number
-  maxBlockMs: number
-  blocksOver50: number
-  /** Bytes the scan actually folded (its frozen EOF) — bucketed here, never sent raw. */
-  logBytes: number
+  /**
+   * NEW BYTES SINCE THE LAST CLEAN SHUTDOWN, as an index into `NEW_BYTES_EDGES` (JOS-57 scope
+   * addition, from the first-start-stutter investigation).
+   *
+   * WHY IT IS THE DISCRIMINATOR THE OTHER NUMBERS ARE MISSING: every existing figure here scales
+   * with the WHOLE log, and the leading hypothesis for a first-launch stutter — an on-access
+   * virus scanner reading bytes the OS has never cached — predicts the cost scales with the part
+   * of the log nobody has read yet. Those two are the same number on a fresh install and very
+   * different numbers on the tenth launch of the same day, which is exactly the pair of launches
+   * the fleet can now tell apart.
+   *
+   * OPTIONAL, and absent means UNKNOWN rather than zero: no previous clean shutdown left a mark
+   * (a first run, or a launch after a crash), or the log had shrunk under the mark (a rotation),
+   * in which case the delta is not a smaller measurement but a meaningless one.
+   */
+  newBytesBucket?: number
+  /** The replay's own timer drift, when enough ticks were observed to describe it. Optional. */
+  stutter?: StartupStutterStats
+  /**
+   * How long the FIRST MEGABYTE of the log took to arrive, ms — the cold-disk hint. Optional:
+   * absent when the log is smaller than a megabyte, which is a launch with nothing to read rather
+   * than a launch that read it instantly.
+   */
+  firstMbMs?: number
 }
 
 /**
- * THE ONE PLACE A READING IS BUILT, so the producer cannot invent a shape and the ceilings cannot
- * be forgotten. Total: every field is clamped to what its own validator will accept, so an event
- * this function returns is one this app's own validator can never refuse (a producer whose events
- * are silently dropped at the IPC boundary would be indistinguishable from a fleet with no slow
- * launches). The duty is computed here rather than sent as two numbers because the wire should
- * carry the ANSWER, and `workMs`/`restMs` separately would invite a reader to re-derive it wrong.
+ * THE SYSTEM-STUTTER PROXY (JOS-57 scope addition) — what OUR OWN clock did during the replay.
+ *
+ * A fixed-interval heartbeat runs for the length of the fold and records how late each tick was.
+ * Read BESIDE `maxBlockMs` and `dutyPct`, it separates two launches that look identical today:
+ * drift that spikes while the worst main-loop block stays small is the MACHINE stuttering around
+ * a process that is behaving, which is what report ...8QQC describes and what a max-block figure
+ * structurally cannot see.
+ *
+ * THE HONEST LIMIT, stated where the numbers are declared: an in-process timer cannot prove WHO
+ * failed to schedule it. What makes this a discriminator is the PAIR — a drift distribution that
+ * moved while the block figure and the achieved duty did not — never this reading alone.
+ *
+ * ALL THREE OR NONE, and it is a shape rather than a rule: a percentile with no companion
+ * percentile beside it, or a late-tick rate with no distribution, is uninterpretable.
  */
-export function startupReplayStats(input: StartupReplayInput): StartupReplayStats {
-  const work = clampWhole(input.workMs, MAX_DURATION_MS)
-  const rest = clampWhole(input.restMs, MAX_DURATION_MS)
-  const wall = work + rest
-  return {
-    replayMs: clampWhole(input.replayMs, MAX_DURATION_MS),
-    eventsReplayed: clampWhole(input.eventsReplayed, MAX_REPLAY_EVENTS),
-    dutyPct: wall > 0 ? Math.round((work / wall) * 100) : 0,
-    maxBlockMs: clampWhole(input.maxBlockMs, MAX_DURATION_MS),
-    blocksOver50: clampWhole(input.blocksOver50, MAX_COUNT),
-    logSizeBucket: bucketOf(clampWhole(input.logBytes, Number.MAX_SAFE_INTEGER), LOG_SIZE_BYTES_EDGES)
-  }
+export interface StartupStutterStats {
+  /** Median observed drift, as an index into `STUTTER_MS_EDGES` — the baseline. */
+  p50Bucket: number
+  /** 95th-percentile observed drift, same edges — the tail, and the interesting half. */
+  p95Bucket: number
+  /** Whole percent of ticks that were LATE by the probe's own threshold, 0..100. */
+  latePct: number
 }
 
-/** A whole number in `[0, max]`. Non-finite reads as 0 — the producer's numbers come from timers
- *  and a `stat()`, both of which can hand over a NaN on a bad day. */
-function clampWhole(value: number, max: number): number {
-  if (!Number.isFinite(value)) return 0
-  return Math.max(0, Math.min(Math.round(value), max))
-}
+// THE PRODUCER — `startupReplayStats`, which BUILDS one of these out of the raw facts main holds —
+// lives in `./telemetryStartup.ts`, split out when JOS-57's scope addition pushed this file past
+// the repo's 400-code-line ceiling. The cut follows a seam that was already there: what is HERE is
+// the CONTRACT (the shape, the edges, the ceilings), which the validator and the Lambda need; what
+// is there is the CLIENT-SIDE constructor, which nothing on the server has ever needed and which
+// the ingest bundle no longer carries.
 
 // ---------------------------------------------------------------- the event union
 //
@@ -704,8 +761,20 @@ export interface EvErrorReport {
    * HOW MANY TIMES THIS FINGERPRINT FIRED since the last report, and it is the field that makes
    * the client-side dedupe expressible. One exemplar per fingerprint per SESSION: the first
    * occurrence keeps its message, frames and breadcrumbs, and every repeat afterwards adds to
-   * this number instead of minting a second copy of the same stack. A loop that throws ten
-   * thousand times is one row with `count: 10000`, not ten thousand rows.
+   * this number instead of minting a second copy of the same stack.
+   *
+   * IT IS A FLOOR, NOT A TOTAL (JOS-197). This used to say "a loop that throws ten thousand times
+   * is one row with `count: 10000`" — which was written as a boast about how cheap a repeat is,
+   * and is exactly why nothing bounded it: an install then filed 7,272,196 occurrences of one
+   * fingerprint in a day, and the store was unreadable around the row. The client now stops
+   * counting a fingerprint at `MAX_REPORTS_PER_FINGERPRINT` per session (src/main/errorBudget.ts),
+   * so a looping issue reports that number and goes quiet.
+   *
+   * THE TOTAL IS STILL KNOWABLE, from the other side: `mainErrorLogLines + suppressedErrorLines`
+   * on `healthCounters` counts every occurrence whether it was reported or silenced, which is the
+   * ledger JOS-133 built for precisely this. So a build that starts looping still shows up in the
+   * error RATE; what the cap takes away is only the ability of one issue to say it ten thousand
+   * times over in the exemplar table.
    */
   count: number
 }

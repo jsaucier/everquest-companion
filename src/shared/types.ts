@@ -14,6 +14,11 @@ import type { ToastOverlayConfig } from './toast'
 // compile time. The union lives beside the function that applies it, which is where the argument
 // for each value is written down.
 import type { TimerGrouping } from './buffTimers'
+// Same posture again for the XP overlay's two knobs (JOS-195): TYPE-ONLY, so the cycles they
+// close (both files import from here) are erased at compile time, and each union lives beside the
+// code that gives it meaning rather than in this file, which is at its factoring ceiling.
+import type { XpRowId } from './xpOverlay'
+import type { SliceId } from './timeslice'
 // Same posture for the inventory dump's baseline (JOS-128): ProgressState names the blob, and
 // ./outputs/baseline owns its shape beside the rules that produce and read it. Type-only, so
 // the import is erased and this file keeps no runtime dependency on the outputs engine.
@@ -45,6 +50,12 @@ export type { LootDisposition, ItemStatBlock }
  *                 internal-validation stance continues. Neither has a selector or a drill, and
  *                 both obey one law: a duration spells.json STATES counts down, a duration
  *                 nobody states counts UP.
+ *   - 'xp' (JOS-195): the PROGRESS read, floating — how fast the bar is moving, when it lands,
+ *                 and motes per hour by type, over the app-wide slice (shared/timeslice.ts) with
+ *                 `session` as its own default. It derives nothing: every number is the Leveling
+ *                 tab's, through `renderer/overlay/xpRows.ts`. Ships DEFAULT OFF like the timer
+ *                 windows. Its only configurability is a ROW CHECKLIST (`OverlayConfig.xpRows`) —
+ *                 no widget builder, by owner scope.
  * Each kind has its own independently-persisted OverlayConfig (bounds/alpha/lock/text size/drill)
  * and can be open simultaneously. IPC channels + the store are keyed by this.
  *
@@ -54,11 +65,22 @@ export type { LootDisposition, ItemStatBlock }
  * used to warn about: on a 1366×728 laptop seven uniform 380×320 slots cannot be laid out without
  * a column landing on its neighbour. That is now answered in `overlayLayout.ts` — the uniform size
  * SHRINKS (uniformly, all kinds together) on a display that cannot hold the full reserved grid —
- * rather than by silently overlapping two windows. Add an eighth and the same machinery absorbs it.
+ * rather than by silently overlapping two windows. The EIGHTH ('xp') is the first kind to arrive
+ * after that machinery existed, and it absorbed it exactly as promised: MEASURED in
+ * tests/overlayLayout.test.mts, 1080p and up still seat all eight reserved slots at 380×320 and
+ * the small laptop shrinks one rung further rather than overlapping anything.
+ *
+ * The NINTH ('respawn', JOS-194) is appended on the same terms and needed no geometry code at
+ * all — but it did MOVE a rung, and the measurement is recorded rather than glossed: 1080p and
+ * 1440p still seat all nine at 380x320, while a 1920x960 work area (80 px shorter than 1080p with
+ * a taskbar, which costs it a third row) drops to 323x272 and seats fifteen. `meterSize` chose
+ * that on its own, which is the whole point of deriving the layout instead of tabulating it.
+ * tests/overlayLayout.test.mts pins both halves.
  */
-export type OverlayKind = 'fight' | 'overall' | 'events' | 'heal-fight' | 'heal-overall' | 'toast' | 'buffs' | 'debuffs'
 // prettier-ignore
-export const OVERLAY_KINDS: OverlayKind[] = ['fight', 'overall', 'events', 'heal-fight', 'heal-overall', 'toast', 'buffs', 'debuffs']
+export type OverlayKind = 'fight' | 'overall' | 'events' | 'heal-fight' | 'heal-overall' | 'toast' | 'buffs' | 'debuffs' | 'xp' | 'respawn'
+// prettier-ignore
+export const OVERLAY_KINDS: OverlayKind[] = ['fight', 'overall', 'events', 'heal-fight', 'heal-overall', 'toast', 'buffs', 'debuffs', 'xp', 'respawn']
 
 /** True for the two HEALING overlay kinds (they render HealMeter, not OverlayMeter). */
 export function isHealOverlayKind(kind: OverlayKind): boolean {
@@ -153,6 +175,30 @@ export interface OverlayConfig {
    * optional rather than defaulted here, and shared/buffTimers.ts holds the per-surface answer.
    */
   grouping?: TimerGrouping
+  /**
+   * WHICH ROWS THE XP OVERLAY DRAWS (JOS-195) — the whole of that window's configurability, by
+   * owner scope: a checklist, never a widget builder. Present only on the 'xp' kind;
+   * `setOverlayConfig` deletes it everywhere else so a malformed patch cannot grow one on a meter.
+   *
+   * ABSENT MEANS EVERY ROW, and it is deliberately a different answer from `[]` — which is a user
+   * who switched all three off and is entitled to their empty window. `shared/xpOverlay.ts`
+   * normalizes it (closed union, deduped, this-file's order) on the way in.
+   */
+  xpRows?: XpRowId[]
+  /**
+   * WHICH STRETCH THAT WINDOW MEASURES (JOS-195) — one id from the app-wide slice vocabulary
+   * (shared/timeslice.ts, JOS-130), which is also where JOS-71's duration rungs live now.
+   *
+   * ABSENT MEANS `session`, and that default is the ticket's: a floating pace read is something
+   * you glance at while playing, and "how am I doing right now" is this session rather than the
+   * whole record. It DEGRADES rather than sticks — a log that states no logout cannot define a
+   * session, and `resolveSliceId` falls back to `all` exactly as the tab's control does.
+   *
+   * It is remembered per window like position is, not shared with the main app's pick: the two
+   * are read at different moments, and a slice chosen on the Loot tab has no business silently
+   * re-scoping a window floating over the game.
+   */
+  xpSlice?: SliceId
 }
 
 // The overlays TEXT SIZE (owner feedback 2026-08-05) lives in ./overlayTextScale.ts and is
@@ -616,12 +662,9 @@ export interface LevelingDelta {
   aaPotions: AAPotionEvent[]
 }
 
-/** character module: current character + zone. */
-export interface CharacterSnap {
-  character: CharacterRef | null
-  zone?: string
-}
-export type CharacterDelta = Partial<CharacterSnap>
+/** character module: current character, zone, and the level the log last STATED (JOS-192). The
+ *  shapes moved to ./characterTypes when the level field pushed this file over its ceiling. */
+export type { CharacterDelta, CharacterSnap } from './characterTypes'
 
 /**
  * itemTiers module (Task #60): the OBSERVED item level of an item the CURRENT character has

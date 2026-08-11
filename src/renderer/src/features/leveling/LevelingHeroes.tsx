@@ -2,15 +2,18 @@
 //
 // Split out of LevelingView (which sits at the measured 400-code-line ceiling) the day the tab
 // gained the "New at this level" panel. Pure presentation: every number is computed in the view
-// and every caption states the honesty the analytics owe — CURRENT level is the LATEST reported
-// one, never max(), because a loadout swap re-reports the level of the new (lowest) class, so the
-// peak belongs to a class that may no longer be in the loadout and rides the caption instead.
+// and every caption states the honesty the analytics owe — CURRENT level is the one the log last
+// STATED (a ding, or your own `/who` row — JOS-192), never max(), because a loadout swap re-reports
+// the level of the new (lowest) class, so the peak belongs to a class that may no longer be in the
+// loadout and rides the caption instead. The card says WHICH line stated it and how long ago,
+// because that is the difference between a level and a level that has since been overtaken.
 
 import { type JSX } from 'react'
 import { Box, Paper, Stack, Typography } from '@mui/material'
 import MilitaryTechIcon from '@mui/icons-material/MilitaryTech'
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome'
 import BoltIcon from '@mui/icons-material/Bolt'
+import { Tooltip } from '../../lib/Tooltip'
 
 function HeroCard({
   icon,
@@ -18,6 +21,8 @@ function HeroCard({
   label,
   sub,
   accent,
+  /** Hover sentence for the whole card. Only the level card has one to say. */
+  title,
   /** Only the cards an assertion needs to READ carry one (the AA ledger's footer must equal
    *  the AA-points-spent figure, and e2e proves that across the two components). */
   testId
@@ -27,9 +32,10 @@ function HeroCard({
   label: string
   sub?: string
   accent: string
+  title?: string
   testId?: string
 }): JSX.Element {
-  return (
+  const card = (
     <Paper
       variant="outlined"
       sx={{ p: 2, flex: 1, minWidth: 160, borderLeft: `3px solid ${accent}`, display: 'flex', gap: 1.5 }}
@@ -48,10 +54,15 @@ function HeroCard({
       </Box>
     </Paper>
   )
+  return title ? <Tooltip title={title}>{card}</Tooltip> : card
 }
 
 export interface LevelingHeroesProps {
   currentLevel: number | null
+  /** '/who' or 'Nh ago' beside the number; '' when the bare number is the whole fact. */
+  levelCue: string
+  /** which line stated that level and how long ago; '' when nothing has stated one. */
+  levelTitle: string
   levelCount: number
   peak: number | null
   swaps: number
@@ -63,6 +74,8 @@ export interface LevelingHeroesProps {
 
 export function LevelingHeroes({
   currentLevel,
+  levelCue,
+  levelTitle,
   levelCount,
   peak,
   swaps,
@@ -77,13 +90,21 @@ export function LevelingHeroes({
         icon={<MilitaryTechIcon fontSize="large" />}
         value={currentLevel != null ? String(currentLevel) : '-'}
         label="Character level"
+        title={levelTitle || undefined}
+        // THE CUE RIDES THE CAPTION, NOT THE LABEL (measured, JOS-192). The caption is already a
+        // list of qualifiers about the level-up record and has a line to spare; the LABEL is the
+        // card's one-line name, and appending to it wrapped the tallest hero card by a line at
+        // every width — which pushed the whole two-column band down and drew the timeslice
+        // control under the panel above it (tests/e2e/leveling.e2e.mts caught exactly that).
         sub={
-          levelCount
+          (levelCue ? `${levelCue} · ` : '') +
+          (levelCount
             ? `${levelCount} level-ups logged` +
               (swaps > 0 ? ` · peak ${peak} · ${swaps} class swap${swaps === 1 ? '' : 's'}` : '')
-            : 'no level-ups in log'
+            : 'no level-ups in log')
         }
         accent="#d9b25f"
+        testId="leveling-hero-level"
       />
       <HeroCard
         icon={<AutoAwesomeIcon fontSize="large" />}

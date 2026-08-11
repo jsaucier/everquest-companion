@@ -89,6 +89,19 @@ export class Tailer extends EventEmitter<TailerEvents> {
     this.watcher = undefined
   }
 
+  /**
+   * How far into the file this tail has read, in bytes (JOS-57 scope addition).
+   *
+   * The one reader is the clean-shutdown mark (`session.ts stopSession` → `setLogTailMark`), which
+   * needs the tail's own answer rather than a fresh `stat()`: what the next launch wants to know is
+   * how many bytes NOBODY HAS READ, and the file may well have grown since the last read. It is a
+   * getter over the same field `readNew` maintains, so it cannot drift from the handoff offset —
+   * and it is 0 before `start()` has resolved, which reads correctly as "this tail read nothing".
+   */
+  readOffset(): number {
+    return this.offset
+  }
+
   /** Coalesce rapid change events into sequential reads. */
   private scheduleRead(): void {
     if (this.reading) {
@@ -128,6 +141,29 @@ export class Tailer extends EventEmitter<TailerEvents> {
         this.scheduleRead()
       }
     }
+  }
+
+  /**
+   * THE BYTE OFFSET THE FOLD'S KNOWLEDGE REACHES — the end of the last COMPLETE line emitted
+   * (JOS-208).
+   *
+   * NOT `this.offset`, and the difference is the whole reason this method exists. `offset` is how
+   * far the tailer has READ, which includes a trailing partial line the game has not finished
+   * writing; that line has been emitted to nobody. A checkpoint claims "the state in this file is
+   * `fold(bytes [0, b))`", so `b` must be exactly where the emitted lines stop — the same
+   * definition `ScanResult.endOffset` uses, and the same reason it uses it.
+   *
+   * `leftover` is decoded text, so its BYTE length is what comes off, not its character length: a
+   * partial line containing a non-ASCII name would otherwise leave `b` pointing mid-character and
+   * the shoulder hash would be computed over bytes no line boundary sits on.
+   *
+   * THE SIBLING ABOVE IS THE OTHER ANSWER, AND THE TWO MUST NOT BE SWAPPED. `readOffset()` (JOS-57)
+   * is the READ cursor, and the cold-read delta wants exactly that — how many bytes nobody has
+   * read. This one is where the FOLD's knowledge stops. They differ by at most one partial line,
+   * which is nothing to a byte-count bucket and is a wrong `b` to a checkpoint.
+   */
+  checkpointOffset(): number {
+    return Math.max(0, this.offset - Buffer.byteLength(this.leftover, 'utf8'))
   }
 
   private consume(chunk: string): void {

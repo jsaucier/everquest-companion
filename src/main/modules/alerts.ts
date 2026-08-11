@@ -36,6 +36,8 @@
 
 import type { EqModule } from './types'
 import { idKey } from '../log/parseCommon'
+import { S, validate, type FoldSchema } from '../foldCache/schema'
+import type { FoldCheckpointable } from '../foldCache/serialize'
 import { harvestCaptures } from '../../shared/alertCaptures'
 import type { LogEvent } from '../../shared/logEvents'
 import type {
@@ -411,7 +413,35 @@ function compileAlert(def: AlertDef): CompiledAlert {
   return { def, composite: 'single', conditions: [compileCondition(t)] }
 }
 
-export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
+/**
+ * THE CHECKPOINT DECLARATION (JOS-208 phase 2). This module folds two things on REPLAY and
+ * everything else only when live, and the split is exactly what is stored:
+ *
+ *   IN — `spellLastCast` (rank-preserving cast recency) and `poisonSlowSeen`. Both are recorded
+ *        for replayed events on purpose (their own field docs say why: the suggestion surface and
+ *        the offer strip must be right at HYDRATION, not one proc later), so a cold replay of a
+ *        prefix produces them and a checkpoint must too. `spellLastCast` is an entries ARRAY
+ *        because its Map order is the LRU the SPELL_CAST_CAP eviction walks — a record would
+ *        throw away the eviction order and start evicting the wrong names.
+ *
+ *   OUT — `compiled` (the user's alert DEFS, store-owned and re-injected by `setDefs` on every
+ *        save), `lastFire` and `history` (a fire is a LIVE event; a replay never makes a sound,
+ *        so a cold replay produces neither), and the two pending delta maps.
+ */
+const ALERTS_FOLD_SCHEMA: FoldSchema = S.obj({
+  spellLastCast: S.arr(S.tuple(S.str, S.num)),
+  poisonSlowSeen: S.opt(S.obj({ lastAt: S.num, count: S.num, lastTarget: S.str })),
+  seq: S.num
+})
+
+/** The alerts module's complete event-derived state — the defs and the fire log excluded. */
+export interface AlertsFoldState {
+  spellLastCast: [string, number][]
+  poisonSlowSeen?: PoisonSlowRecency
+  seq: number
+}
+
+export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta>, FoldCheckpointable<AlertsFoldState> {
   readonly id = 'alerts'
   private compiled: CompiledAlert[] = []
   private seq = 0
@@ -704,5 +734,31 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
     if (cast.length > 0) delta.cast = cast
     if (slow) delta.poisonSlow = { ...slow }
     return { seq: this.seq, delta }
+  }
+
+  // ---- the checkpoint seam (JOS-208) ---------------------------------------------------------
+
+  readonly foldSchema = ALERTS_FOLD_SCHEMA
+
+  serializeFold(): AlertsFoldState {
+    return {
+      spellLastCast: [...this.spellLastCast],
+      ...(this.poisonSlowSeen === null ? {} : { poisonSlowSeen: { ...this.poisonSlowSeen } }),
+      seq: this.seq
+    }
+  }
+
+  deserializeFold(state: unknown): boolean {
+    if (!validate(ALERTS_FOLD_SCHEMA, state).ok) return false
+    const s = state as AlertsFoldState
+    // Walked forwards, so the Map's iteration order — which IS the eviction order — comes back
+    // exactly as it went in.
+    this.spellLastCast = new Map(s.spellLastCast)
+    this.poisonSlowSeen = s.poisonSlowSeen ?? null
+    this.seq = s.seq
+    this.castPending = new Map()
+    this.pending = []
+    this.poisonSlowDirty = false
+    return true
   }
 }

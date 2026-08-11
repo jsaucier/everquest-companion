@@ -105,11 +105,14 @@ import type { LogEvent, BuffExpiredEvent } from '../../shared/logEvents'
 import type { BuffsDelta, BuffsSnap, MessageOverlay } from '../../shared/types'
 import { idKey } from '../log/parser'
 import type { SpellDb } from '../data/spellDb'
-import { MessageOverlayMiner } from '../data/messageOverlay'
+import { OverlayMining } from './buffsMining'
 import { charmedPetDiesOnDeathLine } from '../combat/entityRules'
 import type { BuffTrustPrefs } from '../../shared/buffTrust'
+import { validate } from '../foldCache/schema'
+import type { FoldCheckpointable } from '../foldCache/serialize'
 import { admitLanding, type LandingContext } from './buffLanding'
 import { BuffInstances } from './buffsInstances'
+import { BUFFS_FOLD_SCHEMA, packInstances, unpackInstances, type BuffsFoldState } from './buffsFoldShapes'
 import { CastAnchors } from './buffAnchors'
 import { PetEntities } from './buffsEntities'
 import { SpellStats } from './buffsStats'
@@ -117,7 +120,6 @@ import { SessionFrame } from './buffsSession'
 import {
   EMOTE_MIN_OBSERVATIONS,
   EMOTE_WINDOW_MS,
-  looksLandingMessage,
   PERMANENT_ILLUSION,
   QUICK_BUFF,
   SELF_KEY,
@@ -127,7 +129,25 @@ import {
 /** One member of the LogEvent union, selected by its `kind` tag. */
 type Ev<K extends LogEvent['kind']> = Extract<LogEvent, { kind: K }>
 
-export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
+// THE CHECKPOINT DECLARATION (JOS-208 phase 2) is `BUFFS_FOLD_SCHEMA`, in `buffsFoldShapes.ts` —
+// this file is at the repo's line ceiling, and the reasons that would otherwise sit here are:
+//
+//   IT IS ONE BLOB ON PURPOSE. The alternative — a `FoldUnit` per collaborator — would put five
+//   more ids in the container directory for objects that have no id, no snapshot and no
+//   independent lifetime, and would let a future edit restore four of them and forget the fifth.
+//   They are constructed together, reset together and are only ever coherent together, so they
+//   are checkpointed together, each declaring its own shape beside itself.
+//
+//   AND THIS MODULE OWNS THE TWO SHARED HALVES. `anchors` and `stats` are handed to `buffTimers`
+//   at construction (JOS-140 ruling 1: one attribution rule, one learner). They are serialized
+//   HERE, once, by their owner — `buffTimers`' declaration states the same thing from the other
+//   side. The container's fixed unit ORDER (attach.ts) makes the restore deterministic, and it
+//   does not matter which of the two lands first: both hold the same object.
+//
+//   THE THIRD PHASE-1 DEBT IS PAID HERE TOO: `miner` is the MessageOverlayMiner, whose registry
+//   this module publishes as `BuffsSnap.overlay`.
+
+export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta>, FoldCheckpointable<BuffsFoldState> {
   readonly id = 'buffs'
   private seq = 0
 
@@ -155,12 +175,13 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
   private readonly frame = new SessionFrame()
 
   /**
-   * The observed-message overlay miner (Task #36). Mines (message, spell) associations from
-   * the log to VERIFY / flag-SHARED / flag-CONTRADICTS-WIKI the cast messages, augmenting
-   * spells.json with what we actually observe. Seeded with the committed baseline + the
-   * persisted user overlay at construction so it starts warm.
+   * The observed-message overlay (Task #36) — which lines the miner is fed and the cache over
+   * what it builds, both in `buffsMining.ts`. Mines (message, spell) associations from the log to
+   * VERIFY / flag-SHARED / flag-CONTRADICTS-WIKI the cast messages, augmenting spells.json with
+   * what we actually observe. Seeded warm with the committed baseline + the persisted user
+   * overlay at construction.
    */
-  private readonly miner: MessageOverlayMiner
+  private readonly mining: OverlayMining
 
   /**
    * DERIVED-event emitter (Task #47). When the module RESOLVES a wear-off against the live
@@ -187,11 +208,7 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
       this.emitBuffExpired(spell, target)
     })
     this.emitDerived = emitDerived
-    this.miner = new MessageOverlayMiner(db?.byKey)
-    // Seed the miner with the committed baseline + the user's persisted overlay (both
-    // additive) so it starts warm — a fresh install benefits from the shipped baseline,
-    // a returning user keeps everything their own log has taught (Task #36).
-    for (const ov of seedOverlays ?? []) this.miner.merge(ov)
+    this.mining = new OverlayMining(db, seedOverlays)
   }
 
   /** Install/replace the derived-event emitter after construction (index.ts wires the bus). */
@@ -241,7 +258,7 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
 
   /** Serialize the current learned overlay (for debounced persistence in index.ts). */
   overlaySnapshot(): MessageOverlay {
-    return this.miner.build()
+    return this.mining.build()
   }
 
   reset(): void {
@@ -253,57 +270,6 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
     this.permanentIllusionOwnedTs = undefined
     this.anchors.reset()
     this.pets.reset()
-  }
-
-  /** Strip the `[timestamp] ` prefix from a raw line → the bare message text (for the overlay). */
-  private messageTextOf(raw: string): string {
-    const i = raw.indexOf('] ')
-    return i >= 0 ? raw.slice(i + 2) : raw
-  }
-
-  /**
-   * Feed the observed-message overlay miner (Task #36). A castBegin is the association
-   * ANCHOR; the message-bearing events (buffApply / spellEmote = landing, buffWearOff /
-   * illusionFade / buffFade = wears-off) are candidate messages associated to the nearest
-   * anchor within the window. This runs on EVERY event before the switch, so it mines the
-   * same way in replay and live.
-   */
-  private mineForOverlay(ev: LogEvent): void {
-    switch (ev.kind) {
-      case 'castBegin':
-        this.miner.observeCast(ev.spell, ev.ts)
-        break
-      case 'buffApply':
-      case 'spellEmote':
-        this.miner.observeMessage(this.messageTextOf(ev.raw), ev.ts, 'landing')
-        this.overlayCacheDirty = true
-        break
-      case 'buffWearOff':
-      case 'illusionFade':
-      case 'buffFade':
-        this.miner.observeMessage(this.messageTextOf(ev.raw), ev.ts, 'wearsOff')
-        this.overlayCacheDirty = true
-        break
-      // The AA potion quaff is a LANDING message that the leveling analytics now claim as
-      // their own kind. It fell through here as `unknown` before that rule existed and the
-      // overlay learned it as a verified Bottle of Alternate Adventure landing (it is absent
-      // from spells.json, so the DB table never had it) — so it keeps the same miner path,
-      // and the learned overlay is byte-identical to what it was.
-      case 'aaPotion':
-      case 'unknown': {
-        // A line the parser classified as NOTHING but that could be an un-catalogued
-        // landing message (e.g. Symbol of Pinzarn's real "The symbol of Pinzarn flashes
-        // before your eyes." — the wiki's msg_cast_on_you is WRONG, so the DB table never
-        // matched it). Feed only flavor-SHAPED lines; the unambiguous-anchor + count rules
-        // in the miner discard coincidental pairings, so a wrong candidate never verifies.
-        const t = this.messageTextOf(ev.raw)
-        if (looksLandingMessage(t)) {
-          this.miner.observeMessage(t, ev.ts, 'landing')
-          this.overlayCacheDirty = true
-        }
-        break
-      }
-    }
   }
 
   onEvent(ev: LogEvent, live = false): void {
@@ -358,7 +324,7 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
 
     // Observed-message overlay mining (Task #36): feed the anchor cast + any candidate
     // message line so the miner accretes (message, spell) associations across replay + live.
-    this.mineForOverlay(ev)
+    this.mining.observe(ev)
 
     this.dispatch(ev)
   }
@@ -695,19 +661,8 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
     return {
       active: [...this.inst.active.values()].sort((a, b) => a.startedTs - b.startedTs),
       stats: this.stats.buildStats(),
-      overlay: this.cachedOverlay()
+      overlay: this.mining.build()
     }
-  }
-
-  /** Cache the built overlay; rebuild only when the miner observed something new. */
-  private overlayCache: MessageOverlay | null = null
-  private overlayCacheDirty = true
-  private cachedOverlay(): MessageOverlay {
-    if (this.overlayCacheDirty || this.overlayCache == null) {
-      this.overlayCache = this.miner.build()
-      this.overlayCacheDirty = false
-    }
-    return this.overlayCache
   }
 
   snapshot(): { seq: number; state: BuffsSnap } {
@@ -718,5 +673,50 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
     if (!this.inst.dirty) return null
     this.inst.dirty = false
     return { seq: this.seq, delta: this.buildSnap() }
+  }
+
+  // ---- the checkpoint seam (JOS-208) ---------------------------------------------------------
+
+  readonly foldSchema = BUFFS_FOLD_SCHEMA
+
+  serializeFold(): BuffsFoldState {
+    return {
+      seq: this.seq,
+      emoteTextCount: [...this.emoteTextCount],
+      ...(this.permanentIllusionOwnedTs === undefined
+        ? {}
+        : { permanentIllusionOwnedTs: this.permanentIllusionOwnedTs }),
+      stats: this.stats.serializeFold(),
+      pets: this.pets.serializeFold(),
+      inst: packInstances(this.inst),
+      anchors: this.anchors.serializeFold(),
+      frame: this.frame.serializeFold(),
+      miner: this.mining.serializeFold()
+    }
+  }
+
+  /**
+   * ONE GATE FOR SIX OBJECTS. The collaborators' own `deserializeFold`s take typed plain data and
+   * never validate — this declaration has already validated the whole tree, and a second opinion
+   * inside each of them would be a second place for the shape and the check to drift apart.
+   * Nothing is adopted until the whole blob is accepted, so a refusal leaves all six untouched.
+   */
+  deserializeFold(state: unknown): boolean {
+    if (!validate(BUFFS_FOLD_SCHEMA, state).ok) return false
+    const s = state as BuffsFoldState
+    this.seq = s.seq
+    this.emoteTextCount = new Map(s.emoteTextCount)
+    this.permanentIllusionOwnedTs = s.permanentIllusionOwnedTs
+    // STATS AND PETS FIRST: the instance store reads both when it projects a row, and the rows it
+    // is about to adopt were projected against exactly these.
+    this.stats.deserializeFold(s.stats)
+    this.pets.deserializeFold(s.pets)
+    unpackInstances(this.inst, s.inst)
+    this.anchors.deserializeFold(s.anchors)
+    this.frame.deserializeFold(s.frame)
+    // REPLACES the seeded miner rather than merging into it — see its seam for why that is the
+    // whole of the one-truth argument here.
+    this.mining.deserializeFold(s.miner)
+    return true
   }
 }

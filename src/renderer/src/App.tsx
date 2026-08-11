@@ -9,6 +9,8 @@ import NoLogsEmptyState from './components/NoLogsEmptyState'
 import { VIEW_KEY, loadView, type View } from './appViews'
 // The app's navigation MODEL — the deep-link routers and their nonce contract. See appRouting.ts.
 import { useAppRouting, usePrefsRouting, type AppRouting, type PrefsRouting } from './appRouting'
+// The mouse's Back button (JOS-201): the app-level answer, behind whatever drill is on screen.
+import { useBackFallback } from './appBack'
 import PoskyView from './features/posky/PoskyView'
 import LootView from './features/loot/LootView'
 import LevelingView from './features/leveling/LevelingView'
@@ -20,6 +22,7 @@ import CombatView from './features/combat/CombatView'
 import OverviewView from './features/overview/OverviewView'
 import AlertsView from './features/alerts/AlertsView'
 import BuffsView from './features/buffs/BuffsView'
+import TimersView from './features/timers/TimersView'
 import PreferencesView from './features/preferences/PreferencesView'
 import FeedbackDialog from './features/feedback/FeedbackDialog'
 // OWNER-ONLY. `devTriage` holds the single `DEV_TOOLS ? lazy(() => import(…)) : null` — the
@@ -118,6 +121,10 @@ function PlainView({
           router — every donor name in the pane links OUT to that item's Loot drill-down. */}
       {view === 'planner' && <PlannerView key={viewKey} onOpenLoot={routing.openLoot} />}
       {view === 'buffs' && <BuffsView key={viewKey} />}
+      {/* Respawn clocks (JOS-194). Character-scoped like the rest: the remount `key` is the
+          whole contract, since the watch list lives in the store and the clocks are re-derived
+          by the fold the character switch kicks off. */}
+      {view === 'timers' && <TimersView key={viewKey} />}
       {view === 'alerts' && <AlertsView key={viewKey} {...{ onOpenVoicePrefs }} />}
       {/* UNRELEASED (JOS-45). It sits HERE, below the no-characters gate, and not beside the
           triage branch: unlike triage this tab reads the game log (name, level, loadout) and
@@ -470,6 +477,10 @@ export default function App(): JSX.Element {
   const routing = useAppRouting(view, setView)
   const prefsRouting = usePrefsRouting(view, routing.selectView)
   const { openMob, openQuest, openLeveling, selectView } = routing
+  // The mouse's Back button, when no drill on screen claimed it (JOS-201): the SAME parked-origin
+  // walk every Back affordance in the app reads. `back()` reports whether it navigated, so a press
+  // with nothing parked is a no-op rather than a surprise tab switch.
+  useBackFallback(routing.nav.back)
 
   useAppCelebrations(setDefeatToast, setQuestToast)
 

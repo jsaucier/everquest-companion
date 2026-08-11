@@ -15,7 +15,12 @@
 
 import type { JSX } from 'react'
 import { Chip, Stack } from '@mui/material'
-import { intervalConfidence, type ComboInterval, type ComboSlot } from '@shared/classCombo'
+import {
+  intervalConfidence,
+  type ComboInterval,
+  type ComboProvenance,
+  type ComboSlot
+} from '@shared/classCombo'
 import {
   confidenceText,
   intervalProvenance,
@@ -67,19 +72,28 @@ export function SlotChips({ slots }: { slots: readonly ComboSlot[] }): JSX.Eleme
   )
 }
 
-/** `inferred` / `stated by /who` / `you set this` — the state, never the process. */
+/**
+ * `inferred` / `stated by /who` / `you set this` — the state, never the process.
+ *
+ * THE INFERRED CASE NAMES THE WAY OUT (JOS-192, trigger report 01KZP6SDZJK6BPEWA4Z0MF5ANG). A
+ * loadout swap prints nothing, so an inferred trio can be a loadout the player has already left,
+ * and the whole of that report was that the surface showing it offered nothing to do about it.
+ * The two moves are one clause on the chip that already exists — no surface grows by a pixel for
+ * it (the Leveling tab's own layout budget at the app's minimum width is exactly zero: a single
+ * caption line there drew the timeslice control under a panel, and tests/e2e/leveling.e2e.mts
+ * says so) and every surface drawing a current loadout gets it at once.
+ */
+const PROVENANCE_TITLE: Record<ComboProvenance, string> = {
+  inferred:
+    'Read from the classes that show up in the log. Not the ones you are playing? A /who on yourself restates them, or correct the range on the Profile tab.',
+  who: 'Your own /who row named this loadout outright.',
+  user: 'You set this range yourself.'
+}
+
 export function ProvenanceChip({ interval }: { interval: ComboInterval }): JSX.Element {
   const p = intervalProvenance(interval)
   return (
-    <Tooltip
-      title={
-        p === 'inferred'
-          ? 'Read from the classes that show up in the log.'
-          : p === 'who'
-            ? 'Your own /who row named this loadout outright.'
-            : 'You set this range yourself.'
-      }
-    >
+    <Tooltip title={PROVENANCE_TITLE[p]}>
       <Chip
         size="small"
         variant="outlined"

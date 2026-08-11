@@ -22,6 +22,7 @@ import { Box, Button, Chip, FormControlLabel, Stack, Switch, Typography } from '
 import SpeedIcon from '@mui/icons-material/Speed'
 import RestartAltIcon from '@mui/icons-material/RestartAlt'
 import { DEV_TOOLS } from '../../devFlags'
+import { FoldCacheSetting } from './FoldCacheSetting'
 import {
   DEFAULT_PERF_HUD_PREFS,
   formatMs,
@@ -242,6 +243,16 @@ export function perfSection(): PrefSection {
         keywords:
           'performance perf cpu memory ram hud meter monitor lag stutter freeze slow jank fps startup boot launch profile speed diagnostics',
         content: <PerfSetting />
+      },
+      // BESIDE the startup breakdown, because that readout is what it changes: somebody who has
+      // just read "Log history replayed: 6.2 s" is standing exactly where this setting means
+      // something (JOS-208).
+      {
+        id: 'fold-cache',
+        label: 'Faster start',
+        keywords:
+          'startup start launch boot faster fast slow speed log replay history resume checkpoint remember cache scan reading',
+        content: <FoldCacheSetting />
       }
     ]
   }

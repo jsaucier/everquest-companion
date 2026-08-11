@@ -47,7 +47,37 @@
 // emitDerived — the Task #47 derived-events path. The event is delivered to every consumer
 // AFTER the current primary event finishes, so the modules see the event THEN reset. `live`
 // is inherited from the primary event, so a replayed boundary stays live:false.
+//
+// ---------------------------------------------------------------------------
+// A BETA-EPOCH CUTOFF: RECOMMENDED, NOT IMPLEMENTED (JOS-185, 2026-08-10)
+// ---------------------------------------------------------------------------
+// Recorded here rather than built, because it changes what every module sees and that is the
+// owner's call. The report behind it is 01KZP9GH8HTFAQWYS6408SG781 (beta-era log poisoning Sky
+// state); 01KZP6XM8WD1ERB5FF2VA03CJ3 (level wrong from late logging) is the same shape from the
+// other end.
+//
+// WHAT IS WEAK TODAY. The whole log is folded, beta span included, and the contamination is then
+// DELETED by a reset that every character-scoped module has to remember to subscribe to. That is
+// cleanliness by convention: it is correct for the modules that do subscribe, silently wrong for
+// any that do not, and a module written next year inherits nothing from this comment. The dead
+// beta character's state is built in full before anything undoes it.
+//
+// THE RECOMMENDATION: make the cutoff a REGISTRY PROPERTY rather than a reset. Each module
+// declares whether it is epoch-scoped; the registry then never DELIVERS a pre-`LAUNCH_MS` event
+// to an epoch-scoped module, while the knowledge miners (mined spell durations, the message
+// overlay — which persist across epochs on purpose) keep receiving the whole span. Three things
+// fall out of it: contamination becomes structurally impossible instead of conventionally
+// cleaned; a new module must STATE which side it is on before it can compile; and the fold gets
+// cheaper for exactly the users this hurts, because a late logger's beta months stop being folded
+// into state nobody keeps. The reset event stays — a character switch still needs it.
+//
+// TWO THINGS NOT TO DO. Do not drop pre-launch lines at the scan/tailer level: that starves the
+// knowledge miners, which is the one thing the current design gets right, and the evidence is
+// gone rather than merely unread. And do not move `LAUNCH_MS` off LOCAL time to "tidy" it —
+// the anchor and the parser are deliberately on one clock (see the constant's own note).
 
+import { S, validate, type FoldSchema } from '../foldCache/schema'
+import type { FoldUnit } from '../foldCache/serialize'
 import type { LogEvent, EpochEvent } from '../../shared/logEvents'
 
 /**
@@ -68,12 +98,33 @@ export const LAUNCH_MS = new Date(2026, 6, 28, 0, 0, 0, 0).getTime()
  * FIRST event whose ts is at/after {@link LAUNCH_MS} returns the synthesized `EpochEvent` to
  * emit (once), else null. Reset per character (re)load.
  */
-export class EpochDetector {
+export class EpochDetector implements FoldUnit {
+  /**
+   * CHECKPOINTED (JOS-208), and not because it publishes anything — it publishes nothing. One
+   * boolean, and leaving it out of a checkpoint made the fold WRONG in a measured, reproducible
+   * way: a fresh detector restored beside a restored fold re-fires the launch boundary at the first
+   * event of the TAIL, and an `epoch` event clears character-scoped state in half the modules in
+   * the tree. The differential harness caught it at every split point in every fixture on its first
+   * run. See `foldCache/serialize.ts` FoldUnit for the rule this is the reason for.
+   */
+  readonly id = 'epoch'
+  readonly foldSchema: FoldSchema = S.obj({ fired: S.bool })
+
   /** True once the launch-boundary epoch has fired for this log (fires at most once). */
   private fired = false
 
   reset(): void {
     this.fired = false
+  }
+
+  serializeFold(): { fired: boolean } {
+    return { fired: this.fired }
+  }
+
+  deserializeFold(state: unknown): boolean {
+    if (!validate(this.foldSchema, state).ok) return false
+    this.fired = (state as { fired: boolean }).fired
+    return true
   }
 
   /**

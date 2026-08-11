@@ -28,6 +28,7 @@ import type { JSX } from 'react'
 import { Box, Chip, Paper, Stack, Typography } from '@mui/material'
 import type { ConsiderDelta, ConsiderRow, ConsiderSnap, KillMap } from '@shared/types'
 import { CONSIDER_FACTION_LABEL } from '@shared/logEvents'
+import { mobDropNames, splitMobDrops } from '@shared/mobDrops'
 import { KnownItemTooltip } from '../../lib/KnownItemTooltip'
 import { formatAge, formatDateTime } from '../../lib/formatDate'
 import type { MobTarget } from './mobTarget'
@@ -67,22 +68,24 @@ export function considerTarget(r: ConsiderRow, kills: KillMap): MobTarget {
 interface RowDrops {
   /** every drop name, wiki-first */
   all: string[]
-  /** lowercased item name -> your own sighting (count) */
-  seenByKey: Map<string, { item: string; count: number }>
+  /** lowercased item name -> how many you have looted */
+  countByKey: Map<string, number>
 }
 
 /**
  * WIKI DROPS LEAD — the page's drop table is the definitive statement of what this can drop.
  * Your own history is corroboration: it annotates a listed drop with a count, and only
  * contributes NAMES of its own for items the page doesn't list.
+ *
+ * The split itself is `shared/mobDrops.ts`, which is the ONE fold over a `MobKnowledge` (JOS-194
+ * round 6 folded this strip, the event overlay's card and the respawn row's card onto it).
  */
 function rowDrops(k: ConsiderRow['knowledge']): RowDrops {
-  const seen = k?.dropsSeen ?? []
-  const seenByKey = new Map(seen.map((d) => [d.item.toLowerCase(), d]))
-  const wiki = (k?.dropsWiki ?? []).map((d) => d.item)
-  const wikiKeys = new Set(wiki.map((i) => i.toLowerCase()))
-  const all = [...wiki, ...seen.filter((d) => !wikiKeys.has(d.item.toLowerCase())).map((d) => d.item)]
-  return { all, seenByKey }
+  const split = splitMobDrops(k)
+  const countByKey = new Map<string, number>()
+  for (const d of split.wiki) if (d.seenCount !== undefined) countByKey.set(d.item.toLowerCase(), d.seenCount)
+  for (const d of split.extraSeen) countByKey.set(d.item.toLowerCase(), d.count)
+  return { all: mobDropNames(split), countByKey }
 }
 
 /** The `drops: a, b, c +N` tail of a row. Renders nothing when nothing is known (law 1). */
@@ -93,7 +96,7 @@ function DropsLine({ drops }: { drops: RowDrops }): JSX.Element | null {
     <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0 }}>
       drops:{' '}
       {shown.map((item, i) => {
-        const mine = drops.seenByKey.get(item.toLowerCase())
+        const mine = drops.countByKey.get(item.toLowerCase())
         return (
           <Box component="span" key={item}>
             {i > 0 && ', '}
@@ -104,10 +107,10 @@ function DropsLine({ drops }: { drops: RowDrops }): JSX.Element | null {
               </Box>
             </KnownItemTooltip>
             {/* Corroboration rides ON the definitive row, never in place of it. */}
-            {mine && (
+            {mine !== undefined && (
               <Box component="span" sx={{ color: 'success.main' }}>
                 {' '}
-                ×{mine.count}
+                ×{mine}
               </Box>
             )}
           </Box>

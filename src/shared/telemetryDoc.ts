@@ -29,7 +29,9 @@ import {
   LOG_SIZE_BYTES_EDGES,
   MAX_TZ_OFFSET_HOURS,
   MIN_TZ_OFFSET_HOURS,
+  NEW_BYTES_EDGES,
   SESSION_AGE_MS_EDGES,
+  STUTTER_MS_EDGES,
   TELEMETRY_API_VERSION,
   TELEMETRY_BUFFER_CAP,
   TELEMETRY_EVENT_KINDS,
@@ -88,12 +90,34 @@ export const TELEMETRY_DOC_BUCKETS: readonly DocBucket[] = [
     edges: SESSION_AGE_MS_EDGES,
     format: 'ms',
     what: 'How long the app had been running when an error happened.'
+  },
+  {
+    field: 'startup.newBytesBucket',
+    edges: NEW_BYTES_EDGES,
+    format: 'bytes',
+    what: 'How much the log grew while the app was closed.'
+  },
+  {
+    field: 'startup.stutter.p50Bucket',
+    edges: STUTTER_MS_EDGES,
+    format: 'ms',
+    what: 'How late the app’s own clock ran while it read (typical beat).'
+  },
+  {
+    field: 'startup.stutter.p95Bucket',
+    edges: STUTTER_MS_EDGES,
+    format: 'ms',
+    what: 'The same, at the worse end (one beat in twenty).'
   }
 ]
 
 // ------------------------------------------------------------------ rendering
 
+/** KB below a megabyte, GB above a gigabyte, MB in between. The KB arm arrived with JOS-57's
+ *  new-bytes ladder, whose first edge is 64 KB — rounded to megabytes it would print `0 MB`, which
+ *  is a table saying nothing. Nothing on the log-size ladder is affected: its first edge IS 1 MB. */
 function fmtBytes(n: number): string {
+  if (n < 1_048_576) return `${String(Math.round(n / 1024))} KB`
   const mb = n / 1_048_576
   return mb >= 1024 ? `${String(Math.round(mb / 1024))} GB` : `${String(Math.round(mb))} MB`
 }

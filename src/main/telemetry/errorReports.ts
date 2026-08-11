@@ -55,7 +55,20 @@
 // most its last window. The EXEMPLAR is kept across drains, so a fingerprint that fires again
 // after a heartbeat re-sends the same stack with the new count — and the server's UPSERT is
 // first-wins, so that is idempotent by construction rather than by agreement.
+//
+// ---------------------------------------------------------------------------------------
+// …AND AT MOST N OCCURRENCES OF IT, EVER (JOS-197)
+// ---------------------------------------------------------------------------------------
+// "One exemplar carrying `count: 10000`" was written as a boast about how cheap a repeat is. The
+// fleet then filed 7,272,196 occurrences of ONE fingerprint from ONE install in ONE day, and the
+// sentence above is exactly why nothing stopped it: the count was free, so nobody bounded it.
+// `../errorBudget.ts` bounds it now, and `noteError` RETURNS its verdict rather than merely obeying
+// it — because the budget has to govern the errors.log line and the dev stdout line too, and
+// `logError` is the only place that owns those. That module's header carries the whole rule; what
+// matters here is that this file no longer decides on its own how many times a fingerprint may be
+// reported, and that the fingerprint is computed HERE because here is where it already was.
 
+import { errorBudget, resetErrorBudget, type BudgetVerdict } from '../errorBudget'
 import {
   errorCodeOf,
   errorFingerprint,
@@ -111,6 +124,10 @@ interface Pending {
 const pending = new Map<string, Pending>()
 let sessionStartedAt = 0
 let currentView: TelemetryErrorView = 'unknown'
+
+/** The verdict for an occurrence that never reached the budget at all — see `noteError`'s two
+ *  named fail-open cases. It says "write it as you always did", and never carries a notice. */
+const UNBUDGETED: BudgetVerdict = { report: true, notice: null }
 
 /**
  * WHICH TAB IS OPEN, as the renderer last stated it.
@@ -188,17 +205,27 @@ function locate(stack: unknown, captureSite: (() => string) | undefined): Locati
  * overwhelming majority of errors do not need it, so the cost is paid by the reports that would
  * otherwise have had no location at all. `errorLog.ts` supplies it; a direct caller (the tests,
  * and nothing else) may leave it out, in which case step 2 above simply does not happen.
+ *
+ * IT RETURNS THE BUDGET'S VERDICT (JOS-197). The per-fingerprint session cap is the OUTER gate over
+ * every reporting path, and two of those paths — the errors.log line and the dev stdout line —
+ * belong to `logError`. The fingerprint is known only here, so the decision is taken here and
+ * handed back rather than computed a second time on the app's error path.
+ *
+ * THE TWO FAIL-OPEN CASES ARE NAMED RATHER THAN IMPLIED, and both stay bounded downstream by
+ * `errorRepeat`'s five identical lines: the `errorLog` self-report refusal and the `catch`. Neither
+ * computes a fingerprint, so neither has anything to budget — and neither can be the shape this
+ * ticket is about, which had a fingerprint and is how the store counted it to seven million.
  */
 export function noteError(
   source: string,
   payload: unknown,
   now = Date.now(),
   captureSite?: () => string
-): void {
+): BudgetVerdict {
   try {
     // A failure INSIDE the error-log writer must not mint a report about the error-log writer,
     // on the path that is already failing to write. `errorLog.ts` tags that line `[errorLog]`.
-    if (source.includes('errorLog')) return
+    if (source.includes('errorLog')) return UNBUDGETED
     const f = caughtFields(payload)
     const where = locate(f.stack, captureSite)
     const errorName = errorNameOf(f.name)
@@ -211,22 +238,29 @@ export function noteError(
       where.frames,
       fingerprintFallback(where.external, redactedMessage)
     )
+    // THE HARD CAP (JOS-197), asked BEFORE anything is recorded and before the storm bound below,
+    // so that a fingerprint the exemplar ring had no room for is budgeted all the same — its
+    // occurrences still reach errors.log, and they still have to stop.
+    const budget = errorBudget(fingerprint)
+    if (!budget.report) return budget
     const held = pending.get(fingerprint)
     if (held) {
       held.n += 1
-      return
+      return budget
     }
     // THE STORM BOUND. A session that has already produced this many DISTINCT issues is a
     // session where something is badly wrong, and the twenty-first fingerprint is not the one
     // that explains it. Repeats of a fingerprint already held still count (the branch above),
     // so the cap limits distinct exemplars and never the totals of what is already tracked.
-    if (pending.size >= MAX_SESSION_FINGERPRINTS) return
+    if (pending.size >= MAX_SESSION_FINGERPRINTS) return budget
     pending.set(fingerprint, {
       exemplar: exemplarOf({ errorName, redactedMessage, fingerprint }, where, f, now),
       n: 1
     })
+    return budget
   } catch {
     // A telemetry producer is never worth an app failure, and this one runs on the error path.
+    return UNBUDGETED
   }
 }
 
@@ -306,11 +340,17 @@ export function takeErrorReports(): EvErrorReport[] {
  * boundaries beside `resetHealth()` — a switch turned off must not leave a session's errors
  * waiting to be reported if it is turned back on, and the crumbs that would have travelled with
  * them are the same data.
+ *
+ * THE BUDGET RESETS WITH THEM (JOS-197), because this is what a SESSION boundary means in this
+ * process and the cap is per session. It also means the two can never drift: there is no path that
+ * starts a fresh session's exemplars while the previous session's spend is still holding a
+ * fingerprint silent.
  */
 export function resetErrorReports(now = Date.now()): void {
   pending.clear()
   sessionStartedAt = now
   currentView = 'unknown'
+  resetErrorBudget()
   resetBreadcrumbs()
 }
 

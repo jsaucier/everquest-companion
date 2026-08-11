@@ -118,12 +118,19 @@ test('the dead-lands gate actually removed something — 48 of them', () => {
   // the `lands` gate never looked at it, which is exactly why a reporter had to notice from the
   // debuff timer instead. The remainder is what the owner's log has never printed, which is what
   // the gate is for.
+  //
+  // AND IT IS 46 SINCE JOS-189, which took the next two off it: `Tuyen's Chant of Disease` and
+  // `Tuyen's Chant of Poison`. All four Tuyen chants print ONE landing sentence and the scrape gave
+  // `Someone` to Flame and Frost and `Target` to these two, so a bard chaining all four had two of
+  // his debuffs filed under the wrong chant and two with no row at all (report
+  // 01KZN3FSW4BQ519N3TV8CQ1TC1). They are the sweep's first entries to JOIN an existing suffix
+  // rather than mint one, which is also why the population moves by exactly two.
   let dead = 0
   for (const s of db.spells) {
     if (s.spellType !== 'Detrimental' || !s.msgCastOnOther) continue
     if (castOnOtherSuffix(s.msgCastOnOther) === null) dead += 1
   }
-  assert.equal(dead, 48, 'the measured population the `lands` gate now excludes')
+  assert.equal(dead, 46, 'the measured population the `lands` gate now excludes')
 })
 
 test('`landsOnOther` always travels with the pattern it needs', () => {

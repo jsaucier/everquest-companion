@@ -56,6 +56,7 @@ import type {
 } from '@shared/types'
 import { killsBaselineStale, mergeKillsDelta } from '@shared/kills'
 import type { NavBack } from '../../appRouting'
+import { useBackTarget } from '../../appBack'
 import { useModule } from '../../lib/useModule'
 import { MobPage } from './MobPage'
 import { RecentlyConsidered, applyConsiderDelta } from './RecentlyConsidered'
@@ -260,17 +261,18 @@ function MobDrill({
   nav?: NavBack
   onClose: () => void
 }): JSX.Element {
+  // ONE expression, read by TWO things (JOS-201): the button below, and the mouse's Back button,
+  // which registers it for as long as this page is on screen. The browse surface behind it
+  // registers nothing, so a press there falls through to the app-level origin walk.
+  const back = (): boolean => {
+    if (!nav?.back()) onClose()
+    return true
+  }
+  useBackTarget(back)
   return (
     <Stack spacing={1} sx={{ height: '100%' }}>
       <Box>
-        <Button
-          size="small"
-          data-testid="mobs-back"
-          startIcon={<ArrowBackIcon />}
-          onClick={() => {
-            if (!nav?.back()) onClose()
-          }}
-        >
+        <Button size="small" data-testid="mobs-back" startIcon={<ArrowBackIcon />} onClick={back}>
           {nav?.origin?.label ?? 'Mobs'}
         </Button>
       </Box>

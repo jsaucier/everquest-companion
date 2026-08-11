@@ -31,6 +31,10 @@
  * refresh ran — including the `setPacks` that used to wipe the form — before anything is
  * asserted. Under the old code the fields are already blank at that instant.
  *
+ * IT ALSO CARRIES THE SUGGESTION PICKER'S LAYOUT CONTRACT (JOS-190, GitHub issue 22): this is the
+ * spec that already opens that dialog, so the claim that its rows never print on top of themselves
+ * runs here too. The measurement lives in `suggestRowSteps.mts`.
+ *
  * Run: `npm run test:e2e -- alert-dialog-focus` (or
  * `node --import tsx tests/e2e/alert-dialog-focus.e2e.mts`).
  */
@@ -48,6 +52,10 @@ import {
 } from './appHarness.mjs'
 import { mainWindow } from './appWindow.mjs'
 import { launchOnFixture } from './logFixture.mjs'
+// The suggestion picker's ROW LAYOUT (JOS-190) — next door because this spec is at its line
+// budget, and here because this is the spec that already opens that dialog. See that file's
+// header for what the reporter's screenshot showed and how the collision is measured.
+import { stepSuggestRowLayout } from './suggestRowSteps.mjs'
 
 const DIALOG = '[data-testid="alert-dialog"]'
 const SUGGEST = '[data-testid="suggest-dialog"]'
@@ -306,7 +314,7 @@ async function main(): Promise<void> {
   buildIfStale()
 
   console.log('launch: hidden Electron (EQ_E2E=1) against tests/fixtures/e2e-voice.log…')
-  const { app, close } = await launchOnFixture('e2e-voice.log')
+  const { app, close, log } = await launchOnFixture('e2e-voice.log')
 
   let page: Page | null = null
   try {
@@ -326,6 +334,9 @@ async function main(): Promise<void> {
     }
     await checkSuggestSearchSurvived(page)
     await checkEditSurvives(page)
+    // LAST, because it moves the window: it puts the size and the app's minimum back before it
+    // returns, but nothing after it should have to trust that (the JOS-151 precedent).
+    await stepSuggestRowLayout(app, page, log)
 
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
     if (failures.length) await dumpArtifacts(page, 'alert-dialog-focus-FAIL')

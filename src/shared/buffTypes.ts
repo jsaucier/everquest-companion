@@ -332,6 +332,23 @@ export interface SpellTemplateFlags {
    * spell `ccSpell` does not match parses to `buffFade` instead, where this trigger never sees it.
    */
   breaks: boolean
+  /**
+   * A CHARM spell the parser's `charmSpell` roster claims → "the charm broke" (kind: `uncharm`,
+   * pinned to this spell's name).
+   *
+   * THE TWIN OF `breaks`, AND WHY IT IS A SEPARATE FLAG (JOS-200). The same sentence — `Your <X>
+   * spell has worn off of <mob>.` — becomes `uncharm` for a charm and `cc {refresh:true}` for a
+   * mez/root, so the two rosters answer to two different EVENTS and one template cannot author
+   * both triggers. Until now only the mez half had a per-spell offer: the curated "Charm break"
+   * GROUP fired for every charm at once, but a user who went looking for their charm BY NAME —
+   * which is what all three JOS-200 reporters did, and what a bard reaching for Solon's Bewitching
+   * Bravura does — found nothing. An enchanter searching "Allure" had the identical hole.
+   *
+   * Same gate argument as `breaks`: the flag is a CLAIM the alert can fire, and a spell
+   * `charmSpell` does not match parses to `cc` or `buffFade` instead, where this trigger never
+   * sees it.
+   */
+  charmBreaks: boolean
 }
 
 /** One catalog row: a spell the wizard can build alerts for. */

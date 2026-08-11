@@ -36,6 +36,13 @@
 //   4. WINDOW GEOMETRY IS NEVER TOUCHED PER SAMPLE. The ring window is re-bounded only when the
 //      EQ window actually moves; the per-sample work is two subtractions against a cached
 //      origin. `setBounds()` at 125 Hz would be a window-manager round trip per frame.
+//   5. WITH THE RING OFF, THE APP DOES NOT TOUCH THE CURSOR — the owner's ruling, 2026-08-10
+//      (JOS-193). Rule 1 covers the case where NOTHING is on; this one covers the DEFAULT install,
+//      where auto-hide is on and the ring is not. The watcher exists there, so it used to poll
+//      `GetCursorInfo` ~69 times a second for `cursorVisible` — a fact whose only consumer in the
+//      whole application is `cursorRingActive`, for a ring that does not exist. `setCursorWatch`
+//      below is that gate, and it is the reason a cursor tool like Yolomouse shares the cursor
+//      with nothing of ours unless the user asked for a ring.
 //
 // The renderer's half of the contract (coalesce to rAF, compositor-only transform, never queue)
 // is in `src/renderer/src/overlay/cursorRing.ts`.
@@ -43,7 +50,7 @@
 import { screen, type BrowserWindow } from 'electron'
 import { IPC } from '../shared/ipc'
 import { logError } from './errorLog'
-import { presenceSnapshot, stopPresence, subscribePresence } from './presence'
+import { presenceSnapshot, setCursorWatch, stopPresence, subscribePresence } from './presence'
 import { CURSOR_POLL_MS, cursorRingActive, overlaysShouldHide } from './presenceProtocol'
 import { historicalReplayRunning, ringDisposition } from './replayGate'
 import { getCursorRing, getOverlayAutoHide } from './store'
@@ -55,7 +62,7 @@ import {
   setCursorRingVisible,
   setOverlaysHidden
 } from './windows'
-import { presenceNeeded } from '../shared/presencePrefs'
+import { cursorWatchNeeded, presenceNeeded } from '../shared/presencePrefs'
 import type { CursorPoint, PresenceState, ScreenRect } from '../shared/presencePrefs'
 
 /** Where a parked ring goes when the pointer leaves the EQ window (a half-ring clipped against
@@ -284,6 +291,13 @@ export function refreshPresenceEffects(): void {
     setOverlaysHidden(false)
     return
   }
+  // THE CURSOR GATE, SET BEFORE THE WATCHER CAN EXIST (JOS-193). This is the only place in the app
+  // that reads `cursorRing.enabled` for this purpose, and it runs before the `subscribePresence`
+  // below — so the very first watcher of a session is already told whether it may call
+  // `GetCursorInfo`, and there is no window in which a default-install watcher polls a cursor for
+  // a ring that is off. On a later call it is the live toggle: `setCursorWatch` replaces the
+  // running thread when the answer changes.
+  setCursorWatch(cursorWatchNeeded(ring))
   // Push the (possibly resized) ring config to a live ring window so a Preferences slider
   // resizes the halo under the user's pointer instead of on the next restart.
   getCursorRingWindow()?.webContents.send(IPC.onCursorRingConfig, ring)

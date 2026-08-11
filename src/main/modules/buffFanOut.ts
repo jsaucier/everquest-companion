@@ -41,6 +41,7 @@
 // This module is PURE: no Electron, no `node:`, no DOM, and it keeps at most one second of
 // state.
 
+import { S, type FoldSchema } from '../foldCache/schema'
 import type { HealEvent } from '../../shared/logEvents'
 
 /** Canonical key for one spell name — the fan-out is per CAST, and two casts of two different
@@ -105,4 +106,46 @@ export class BuffFanOut {
     b.announced = true
     return [...b.names.values()]
   }
+
+  // ---- the checkpoint seam (JOS-208 phase 2) --------------------------------------------------
+  //
+  // ONE SECOND OF STATE, AND IT STILL TRAVELS. This detector holds at most a single log second,
+  // which makes it tempting to leave out — and that is exactly the reasoning that left the epoch
+  // detector out in phase 1 and cost a measured divergence at every split point. A split can land
+  // between the first and the second `You healed <X>` line of one burst, and a fresh bucket then
+  // never proves the fan-out that the cold arm proves: two group members silently missing.
+  //
+  // The `names` MAP is stored as an entries array because its INSERTION ORDER is the answer the
+  // detector returns (`[...b.names.values()]` is arrival order, and the roster folds them in that
+  // order), so a record would throw away the one thing about it that is load-bearing.
+
+  static readonly FOLD_SCHEMA: FoldSchema = S.opt(
+    S.obj({
+      ts: S.num,
+      spell: S.str,
+      names: S.arr(S.tuple(S.str, S.str)),
+      announced: S.bool
+    })
+  )
+
+  serializeFold(): FanOutFoldState | undefined {
+    const b = this.bucket
+    if (!b) return undefined
+    return { ts: b.ts, spell: b.spell, names: [...b.names], announced: b.announced }
+  }
+
+  /** Adopt a previously serialized bucket. Validation is the OWNER's — see `RosterModule`. */
+  deserializeFold(state: FanOutFoldState | undefined): void {
+    this.bucket = state
+      ? { ts: state.ts, spell: state.spell, names: new Map(state.names), announced: state.announced }
+      : null
+  }
+}
+
+/** The fan-out detector's one-second bucket, as plain data. */
+export interface FanOutFoldState {
+  ts: number
+  spell: string
+  names: [string, string][]
+  announced: boolean
 }

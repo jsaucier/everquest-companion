@@ -21,10 +21,14 @@ labelled Exaltations since JOS-42; the `planner` view id, route, store keys
 and `planner-*` testids are unchanged, it was a label not a refactor —
 multi-set socket planning over a class-filtered effect browser with layered era filtering —
 docs/plans/exaltation-planner.md; era = zone provenance ∪ page dropsfrom,
-page-top era banner resolves unknowns, shared/planner/*), and celebration
-toasts (docs/plans/celebration-toasts.md). Committed knowledge DBs: mobs
+page-top era banner resolves unknowns, shared/planner/*), celebration
+toasts (docs/plans/celebration-toasts.md), and a TIMERS tab + overlay
+(JOS-194: respawn clocks started by death messages, numbered from your own
+kills, opt-in per mob, scoped to the zone you are in, and flipped to UP when the
+log names the mob — law 13 below).
+Committed knowledge DBs: mobs
 (7.9k), items (11.2k incl. dropsfrom + eraTag), spells (1.9k), classes,
-zones (era-annotated). First stable release v0.2.0 (2026-08-03); latest
+zones (era-annotated), wiki respawn floors (507 rows, 394 readable). First stable release v0.2.0 (2026-08-03); latest
 release v0.8.0 (2026-08-07: maps N-S fix, Sky keyring counting, planner
 21-cell board + slot-fact layer, alert sets round two, owner-tools gating,
 engine fold ~2x — after v0.7.0 the same day: pet-question removal +
@@ -387,6 +391,19 @@ custom-directory normalization, startup fleet telemetry, dev restart button). La
   duty — anything pacing itself with a timer must MEASURE what it got and
   bookkeep the difference (`replaySlicer.ts`'s debt ledger is the pattern),
   never trust the nominal argument.
+- **`setFocusable` IS NOT AN ATTRIBUTE WRITE ON WINDOWS — IT MOVES THE
+  FOREGROUND WINDOW** (JOS-199). Electron's own doc note gives it away: "on
+  macOS it does not remove the focus from the window", i.e. everywhere else it
+  does. `setFocusable(false)` DEACTIVATES the window, and Chromium's deactivate
+  walks the Z-ORDER and `SetForegroundWindow`s the first VISIBLE window below
+  it — which, under an always-on-top overlay, is EverQuest. `setFocusable(true)`
+  ACTIVATES. So the call is not idempotent and must never be "re-asserted": two
+  reported bugs came from `setOverlaysHidden` re-stating the locked mode on
+  five visible topmost windows, which yanked the user back into the game on
+  every alt-tab. Focusability is a WINDOW STYLE (WS_EX_NOACTIVATE) and survives
+  hide/show, so there is nothing to re-assert — set it in the CONSTRUCTOR
+  (`focusable:`) and afterwards only when `isFocusable()` disagrees.
+  `tests/overlayFocusPolicy.test.mts` pins the one call site.
 
 ## Linting (ESLint 9 flat config + the ratchet)
 
@@ -708,8 +725,8 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
    BOTH kinds, at the buff-entity level. The combat `WorldModel` retires only
    BY KIND: `claim()` retires the prior SUMMONED pet (the game gives you one
    class pet and the recast despawns the old one printing NOTHING, so the
-   successor's tell is the only evidence there is — before this the owner's
-   log finished a replay holding 23 live pets), while `charm()` retires
+   successor's own claim is the only evidence there is — before this the
+   owner's log finished a replay holding 23 live pets), while `charm()` retires
    nothing there. The crossover is deliberately left alone: 344 charm binds
    land with a summoned pet flagged live, but the log has ZERO cases of a
    proper-named class pet and a charmed pet demonstrably swinging together,
@@ -720,7 +737,12 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
    old pet keeps every point already attributed to it (rows key by
    instanceId); it only stops being yours for FUTURE admission, which means
    the engine's `petNames` index must follow the world model out
-   (`EngineState.syncPetNames`). Zoning: self +
+   (`EngineState.syncPetNames`). **AND THE CLAIM IS WHAT TRIGGERS IT, NOT THE
+   SUMMON** (JOS-188) — an UPGRADED pet has a new NAME, so before the pet-buff
+   rung a player who never ordered the successor got no succession at all: the
+   predecessor's row froze and the successor's damage went nowhere. Three lines
+   produce that claim now (tell / leader say / your own pet-only buff landing);
+   all three go through one `bindPetClaim`, on purpose. Zoning: self +
    summoned pet keep buffs; charmed pets/hostiles are left behind (censor).
    Deaths retire. **Unobservable fades censor, never pollute stats.**
    Own-cast gating: never track buffs we didn't cast (10s cast window or a
@@ -821,6 +843,262 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
    `catalogZonesFor`); closest-match would conflate genuinely distinct
    zones, and an anti-fuzzy tripwire pins two near-name rosters disjoint.
    A new gap gets a VERIFIED row, never a matcher.
+13. **A DEATH→DEATH GAP IS AN UPPER BOUND, NOT A MEASUREMENT** (JOS-194,
+   `shared/respawn.ts`). Respawn clocks start on the death MESSAGE and are
+   numbered from your own kills, because the owner ruled the wiki a bad primary
+   source and the sweep proved him right: of 7,872 catalog pages **522** state
+   a `|respawn_time` at all, **394** state something readable, and 113 answer
+   "Triggered" / "?" / "Night" / "Ultra Rare" — and across the four dungeons the
+   reports named (Befallen, Najena, Upper/Lower Guk) it is **28 of 184**. So the
+   ladder is: your typed number, then your kills, then the wiki as a DEFAULT
+   before you have kills and a FLOOR under them once you do. You cannot kill a
+   mob before it spawns, so every observed gap is `respawn + your delay`: the
+   tightest thing your kills can say is the SMALLEST gap, which converges
+   downward where an average would sit permanently above. It prints as `≤` with
+   the sample count, and a clock at zero says **due**, never "spawned" — the app
+   has never seen a spawn (law 1, law 6). Two rules keep the bound honest and
+   both are EVIDENCE: a gap counts only when both deaths fall inside ONE stated
+   stay in the zone (a zone line ends the stay even when it names the same zone
+   — you left and came back), and two deaths of one name inside 60 s are two
+   mobs in one pull, because the shortest respawn the whole catalog states is
+   **78 s** (p01 165 s, median 22 min). The floor's one job is that same failure:
+   51 kills of `a teir\`dal ranger` give a 61 s minimum, and the wiki's 267 s
+   lifts it while the label still says "your kills, floored by the wiki".
+   The committed floor keeps each page's VERBATIM text beside the parsed
+   seconds, so a grammar fix re-derives the file with NO network
+   (`npm run scrape:respawns -- --reparse`) and the UI can quote what the wiki
+   said instead of inventing a number.
+   **TRACKING IS OPT-IN PER MOB, AND THE DISPLAY IS ZONE-SCOPED** (owner, after
+   using the prototype, 2026-08-10). The first cut also auto-watched the 394
+   mobs the floor gives a duration for; the owner threw that out, because EQ
+   names are massively DUPLICATED across zones and spawn points, so a clock
+   nobody asked for is a clock about a mob the app cannot identify. The
+   Recently-killed panel is the discovery surface (seeing a death costs nothing
+   and claims nothing); a clock exists only once the player clicks Watch or
+   types a number. The wiki keeps the two jobs above and loses the power to
+   ADMIT a row. Separately, the fold keeps every zone it has walked through but
+   the SURFACES show only the zone you are in — the overlay always, the Timers
+   tab by default with an explicit all-zones view — filtered by the module's
+   OWN zone-stay state (`RespawnSnap.zone`, the same field that decides whether
+   a gap counts) through one shared helper. Two edges are decided: the empty
+   zone is its own BUCKET rather than a wildcard, and `due` never widens the
+   filter. **And that made the zone part of what the screen shows, which
+   promoted it to a revision-bearing change** — the module now bumps `rev` on a
+   zone line, or `useModule`'s seq dedupe swallows the one push that says you
+   left (JOS-87's rule, re-learned in the real app).
+   **AND A CLOCK MUST YIELD TO THE LOG NAMING THE MOB** (owner, after using the
+   prototype again, 2026-08-10). The report is the sharpest this feature has had:
+   a watched mob spawned on time, the owner arrived late, the mob was ACTIVELY
+   HITTING HIM, and the row still read "due 4m ago". The countdown was not wrong
+   about its estimate, it was answering a question the world had already settled.
+   So a row carries `seenTs` — the last instant a TYPED event named that mob
+   while the fold stood in that row's zone — and a reading whose `seenTs` is
+   newer than the clock's base reads **UP** and sorts above every countdown.
+   The UP claim itself expires after `RESPAWN_LINGER_MS` (round 8: the STATE
+   ages out, never the row). Coverage is off EVENTS, never a raw-text scan (the parser is the
+   only thing here that reads sentences): damage/miss/heal, consider, cc/ccWake/
+   charm/uncharm, resist/otherCastBegin/buffApply/poisonProc. It is honest about
+   what it cannot see — **a mob standing there prints nothing**, mob speech is
+   dropped by the scrub, a corpse (`loot.source`, `death.name`) is deliberately
+   NOT a sighting or every kill would flip its own row up, `spellEmote` is out
+   because it is a permissive flavor stream, and a duplicate NAME still lights
+   the wrong row exactly as the clock itself already mis-identifies it.
+   **AND A SIGHTING NEVER AUTO-ADJUSTS THE SCHEDULE** — it proves the mob is UP,
+   not when it spawned, so re-basing is an explicit affordance (`Start clock
+   here`, on the seen row in the Timers tab AND in an INTERACTIVE overlay; a
+   locked overlay is click-through and has no clicks to give) landing on
+   `respawn:confirmSighting`. It sets `basis:'sighting'`, which every surface
+   states out loud, and the base is `max(death, confirmation)` so the next death
+   resumes the death-driven cycle with nothing to undo. The confirmation is
+   session state and is never persisted: the fold is rebuilt from a log that has
+   never heard of it, so a stored copy would outlive the spawn it was about.
+   The revision rule generalizes with the third input — watch list, zone line,
+   confirmed sighting, and a sighting itself all bump `rev`.
+   **AND UNWATCH LIVES ON THE MOB, WHEREVER YOU MEET IT** (owner, prototype round
+   4). Watching was already per-mob; STOPPING was a trip to the global watch list
+   at the bottom of the tab — so the half you reach for while a wrong clock is in
+   front of you (over the game, mid-camp, on one of EQ's duplicated names) was the
+   half that made you go looking. Every surface that names a watched mob now
+   carries its own way out: the clock row in the Timers tab, the row in an
+   INTERACTIVE floating window (same click-through law as the confirm control),
+   and the Recently-killed entry, where Watch and Unwatch are ONE control in one
+   slot — same size, same casing, opposite words (MUI upper-cases button text by
+   default, and "WATCH" next to "Unwatch" reads as two controls). All of them land
+   on ONE channel, `respawn:unwatch`, which takes the canonical mob KEY rather than
+   a rewritten list: a row and a candidate each know one mob, and handing either
+   the whole watch list to rewrite would put a second author on entries the user
+   never touched. It removes the NAME, so it stops that name's clocks in zones the
+   surface is not showing, and it throws away nothing else: kills, gaps and the
+   LRU history are the fold's, re-derived from the log, so watching again restores
+   the identical clock. Those two properties are pinned on the WRITE
+   (`respawnWithoutWatch`, `tests/respawnUnwatch.test.mts`) — the control itself
+   carries no tooltip (owner, round 7 addendum: it speaks for itself).
+
+   ROUND 7 (owner, 2026-08-10): the tab is titled Timers; the Your-watches
+   section is gone — the seconds box (rung 1) and Unwatch live on the mob's
+   Running entry, which also states the measured gap history
+   (`RespawnRow.gapsMs`, newest-first, bounded; `observedMs` stays the minimum
+   over all gaps; `customMs` published for the box). Recently killed is
+   searchable via a pure single-pass filter with JOS-206 row memoization. The
+   mob hover card opens from clock rows AND Recently-killed entries — IN-APP
+   ONLY: the floating overlay carries no card (owner: it takes the overlay over
+   too completely); over the game it is plain rows and a native title, and a
+   locked window gets neither.
+
+   ROUND 9 (owner spec, 2026-08-11): the duration and its source label are ONE
+   bordered unit; a small edit icon on it opens the modal
+   (`RespawnEditDialog.tsx`) carrying the mob card, all observed gaps, the
+   wiki's verbatim words, and a real wiki link (`RespawnRow.wikiPage`, shape
+   v4; system browser only). The input parses a WHITELIST grammar
+   (`parseRespawnDuration`: bare number = seconds; strictly-descending d/h/m/s
+   terms like `44m 30s`; colons refused as ambiguous; the whole string must
+   parse) and answers ok/empty/unreadable/range so the dialog never guesses.
+   `respawnOverridden` = the ladder saying `source === 'custom'`, never the
+   mere presence of `customMs`; overridden rows carry `data-respawn-overridden`
+   and a distinct tint on both surfaces; clear/revert re-runs the ladder minus
+   rung 1 and states the number before you press it. The round-7 bare seconds
+   box is gone; the OVERLAY shows the state and carries none of the editing.
+
+   ROUND 8 (owner defect, 2026-08-11): **a watched row NEVER vanishes while
+   watched.** The old expiry sweep retired any row whose estimate elapsed 30+
+   min ago — so Watch clicked hours after the only death produced a row born
+   already swept, a flipped button, and an empty Running list. The sweep is
+   gone: a long-elapsed estimate reads "due long ago" (grey, no bar,
+   `stale=true`), a watched mob with no death yet reads "awaiting next death",
+   the next death starts the normal cycle, and stale rows sort under every live
+   clock. What ages out is the SEEN state (UP is the one label that claims
+   presence); unwatch remains the only way a row leaves.
+
+## The fold laws (JOS-208 — the checkpoint's rules; read before changing a fold)
+
+A launch can now RESTORE the fold from a binary checkpoint and replay only the
+tail (`src/main/foldCache/**`, feature-flagged OFF by default). The whole thing
+rests on ONE claim: a checkpoint is a memo of a pure function of (byte prefix,
+the fold). These are the rules that keep that claim true. **The failure mode
+must always be slow-once, never wrong** — every judgement call goes toward
+"discard and cold-replay".
+
+- **TWO INVALIDATION AXES, and only two.**
+  - **ENCODING — mechanized, never bumped by hand.** Each checkpointed unit
+    declares its stored shape as DATA (`foldCache/schema.ts`), and the shape
+    hash in a container header is DERIVED from that declaration. So a refactor
+    that renames a private field, splits a function or reorders a method churns
+    nothing, and adding/renaming/retyping a STORED field invalidates the fleet's
+    caches with nobody having to remember. The same declaration is the load-time
+    validator and the plain-data enforcement point — one statement, three jobs,
+    no way for them to disagree.
+  - **SEMANTICS — a manual constant, policed by goldens.** `FOLD_SEMANTICS`
+    (`foldCache/semantics.ts`) is bumped **in the same commit** as any change to
+    what the fold COMPUTES from a given event stream.
+- **WHAT COUNTS AS FOLD-AFFECTING**: the parser's event stream
+  (`src/main/log/**`), any module's `onEvent` (`src/main/modules/**`), the
+  derived-event producers (epoch, offline-gap, `buffExpired`), the reducers, the
+  bus DELIVERY ORDER, and the committed data that feeds any of them
+  (spells.json, respawns.json, the message-overlay baseline, the spell
+  corrections). What does NOT count: `src/renderer/**`, `src/preload/**`,
+  anything that only reads a snapshot, and any refactor that leaves every
+  fixture's fingerprint unchanged — which the goldens let you VERIFY rather than
+  assert.
+- **THE GOLDENS ARE THE ENFORCEMENT.** `tests/foldGoldens.test.mts` fingerprints
+  every checkpointed module’s published snapshots over the fixture corpus against
+  `tests/goldens/foldFingerprints.json`. Output changed + no bump ⇒ RED, naming
+  the module and the fixture. **A golden update REQUIRES the bump in the same
+  commit** (`npm run fold:goldens -- "<why>"`). A bump with unchanged goldens is
+  allowed but FLAGGED as overzealous and must carry a stated `reason`.
+  **WHEN IN DOUBT, BUMP**: one unnecessary cold start against a silently wrong
+  world model is not a close call.
+- **THE CORPUS IS THE HONESTY BOUNDARY.** A semantic change visible only on log
+  shapes no fixture contains will not be caught. Shadow mode (phase 3) is the
+  fleet backstop; say "structurally covered" only when that is what you mean.
+- **INVALIDATION IS ALWAYS WHOLE-CACHE.** A partial refold needs the same cold
+  read the whole thing does, so granularity exists only to make invalidation
+  rarer, never to make a restore partial. If ANY unit refuses, nothing is
+  restored and the caller resets the world before the cold replay.
+- **NEVER IN THE CHECKPOINT**: store-derived state (prefs, corrections,
+  turn-ins, watch lists, alert defs) — event-derived fold state only, one truth
+  per fact; and anything read from the WALL CLOCK, which a restored fold is
+  entitled to re-read.
+- **EVERYTHING WHOSE STATE AFFECTS A CHECKPOINTED FOLD IS ITSELF CHECKPOINTED,
+  whether or not it publishes a snapshot.** The registry's modules are NOT the
+  whole fold: `EpochDetector` and `SessionDetector` carry state across events and
+  feed derived events back onto the bus. Leaving them out made a fresh detector
+  re-fire the launch epoch at the first event of the TAIL, clearing the respawn
+  history — a measured divergence at every split point in every fixture, which
+  the differential harness found on its first run.
+  - **A COLLABORATOR RIDES IN THE BLOB OF THE MODULE THAT OWNS ITS LIFETIME**, and
+    is never a unit of its own: the shared `MobLootIndex` is in `consider` (which
+    folds it and resets it), the `MessageOverlayMiner` is in `buffs` (which
+    publishes what it builds), and the two halves `buffs` SHARES with
+    `buffTimers` — the `CastAnchors` and the `SpellStats` learner — are written
+    exactly ONCE, by `buffs`. Two copies of one object in one container is the
+    JOS-140 drift re-created by hand.
+  - **THE MODULE SET IS CLOSED BY A TEST, not by discipline.**
+    `CHECKPOINTED_MODULE_IDS` (`foldCache/serialize.ts`) is written by hand — a
+    list derived from the registry would go green by asking less — and
+    `foldCheckpointDifferential.test.mts` holds it against the registry's own in
+    both directions. A module added to `wiring.ts` without a seam fails there, by
+    name.
+  - Still OUTSIDE the container: the `CombatEngine`. Nothing reads engine state
+    back into a registry module (the dependency runs the other way — the engine
+    PULLS the roster's view), so its absence cannot make a checkpointed module
+    wrong; what it costs is a combat meter that starts empty after a restore. Its
+    state is also a different order of magnitude — an uncapped encounter history
+    with per-encounter aggregates, proc/heal/window accumulators and a world model
+    of instances — so bringing it in is a sizing decision, not a serializer.
+- **THE GRAMMAR GREW TWO KINDS IN PHASE 2, and both are narrow on purpose.**
+  `record` is a plain object with arbitrary string keys (a `KillMap`, an item-tier
+  table) — never a Map by another name, and never where the Map's INSERTION ORDER
+  is load-bearing, which stays an array of `tuple(key, value)`. `nullable` exists
+  only for fold state that is ALSO a wire type whose key is always present and
+  whose null is a stated "no estimate" the UI renders (`ActiveBuff.estimatedMs`).
+  A fold still never stores `null` to mean absent; `optional` is the only way to
+  say that.
+- **THE FOLD IS COMPARED BY ITS PUBLISHED PAYLOAD, so a restore reproduces the
+  SHAPE the module publishes and does not get to improve it.** Two catches from
+  phase 2's matrix, both invisible to a human reading the code: a `knowledge`
+  key that a cold row carries present-and-undefined and a restored row omitted
+  (consider), and `new Date()` inside a published snapshot (the message
+  overlay's `updatedAt`, which now reads the LOG's clock instead). A wall clock
+  anywhere a snapshot can reach is a divergence at every split point of every
+  fixture.
+- **TWO AUDITS, both dynamic, both run in `npm test`.**
+  `tests/foldDeterminism.test.mts` replaces `Date.now`/`performance.now` for the
+  duration of a real fold and fails on any read from repo source (the SCHEDULER's
+  clock is injected, not allow-listed). `tests/foldPlainData.test.mts` walks the
+  real fold state of a real fixture: it must validate against its own
+  declaration, carry nothing a structured clone cannot mean, survive
+  `v8.serialize`, and re-serialize IDENTICALLY out of a fresh unit (the
+  completeness half — a field the class holds and the declaration omits dies
+  there). Both audits carry a TRIPWIRE test proving the audit itself can fail.
+- **THE DIFFERENTIAL HARNESS IS OWNER LAW** (`tests/foldCheckpointHarness.mts` +
+  `foldCheckpointDifferential.test.mts`): deep-equal published snapshots of EVERY
+  checkpointed module between cold replay and checkpoint+tail, over the corpus, at
+  session edges / zone lines / mid-fight / mid-hold / mid-cast / in-hole /
+  epoch-adjacent / deciles / seeded fuzz, plus the externality permutations
+  (truncated, regrown, flipped shoulder byte, stale semantics, stale shape,
+  corrupt cache, missing cache) which must every one land on the cold path with a
+  NAMED refusal reason. Both arms go through the production `scanLog`. The two
+  split kinds that are not lines — in-hole and epoch-adjacent — are found by
+  walking the log's own parsed timestamps, because an absence has no line.
+- **THE GO-LIVE SWEEP RUNS BEFORE THE FIRST PUBLISH**, and it is asserted rather
+  than assumed: `startHeartbeat()`'s single `registry.tick(Date.now())` precedes
+  `flushNow()` and `sendWorldRebuilt` in session.ts, so no one ever sees a frame
+  of bars that real time invalidated while the app was closed. The test pins the
+  PROPERTY (swept == cold, and unswept differs somewhere), so an ordering nobody
+  can observe cannot pass it.
+- **THE SWITCH IS A PREFERENCE** (Preferences → Performance, "Start faster by
+  remembering your log"), off by default. `EQ_FOLD_CACHE` stays as a dev escape
+  hatch and still wins in BOTH directions — a kill switch a preference can
+  override is not a kill switch — and the card SAYS so when it is the thing
+  deciding, rather than drawing a switch that disagrees with the launch.
+- **B IS ALWAYS THE END OF A COMPLETE LINE.** `ScanResult.endOffset` and
+  `Tailer.checkpointOffset()` are the only producers, and both mean it. A
+  partial line has been folded by nobody, so a checkpoint that claimed it would
+  drop a line the cold arm keeps.
+- **BINARY END TO END, never a text write.** The container is `Buffer` in,
+  `Buffer` out, temp+rename, with three digests (header, per blob, whole file).
+  The BOM history above is about a JSON file, and a JSON file survives a BOM
+  better than V8 blobs ever could.
 
 ## Log-format quick reference (all validated against the real log)
 
@@ -1135,6 +1413,45 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   two are an NPC's words under an NPC's name, while this one carries a
   PLAYER's name inside the quote, so it borrows the self-`/who` row's
   argument instead and a stranger's pet naming a stranger still drops.
+  **AND YOUR OWN PET-ONLY BUFF NAMES IT WITHOUT ASKING** (JOS-188) — the
+  THIRD binding signal, and the first that costs the player nothing. 40
+  spells are `targetType: Pet` in spells.json
+  (`charmModel.ts PET_TARGET_SPELLS` — Burnout, the necro Death line, Renew
+  Elements, the beastlord spirits, Tiny Companion, Ward of Calliav); the
+  game refuses one on anything but YOUR OWN pet, and `You begin casting
+  <Spell>.` is printed for the player and nobody else. So an own cast of one
+  ARMS the charm model (a third arm kind beside charm/cc, sharing its
+  window, its one-cast-at-a-time disarm and its fizzle disarm) and the named
+  `buffApply` landing that resolves it binds the pet — through the SAME
+  `bindPetClaim` in ingest.ts the tell and the leader say go through, for
+  law 4's reason.
+  THE REPORTED SHAPE (01KZPFBMF1R26DSG0R2EGER7MV): an UPGRADED pet is a new
+  NAME, so the JOS-54 succession never runs — it is not triggered by the
+  summon, it is triggered by the successor's claim, and an unordered
+  successor has none. The reporter's meter kept the predecessor's frozen row
+  and dropped 89 hits / 3,385 points of the new pet; relogging emits no
+  binding line either, which is why relogging never helped.
+  MEASURED (whole log, 1,557,569 lines, 2026-08-10): 19 binds / 14 names,
+  and **all 14 are names a `… Master.'` tell ALSO bound** — nothing is bound
+  by this rung alone, nothing it binds is contradicted, and in all 14 it
+  arrives FIRST by 81 s – 2,528 s, worth 1,865 hits / 27,088 points.
+  **THE MESSAGE IS NOT THE GATE, THE ARMED OWN CAST IS**: `goes berserk.`
+  resolves to Burnout / Fury / Rage / Voice of the Berserker and only one is
+  a pet spell, so the landing's candidate list must contain the spell being
+  cast; the arm is CONSUMED on a hit, so a Quick Buff burst (eleven landings
+  in one second, zero cast lines) can never bind off one cast. Golden window
+  `tests/fixtures/p3-pet-upgraded-buff-bound.log` + `tests/petBuffBind.test.mts`
+  (which installs the spell DB — `buffApply` is DB-gated — while
+  `petClaimWindows.test.mts` deliberately still runs without one).
+  STILL NOT CLOSED, and named rather than implied: (a) a pet its owner neither
+  buffs nor orders stays invisible (01KZN569YA6T751QCJW99P1ZCA is that half —
+  its pet buffs are not `targetType: Pet`, so the rung fires zero times in
+  its log); JOS-49's answer stands for them, order it once. (b) The rung is a
+  transition INSIDE the combat engine, not a parser event, so
+  `modules/buffs.ts`'s own entity-level succession still waits for the tell —
+  unchanged from before, not yet improved. Closing that needs a derived-event
+  seam the session feeds to both models, never a second arm in buffs.ts (that
+  is the duplicated retirement path law 4 is a scar from).
 - Exp: `You gain (party )?experience!( (N.NN%))?` — the percent is an
   INCREMENT of the current level bar (sums to ~100 between dings);
   unstated ⇒ at the cap, modeled `pct: undefined` never 0. The exp line
@@ -1250,9 +1567,41 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
 - Item knowledge: `itemLookup.ts` — local-first (posky) → wiki
   `{{Itempage}}` (`statsblock` flags / `relatedquests` / `notes`), userData
   cache with negative caching, live-loot background prefetch.
+- **THE WIKI ART SHIPS IN THE BOX, AND THE FETCH IS THE FALLBACK** (JOS-198,
+  `src/main/bundledImages.ts` + `resources/wiki-images/`). MEASURED: 780 files,
+  3.75 MB — every DISTINCT `iconId` across the 11,341 items in items.json (751,
+  1.21 MB, eqlwiki) and all 29 boss portraits in bosses.json (2.54 MB, p1999) —
+  against a ~25 MB budget, so the whole set ships and there is no
+  most-requested subset. They are COMMITTED, not fetched at build time: a
+  build-time fetch would move the two volunteer wikis out of the startup path
+  and into the RELEASE path and make `npm run dist` depend on someone else's
+  uptime. `npm run fetch:images` (scripts/fetch-wiki-images.mts) regenerates
+  them + `manifest.json`, which records the exact upstream URL, byte length and
+  sha256 per file; `--seed <eqimg cache dir>` imports bytes already downloaded
+  once (the politest request is the one never sent). Files are named by the
+  cache's OWN `cacheFileName()`, so the bundle and `<userData>/image-cache` are
+  ONE namespace with one naming function and cannot drift. The dir has three
+  addresses over the app's life (project root in dev + e2e, inside `app.asar`,
+  `app.asar.unpacked` after `asarUnpack`) and `bundledImageRoots` probes them in
+  order — same problem and same answer as `sounds.ts`. electron-builder names
+  `resources/wiki-images/**` EXPLICITLY, never `resources/**`: the gitignored
+  soundpack dirs beside it would otherwise ship whatever a dev had downloaded.
+  Null (a source build that skipped `fetch:images`) is a SUPPORTED state that
+  falls back to the runtime cache. `tests/bundledImages.test.mts` holds the
+  manifest against both data files and re-hashes all 780, so a re-scrape that
+  adds a raid target or an icon id and forgets `fetch:images` goes RED instead
+  of silently restoring a network dependency. The e2e proof is
+  `bosses-week.e2e.mts`: under `EQ_E2E` a cache miss is a 1×1 blank, so
+  `naturalWidth > 1` on a cold userData with no network can ONLY mean the bytes
+  came from the bundle (measured 29/29 at 300×319 over `eqimg://`).
+  CREDIT IS PART OF THE FEATURE, not decoration: Preferences → Thanks
+  (`ThanksSetting.tsx`), a README Thanks section, and the 0.19.0 note all name
+  both wikis — redistributing someone's art inside an installer without saying
+  so is the thing this ticket refused to do.
 - **Downloaded images are cached PERMANENTLY** (`src/main/imageCache.ts`):
-  no image the app fetches may ever be fetched twice. Item icons are served
-  from `eqimg://item/<id>` — a `protocol.handle` on the DEFAULT session
+  no image the app fetches may ever be fetched twice — and since JOS-198 above,
+  a normal install fetches NONE, because the bundle is probed first. Item icons
+  are served from `eqimg://item/<id>` — a `protocol.handle` on the DEFAULT session
   (registered in whenReady; `registerSchemesAsPrivileged` runs at index.ts
   module scope, before ready), backed by `<userData>/image-cache/item-<id>.png`.
   No window uses a custom `partition`, so the one handler covers the main
@@ -1260,9 +1609,20 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   (shared UA, in-flight dedupe so N windows can't double-request), written
   ATOMICALLY (temp file + rename — a torn PNG under a no-TTL cache would be
   permanent) and only if the bytes actually sniff as an image. NEGATIVES ARE
-  NEVER CACHED: a 404/offline/timeout responds 404, the `<img onError>` hides
-  the icon, and the next load retries. No TTL, no eviction — wiki file ids are
-  immutable. `itemIconUrl()` (ItemWindow.tsx) is the single renderer entry
+  NEVER CACHED **ON DISK** — a failure writes nothing, so nothing permanent can
+  be wrong — but since JOS-198 a refusal IS remembered IN MEMORY for the
+  session, and only when the HOST SPOKE: a status (404/415/500) or a body that
+  is not an image. Nothing ever retried on a timer; the RENDERER re-asked, because
+  an `<img>` that 404s is re-created on every scroll-back, tooltip reopen and
+  overlay re-mount — each one a fresh 10 s fetch to a wiki that had already said
+  no, plus a fresh errors.log line. A NETWORK failure (offline, DNS, TLS, our own
+  timeout) is DELIBERATELY NOT remembered: it is the one failure plausibly on our
+  side and plausibly gone a second later, and a just-woken laptop must not be
+  locked out of every icon until restart — the same seam JOS-133 drew between the
+  counter branch and the error branch. Bounded at 512, degrading past the cap to
+  the old behaviour rather than evicting; session-scoped, so a wiki that fixes its
+  500 is picked up next launch with no TTL or eviction policy to get wrong. On
+  disk: no TTL, no eviction — wiki file ids are immutable. `itemIconUrl()` (ItemWindow.tsx) is the single renderer entry
   point; the upstream eqlwiki URL is spelled out only in imageCache.ts.
   A SECOND route on the same handler, `eqimg://url/<encodeURIComponent(url)>`,
   covers images the renderer holds as absolute URLs — today the 29 boss
@@ -1344,10 +1704,11 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   this file's own prose does too. `tests/copyNoEmDash.test.mts` is the guard and
   its header states exactly what it covers and what it does not; it parses with
   the TS compiler and inspects only string/template/JSX-text nodes, because a
-  whole-source grep would drown in comments. Three files are excluded on
+  whole-source grep would drown in comments. Two files are excluded on
   technical grounds (the Kokoro phoneme VOCABULARY, where U+2014 is a model token
-  id; an embedded PowerShell script's own `#` comments; the TELEMETRY.md
-  generator) and the exclusions are listed in the test.
+  id; the TELEMETRY.md generator) and the exclusions are listed in the test.
+  A third — an embedded PowerShell script's own `#` comments — went away with
+  the script in JOS-182.
 - **SAY WHAT THE LOG DID, NOT WHAT WE DID TO THE NUMBER (JOS-106).** A label
   describing our own bookkeeping reads as a defect to the person holding it: Monk
   Mend's healing lane was tagged `unvalued` / `amount not stated`, and a v0.12.0
@@ -1383,6 +1744,25 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   `cameFrom` prop: five of those are five opinions about what Back means. A back
   affordance NAMES ITS DESTINATION ("Back to Planner"), and a breadcrumb root
   keeps meaning the place it reads. Session-lifetime only, nothing persisted.
+  **AND THE MOUSE'S BACK BUTTON PRESSES THE AFFORDANCE THAT IS ON SCREEN** (JOS-201).
+  mouse4 is not a second navigation model: `backTargets.ts` (pure, node-tested) says
+  the innermost REGISTERED affordance wins and the app-level `nav.back()` is the
+  fallback slot behind it, and each drill registers *the same expression its own
+  button runs* (`useBackTarget` in appBack.tsx) — never a parallel opinion. A target
+  reports whether it handled the press, so an inert one falls through and a press with
+  nowhere to go is a no-op. The provider sits ABOVE `App` in main.tsx because effects
+  run children-first and "the last thing to try" must be a slot, not a race. THE INPUT
+  IS WINDOW-SCOPED AND STAYS THAT WAY: a BrowserWindow `app-command` listener on the
+  MAIN window only (`src/main/appBack.ts`), gated on `browser-backward` and on that
+  window having focus — no `globalShortcut`, no low-level mouse hook, no polling, and
+  nothing at all while EverQuest is foreground, where mouse4 keeps meaning whatever the
+  player bound it to. `browser-forward` is deliberately unhandled (the origin stack is
+  consumed by Back; there is no forward to walk). The combat meter's drill breadcrumb
+  is deliberately NOT a target — an in-panel expansion is not a page. The e2e raises
+  the app-command on the real window (`deep-link-back.e2e.mts`), which drives every
+  link but the OS's: Chromium handles the physical X-button in the browser process, so
+  it never reaches the renderer as a DOM mouse event on Windows — which is why this is
+  an `app-command` handler and a DOM listener would not work.
 - **A VIEW UNMOUNTS ON EVERY TAB SWITCH, so `useState` in one is a promise you
   cannot keep** (JOS-90, JOS-97, JOS-116 — the same bug three times).
   `App`'s `ViewContent` mounts exactly ONE feature view at a time, so anything a
@@ -1525,6 +1905,12 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   `node --import tsx scripts/check-release-notes.mjs $env:GITHUB_REF_NAME`, which
   refuses a tag with no entry and re-runs the same `releaseNotesProblems` shape
   check `tests/releaseNotes.test.mts` runs. Write the entry BEFORE tagging.
+  **WHO WRITES IT: THE INTEGRATOR, AT RELEASE CUT (owner rule 2026-08-10).**
+  Notes are a release-driven activity, not a work-driven one. Worker branches
+  never touch `releaseNotes.ts` — the integrator drafts the whole entry from
+  the release's merged tickets when the tag is cut. (Two workers in one wave
+  independently appended bullets to an already-shipped version; per-worker
+  notes also can't see the release's shape or apply the five-bullet cap.)
 - **RELEASE CADENCE: tag only when the user asks, or at a clearly STABLE
   point** — features verified end-to-end, the gauntlet green, no waves in
   flight. Commits land on main continuously; a tag is a deliberate act,
@@ -1635,6 +2021,36 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   DB/overlay baseline are inlined in the main bundle; EQ dir resolves via
   env → registry → drive-sweep with the Settings-gear override; zero logs
   anywhere → quiet empty state, never an error.
+- **DISCOVERY SPAWNS NOTHING, AND THAT IS AN AV DECISION AS MUCH AS A SPEED ONE
+  (JOS-184).** `src/main/log/discovery.ts` used to answer its two Windows
+  questions by shelling out: EIGHT `reg.exe query <hive> /s /f EverQuest
+  /t REG_SZ` subprocesses whose stdout was regex-grepped, plus `wmic
+  logicaldisk get DeviceID,DriveType` for the drive letters. Both now read
+  in-process through `native-reg`. The old shape was ~150 ms of blocked main
+  thread that SCALED with the user's Uninstall hive (the reason the JOS-112
+  ceiling exists) — and, more to the point, "unsigned exe sweeps the uninstall
+  registry and enumerates disks, seconds after install" is precisely the
+  behavioural signature a heuristic engine scores, on the one app that cannot
+  answer with an Authenticode publisher yet. Measured replacement: ~6 ms.
+  Two invariants, both pinned by tests in `tests/eqDiscovery.test.mts`:
+  * `eqInstallPathValue` reproduces the OLD command's contract exactly —
+    an `InstallLocation`/`InstallPath`/`InstallDir` whose DATA contains
+    "everquest". That was verified against the real `reg.exe`, not read off
+    the docs: with `/t REG_SZ` present a KEY-NAME match prints NOTHING (so the
+    old line regex could only ever fire on a data match), and a key-name match
+    without `/t` prints the key line alone and none of its values.
+  * `fixedDrives` reads `\DosDevices\<letter>:` out of
+    `HKLM\SYSTEM\MountedDevices` (user-readable, verified non-elevated). A
+    mapped NETWORK drive is never in that key, which is the property that
+    replaces the DriveType-4 filter and the whole reason the offline-share hang
+    stays fixed. Removable local volumes now ARE included (DriveType 3 excluded
+    them) — a superset, costing instant `existsSync` calls on local devices.
+  `native-reg` and not `registry-js` because `.npmrc`'s `ignore-scripts=true`
+  is load-bearing: native-reg ships its N-API prebuild INSIDE the tarball
+  (node-gyp-build resolves it at require time), registry-js DOWNLOADS one from
+  an install script. It is `require`d LAZILY inside `discovery.ts` and its
+  failure is swallowed — this module is on the startup path, and a bad `.node`
+  must cost one of three ways to find the install, not the whole launch.
 
 ### Product identity + channel isolation (Task #58)
 
@@ -1912,6 +2328,41 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   8 ms sampler, animation frame, last-surface-wins — and asserts on what was
   on the SCREEN; it reproduces the twitch on the old path first, so the fixed
   assertion means something.
+- **…AND THE LOOP THAT DROVE ALL OF IT NO LONGER SPAWNS ANYTHING (JOS-182).**
+  The presence watcher was a hidden `powershell.exe` (`-ExecutionPolicy Bypass
+  -EncodedCommand <base64>`) compiling a C# P/Invoke surface at runtime with
+  `Add-Type`, enumerating every process and reading window titles. To a
+  behavioural AV engine that is an infostealer — it was the app's largest
+  heuristic trigger — and it also just **never ran** on 578 installs' worth of
+  machines (`spawn powershell.exe ENOENT`), where auto-hide and the ring were
+  dead every session and fail-open meant nobody could tell. It is now a
+  **worker thread** calling user32/kernel32/psapi through **koffi**. Three
+  rules fall out, all of them general:
+  - **A NATIVE DEPENDENCY HERE MUST SHIP PREBUILT N-API BINARIES IN ITS NPM
+    TARBALL.** `.npmrc` ignores install scripts and `npmRebuild` is false, so
+    anything needing node-gyp needs both reconsidered. That rule, not taste,
+    is why koffi beat hand-writing an addon: a CI-only compile exists in a
+    release build and **nowhere else** — not in `npm run dev`, not in
+    `npm test`, not in a local `dist` — so the feature would be degraded
+    everywhere it is developed and live only where nobody can debug it. (Pin
+    to koffi **2.x**: 3.x dropped the in-tarball prebuilds and downloads them
+    in its install hook.)
+  - **NEVER `worker.terminate()` A THREAD THAT CALLS NATIVE CODE.** MEASURED:
+    terminating a worker while it is inside a koffi call aborts the whole
+    process — `FATAL ERROR: Error::ThrowAsJavaScriptException`, no catch
+    anywhere. Idle worker: 40/40 rounds survived. On the app's real 5 s scan
+    cadence: crashed within two. Ask it to stop over the port instead; a
+    `'message'` handler can only run BETWEEN ticks, never inside a call. This
+    would have been a rare, unattributable crash **at quit**, which every
+    session reaches.
+  - **MOVING WORK OFF A PROCESS IS NOT THE SAME AS MOVING IT ONTO MAIN.** The
+    obvious shape after deleting a child is a `setInterval` on the main
+    thread; the running scan is **8.4 ms** (`EnumProcesses` alone 4.1–4.5 ms
+    over 325 processes), and main tails the log, folds combat, answers IPC and
+    runs the 8 ms cursor sampler. The child's one virtue was being somewhere
+    else — keep that, drop the process. (Same argument as `speechWorker`;
+    these are the tree's two worker_threads, both separate rollup inputs in
+    `electron.vite.config.ts` because `new Worker(path)` loads a FILE.)
 - **…AND IT IS TWO WINDOWS, OVER ONE MODEL (JOS-119).** The owner asked for
   buffs and debuffs to be windows he can enable and place separately, so the
   one 'buffs' kind became 'buffs' + 'debuffs' — two configs, two windows, two
@@ -1996,9 +2447,12 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   Win32 env is built. `winhlp32.exe` is likewise refused — a real XP/Vista/7
   binary. Gated on `platform === 'win32'` — a native Linux build is not an
   emulated Windows one. REJECTED: `wine_get_version` (needs FFI/a native addon),
-  the registry (real — `HKCU\Software\Wine\Debug` is in every stock prefix — but
-  needs a `reg.exe` spawn on every launch's startup path to answer 'no' for
-  ~everyone; the `Wine\Wine\Config` key every blog names died in 0.9), and the
+  the registry (real — `HKCU\Software\Wine\Debug` is in every stock prefix — and
+  its ORIGINAL objection, a `reg.exe` spawn on every launch's startup path to
+  answer 'no' for ~everyone, EXPIRED WITH JOS-184: `native-reg` is in the tree
+  and reads a key in-process in well under a millisecond, so this is now a live
+  next-rung option, not an impossible one; the `Wine\Wine\Config` key every blog
+  names died in 0.9), and the
   `"Wine builtin DLL"` DOS-stub magic at offset 0x40 (definitive, and the NEXT
   RUNG if a prefix ever defeats both signals above). `src/main/wine.ts` caches
   the answer once per launch and logs the signals when it fires.
@@ -2159,11 +2613,16 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   verified installed/declared 2026-08-06 during JOS-63): electron **43.2.0**,
   vite **7.3.6**, electron-vite **5.0.0** are what the tree runs today —
   the 33→43 / 5→7 / 2→5 upgrades this item tracked are done. Still open
-  from the same flag: .npmrc's audited-hooks comment for onnxruntime-node
-  (declares a postinstall — verified NOT needed on win32-x64, binaries ship
-  in the tarball), electron-builder.yml's 'no native modules' comment, and
-  the installer shipping ~150MB of other-platform onnx binaries (trim via
-  asarUnpack filters).
+  from the same flag: the installer shipping ~150MB of other-platform onnx
+  binaries (trim via asarUnpack filters). The two COMMENTS this item also
+  tracked are settled: .npmrc's audited-hooks list and electron-builder.yml's
+  npmRebuild note were both rewritten by JOS-182, which added the tree's
+  SECOND native module (koffi) and states the rule they now encode — a native
+  dependency is acceptable here when it ships prebuilt N-API binaries inside
+  its npm tarball, and needs `ignore-scripts`/`npmRebuild` reconsidered when
+  it ships node-gyp sources. koffi's eighteen other-platform prebuilds are
+  excluded from the installer the same way onnx's are, so that trim now has a
+  worked example next to it.
 
 - **Feedback loop (the next big feature)**: fully planned + reviewed in
   `docs/plans/feedback-triage.md` — in-app reports, scrubbed log-window

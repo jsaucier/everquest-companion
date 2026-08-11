@@ -8,7 +8,13 @@
 
 import type { ActiveBuff } from '../../shared/types'
 import { isLeftBehindOnZone, type EntityDisposition } from '../combat/entityRules'
-import { hygieneCapMs, unwitnessedTimeoutMs, type OpenCast } from './buffsShapes'
+import {
+  HYGIENE_ABSOLUTE_MS,
+  hygieneCapMs,
+  learningRecordCapMs,
+  unwitnessedTimeoutMs,
+  type OpenCast
+} from './buffsShapes'
 import type { ActiveSpec } from './buffsView'
 
 /**
@@ -104,6 +110,45 @@ export function unwitnessedCullCap(a: ActiveBuff): number {
   // No number at all ⇒ the row is counting UP and has nothing to be overdue against.
   if (dur == null || dur <= 0) return Number.POSITIVE_INFINITY
   return dur + unwitnessedTimeoutMs(a.overlaySource)
+}
+
+/**
+ * THE ORPHANED-RECORD REAPER (JOS-203) — the buffs half's half of the retention rule.
+ *
+ * THE DEFECT IT FIXES, characterized on the running model: `sweepHygiene` iterates the ACTIVE map,
+ * and its unwitnessed cull deletes the active row while deliberately KEEPING the open record
+ * (JOS-156's refinement — the record is what lets a late wear-off still mint a sample, and deleting
+ * it pinned the estimate to the DB floor forever). But the long stop that would eventually collect
+ * that record is inside the same active loop, so once the cull ran there was NO REAPER AT ALL: the
+ * record sat in `open` for the life of the process. Two things follow, and both were measured. The
+ * map grows without bound. And the next landing of that spell on a same-named mob calls
+ * `openRecord`, finds the stale record, and lands into its stale {@link OpenCast.group} — so the
+ * row draws the ANCIENT landing's clock (the group's oldest) with the old count chip, which is
+ * instantly overdue and is culled again before the player can read it.
+ *
+ * IT REAPS ONLY ORPHANS — a record with no active row behind it. A record that still has one is
+ * governed by the sweep exactly as before, so no live row's life changes by a millisecond, and the
+ * anti-squatting cull, the hygiene long stop and the offline hold are all untouched.
+ *
+ * THE SCHEDULE IS THE SHARED ONE: `learningRecordCapMs` — 3× the DB base, or the 90-minute long
+ * stop when the DB states nothing to multiply. The CC half's late-join memory retires on the same
+ * rule (`modules/buffTimers.ts remember`), which is the symmetry the ticket asked for.
+ *
+ * IT MINTS NOTHING AND SAYS NOTHING. A reap is not an observation (`dropExpired` hands the landing
+ * back and this discards it), and nothing in either snapshot describes an open record — so the
+ * caller does not mark the model dirty for it, and no delta is pushed for a bar nobody can see.
+ */
+export function reapOrphanedOpen(
+  open: Map<string, OpenCast>,
+  active: ReadonlyMap<string, unknown>,
+  dbDurationFor: (spellKey: string) => number | null,
+  now: number
+): void {
+  for (const [ik, o] of open) {
+    if (active.has(ik)) continue
+    o.group.dropExpired(now - learningRecordCapMs(dbDurationFor(o.spellKey), HYGIENE_ABSOLUTE_MS))
+    if (o.group.empty) open.delete(ik)
+  }
 }
 
 /** Where a fresh landing sits: its identity, whose it is, and the record it just joined. */

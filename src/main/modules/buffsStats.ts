@@ -36,6 +36,7 @@
 
 import type { SpellDb } from '../data/spellDb'
 import { spellNature } from '../data/spellDb'
+import { S, type FoldSchema } from '../foldCache/schema'
 import type { BuffClass, BuffStat } from '../../shared/types'
 import { learnKey, SELF_CASTER } from '../../shared/buffTrust'
 import { percentile, RECENT_SAMPLE_WINDOW, type DurationSample, type SpellSamples } from './buffsShapes'
@@ -329,4 +330,53 @@ export class SpellStats {
     }
     return stats
   }
+
+  // ---- the checkpoint seam (JOS-208 phase 2) --------------------------------------------------
+  //
+  // THE LEARNER IS GAME KNOWLEDGE AND IT IS THE POINT OF CHECKPOINTING THIS HALF AT ALL. A
+  // duration mined over weeks of play is the single most expensive thing this fold produces, and
+  // it is the one thing a rebirth and a session gap deliberately KEEP (see the module header).
+  // Restoring it wrong shows up as a bar counting down from the DB floor for a spell the app has
+  // watched two hundred times.
+  //
+  // `db` is NOT stored: it is the committed `spells.json` plus the overlay corrections, rebuilt
+  // by the composition root before any module exists, and one of the inputs the shape hash covers
+  // by covering the build. `samples` and `lastSeen` keep their Map order (entries arrays) because
+  // `observedWindowMaxFor` walks a sample list backwards and the ORDER is the recency window.
+
+  static readonly FOLD_SCHEMA: FoldSchema = S.obj({
+    samples: S.arr(
+      S.tuple(
+        S.str,
+        S.obj({
+          spell: S.str,
+          samples: S.arr(S.obj({ ms: S.num, ts: S.num, censored: S.opt(S.bool) }))
+        })
+      )
+    ),
+    everFaded: S.arr(S.str),
+    lastSeen: S.arr(S.tuple(S.str, S.num))
+  })
+
+  serializeFold(): SpellStatsFoldState {
+    const samples: [string, SpellSamples][] = []
+    for (const [key, s] of this.samples) {
+      samples.push([key, { spell: s.spell, samples: s.samples.map((x) => ({ ...x })) }])
+    }
+    return { samples, everFaded: [...this.everFaded], lastSeen: [...this.lastSeen] }
+  }
+
+  /** Adopt a previously serialized learner. Validation is the OWNER's — see `BuffsModule`. */
+  deserializeFold(state: SpellStatsFoldState): void {
+    this.samples = new Map(state.samples)
+    this.everFaded = new Set(state.everFaded)
+    this.lastSeen = new Map(state.lastSeen)
+  }
+}
+
+/** The learner as plain data — the DB deliberately absent (it is rebuilt, not remembered). */
+export interface SpellStatsFoldState {
+  samples: [string, SpellSamples][]
+  everFaded: string[]
+  lastSeen: [string, number][]
 }

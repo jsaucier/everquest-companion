@@ -23,6 +23,7 @@ import type {
   TriageAnalyticsData,
   TriageDownloads,
   TriageMixRow,
+  TriageStartupRow,
   UsageDayPoint
 } from '@shared/triage'
 import { sparklinePoints } from '@shared/perf'
@@ -148,6 +149,26 @@ export function HealthSection({ data }: { data: TriageAnalyticsData }): JSX.Elem
  * storage never had. `—` is "no launch on this build reported one", which is a different fact
  * from a fast launch and must not share a rendering with it.
  */
+/**
+ * THE MACHINE'S HALF OF ONE BUILD'S ROW (JOS-57 scope addition) — a string rather than a nested
+ * ternary in JSX, which is also what keeps the row's own renderer inside the complexity ceiling.
+ *
+ * A build with NEITHER reading says so in words. Rendering six dashes would look like a build that
+ * was measured and found blameless, and the whole reason these numbers exist is that "not
+ * measured" and "fine" were previously indistinguishable.
+ */
+function stutterText(r: TriageStartupRow): string {
+  if (r.stutterLaunches === 0 && r.p95FirstMbLabel === null) {
+    return 'no stutter or cold-read reading on this build'
+  }
+  const late = r.stutterLatePct === null ? '-' : pctLabel(r.stutterLatePct)
+  return (
+    `${formatNum(r.stutterLaunches)} measured · timer drift p50 ${r.p50StutterLabel ?? '-'}` +
+    ` · p95 ${r.p95StutterLabel ?? '-'} · ${late} of ticks late` +
+    ` · first MB p50 ${r.p50FirstMbLabel ?? '-'} · p95 ${r.p95FirstMbLabel ?? '-'}`
+  )
+}
+
 export function StartupSection({ data }: { data: TriageAnalyticsData }): JSX.Element {
   const s = data.startup
   return (
@@ -157,6 +178,10 @@ export function StartupSection({ data }: { data: TriageAnalyticsData }): JSX.Ele
         took, the worst single main-loop block while it did, and the duty the fold actually
         achieved (measured, never the setting). Percentiles are bucket ranges - the counters keep a
         histogram, so an exact figure would be invented. Character-switch replays are not measured.
+        The second line of each row is the MACHINE&apos;s half: the drift of a fixed heartbeat that
+        ran through the same fold, and how long the first megabyte took to arrive. Drift that
+        climbs while the block figures hold still is a healthy process on a stuttering computer -
+        neither number claims that alone, the pair does.
       </Typography>
       {s.byVersion.length === 0 ? (
         <Typography variant="caption" color="text.secondary" data-testid="analytics-startup-empty">
@@ -179,6 +204,9 @@ export function StartupSection({ data }: { data: TriageAnalyticsData }): JSX.Ele
               {r.p95BlockLabel ?? '-'} · duty {pctLabel(r.dutyAchieved ?? 0)} ·{' '}
               {r.meanEventsReplayed === null ? '-' : formatNum(Math.round(r.meanEventsReplayed))}{' '}
               events/launch · {formatNum(r.blocksOver50)} stalls over 50 ms
+              <Box component="span" sx={{ display: 'block', pl: 2, opacity: 0.8 }}>
+                {stutterText(r)}
+              </Box>
             </Typography>
           ))}
         </Stack>
@@ -189,6 +217,12 @@ export function StartupSection({ data }: { data: TriageAnalyticsData }): JSX.Ele
           player, and the context every row above is read in)
         </Typography>
         <MixList rows={s.logSizes} empty="No launch has reported a log size yet." />
+        <Typography variant="caption" color="text.secondary">
+          …and how much of it was NEW - bytes appended since that install last exited cleanly. Two
+          launches reading the same log are not the same launch if one of them is reading pages the
+          machine has never seen.
+        </Typography>
+        <MixList rows={s.newBytes} empty="No launch has reported a cold-read delta yet." />
       </Stack>
     </Section>
   )

@@ -9,11 +9,14 @@ import type {
 } from '@shared/types'
 import { computeAAAccounting } from '@shared/aa'
 import { aaPace, type AaPace } from '@shared/aaPace'
+// "What level am I" is the STATED fact now (JOS-192) — the later of your last ding and your own
+// `/who` row — not the tail of the dings. `peakLevel`/`swapCount` still read the ding series,
+// because those two really are questions about the level-up record.
+import { useStatedLevel } from './useStatedLevel'
 import { useModule } from '../../lib/useModule'
 import { formatDate } from '../../lib/formatDate'
 import {
   buildLevelSegments,
-  latestLevel,
   levelFeedEntries,
   peakLevel,
   sortLevels,
@@ -467,15 +470,21 @@ export default function LevelingView({
   // the zone bands and the range panel. Deliberately separate from `leveling`, whose
   // contract is "everything, forever" (see src/main/modules/progression.ts).
   const prog = useModule<ProgressionSnap, ProgressionDelta>('progression', applyProgressionDelta) ?? EMPTY_PROGRESSION
+  // The THIRD module, through its own hook: `character`, for the stated level fact (JOS-192). It
+  // is the only one carrying your own `/who` row's number, which is what corrects the level after
+  // a loadout swap the log never announced.
+  const stated = useStatedLevel(prog)
 
   const sortedLevels = useMemo(() => sortLevels(levels), [levels])
   const sortedAAs = useMemo(() => [...aas].sort((a, b) => a.ts - b.ts), [aas])
 
-  // CURRENT level is the LATEST reported one, never max(). You level three classes at once
-  // and a loadout swap re-reports the level of the new (lowest) class — so the peak belongs
-  // to a class that may no longer be in the loadout. It's surfaced separately as "peak".
+  // CURRENT level is the level the log last STATED — the later of your last ding and your own
+  // `/who` row (JOS-192). Never max(): you level three classes at once and a loadout swap
+  // re-reports the level of the new (lowest) class, so the peak belongs to a class that may no
+  // longer be in the loadout. It's surfaced separately as "peak", off the ding series, which is
+  // exactly the question that series answers.
   const levelSegments = useMemo(() => buildLevelSegments(sortedLevels), [sortedLevels])
-  const currentLevel = latestLevel(sortedLevels)
+  const currentLevel = stated.level
   const peak = peakLevel(sortedLevels)
   const swaps = swapCount(levelSegments)
 
@@ -536,6 +545,8 @@ export default function LevelingView({
           AA reads live one panel down, where they are labelled as rates. */}
       <LevelingHeroes
         currentLevel={currentLevel}
+        levelCue={stated.cue}
+        levelTitle={stated.title}
         levelCount={sortedLevels.length}
         peak={peak}
         swaps={swaps}

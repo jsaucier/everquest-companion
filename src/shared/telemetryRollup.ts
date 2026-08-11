@@ -43,6 +43,7 @@
 
 import {
   bucketOf,
+  STUTTER_MS_EDGES,
   type EvErrorReport,
   type StartupReplayStats,
   type TelemetryBatch,
@@ -230,6 +231,41 @@ export const USAGE_METRICS = {
    */
   startupLogSize: 'startupLogSize',
   /**
+   * THE TWO STARTUP DISCRIMINATORS (JOS-57 scope addition, 2026-08-11). New metric NAMES in a
+   * table built to hold arbitrary ones — additive, no schema change, no migration, exactly as the
+   * six above were.
+   *
+   * dim = index into NEW_BYTES_EDGES, and UNVERSIONED for the same reason `startupLogSize` is: how
+   * much a player's log grew between two launches is a fact about the player's evening, not about
+   * the build that read it.
+   */
+  startupNewBytes: 'startupNewBytes',
+  /**
+   * dim = `<version>:<index into STUTTER_MS_EDGES>` — one launch's MEDIAN observed timer drift.
+   * Versioned, because "did our own throttle get out of the machine's way" is a comparison
+   * between builds.
+   *
+   * THESE TWO HISTOGRAMS ARE THEIR OWN DENOMINATOR, which is why no `startupStutters` counter sits
+   * beside them: a launch that reported a stutter reading always writes exactly one row into each
+   * (a bucket index is never non-positive, so `add()` cannot refuse it), so the histogram total IS
+   * the number of launches that measured one. That population is deliberately SMALLER than
+   * `startupReplays`: a fold too short to hold `STARTUP_STUTTER_MIN_SAMPLES` ticks reports no
+   * reading at all rather than a percentile over four numbers.
+   */
+  startupStutterP50: 'startupStutterP50',
+  /** dim = `<version>:<index into STUTTER_MS_EDGES>` — the same launch's 95th percentile. */
+  startupStutterP95: 'startupStutterP95',
+  /** dim = `<version>`; n = summed whole percents of LATE ticks. Mean = this / the histogram total
+   *  above, never / `startupReplays` — the two populations are not the same launches. */
+  startupStutterLatePct: 'startupStutterLatePct',
+  /**
+   * dim = `<version>:<index into BLOCK_MS_EDGES>` — how long the first megabyte of the log took to
+   * arrive. The COLD-DISK hint, and it borrows the block ladder rather than growing a fourth one:
+   * the question it answers ("was this read served from memory, or did something inspect every
+   * byte on the way") lives across exactly the same 10 ms → 1 s span a stall does.
+   */
+  startupFirstMbMs: 'startupFirstMbMs',
+  /**
    * ERROR REPORTS PER BUILD (JOS-100) — the DENOMINATOR beside `error_report`'s own counts.
    *
    * dim = `<version>`, n = errors reported (the sum of the events' `count` fields). The
@@ -371,9 +407,22 @@ export function replayMsBucketLabel(i: number): string {
   return msBucketLabel(REPLAY_MS_EDGES, i)
 }
 
-/** Human range for a `startupBlockMs` bucket index. */
+/** Human range for a `startupBlockMs` bucket index — and for `startupFirstMbMs`, which reads the
+ *  same ladder (see `USAGE_METRICS.startupFirstMbMs`). */
 export function blockMsBucketLabel(i: number): string {
   return msBucketLabel(BLOCK_MS_EDGES, i)
+}
+
+/**
+ * Human range for a stutter percentile's bucket index (JOS-57 scope addition).
+ *
+ * The EDGES come from the contract rather than from this file, unlike every other ladder here:
+ * the client buckets its own drift percentiles before they are sent (a raw millisecond list would
+ * be a per-launch trace), so the storage has no coarsening decision left to make and simply
+ * renders what arrived.
+ */
+export function stutterMsBucketLabel(i: number): string {
+  return msBucketLabel(STUTTER_MS_EDGES, i)
 }
 
 /** Minutes, or hours once past the hour mark: `15 min`, `2 h`. */
@@ -568,6 +617,30 @@ function foldStartup(bag: Bag, s: StartupReplayStats, version: string): void {
   add(bag, USAGE_METRICS.startupBlocksOver50, version, s.blocksOver50)
   add(bag, USAGE_METRICS.startupEventsReplayed, version, s.eventsReplayed)
   add(bag, USAGE_METRICS.startupLogSize, String(s.logSizeBucket), 1)
+  foldStartupDiscriminators(bag, s, version)
+}
+
+/**
+ * The three fields JOS-57's scope addition put on the same reading (2026-08-11) — folded in their
+ * own function so `foldStartup` stays inside the repo's complexity ceiling, and each guarded by
+ * its own presence check because each arrives independently.
+ *
+ * A launch that reported the original six and NONE of these writes exactly what it always did,
+ * which is the property that makes an old client and a new server a non-event.
+ */
+function foldStartupDiscriminators(bag: Bag, s: StartupReplayStats, version: string): void {
+  if (s.newBytesBucket !== undefined) {
+    add(bag, USAGE_METRICS.startupNewBytes, String(s.newBytesBucket), 1)
+  }
+  if (s.stutter !== undefined) {
+    add(bag, USAGE_METRICS.startupStutterP50, `${version}:${String(s.stutter.p50Bucket)}`, 1)
+    add(bag, USAGE_METRICS.startupStutterP95, `${version}:${String(s.stutter.p95Bucket)}`, 1)
+    add(bag, USAGE_METRICS.startupStutterLatePct, version, s.stutter.latePct)
+  }
+  if (s.firstMbMs !== undefined) {
+    const b = bucketOf(s.firstMbMs, BLOCK_MS_EDGES)
+    add(bag, USAGE_METRICS.startupFirstMbMs, `${version}:${String(b)}`, 1)
+  }
 }
 
 /**

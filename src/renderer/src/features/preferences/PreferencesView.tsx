@@ -64,6 +64,11 @@
 //             Lives in ./PerfSetting.tsx.
 //   Feedback — the second entry point into the feedback DIALOG (the first is the nav
 //             drawer's footer). Feedback is not a view, so this section only opens it.
+//   Thanks   — whose pictures these are (JOS-198). The app SHIPS ~3.75 MB of item icons and boss
+//             portraits copied from two volunteer-run wikis; this is where it says so, links
+//             them, and states the consequence a user cares about (they are on your machine, and
+//             drawing them asks nobody for anything). Lives in ./ThanksSetting.tsx, descriptor
+//             and all. Last in the rail on purpose — see the table.
 
 import { type JSX, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { Box, List, ListItemButton, ListItemText, TextField, Typography } from '@mui/material'
@@ -106,6 +111,9 @@ import { textSizeSection } from './TextSizeSetting'
 // Same arrangement again (JOS-73): the release-notes panel names its own section beside the card
 // that renders it. See features/whatsnew/WhatsNewPanel.tsx for why the notes are a SECTION.
 import { whatsNewSection } from '../whatsnew/WhatsNewPanel'
+// Same arrangement again (JOS-198): the credit for the bundled wiki art names its own section
+// beside the card that renders it. See ./ThanksSetting.tsx for why it is a section at all.
+import { thanksSection } from './ThanksSetting'
 // The section CARD and the arrival pulse live together in their own file — same ceiling, same
 // answer as PerfSetting's descriptor: split, don't widen the threshold.
 import PrefSectionBlock, { FILL_COLUMN_SX, FILL_ROOT_SX, FILL_ROW_SX, paneFills, useLandedSection } from './PrefSectionBlock'
@@ -324,7 +332,11 @@ function buildSections({ version, status, onSendFeedback, onWhatsNew }: SectionI
           content: <FeedbackSetting onSend={onSendFeedback} />
         }
       ]
-    }
+    },
+    // LAST in the rail, and that is where a credit belongs: it is the thing you go looking for
+    // rather than the thing you land on. Never above the controls a user opened Preferences to
+    // change (JOS-198).
+    thanksSection()
   ]
 }
 
@@ -373,7 +385,11 @@ function SectionRail({
   onPick: (id: string) => void
 }): JSX.Element {
   return (
-    <List dense disablePadding sx={{ width: RAIL_WIDTH, flexShrink: 0 }}>
+    // The rail scrolls WITHIN the split rather than growing the page: thirteen rows (JOS-198
+    // added Thanks) outgrow a short window, and a rail that stretches the document makes the
+    // whole page scroll — the exact thing the whats-new pane's "the LIST scrolls, never the
+    // page" contract forbids. minHeight: 0 is what lets a flex child shrink below its content.
+    <List dense disablePadding sx={{ width: RAIL_WIDTH, flexShrink: 0, minHeight: 0, overflowY: 'auto' }}>
       {sections.map((s) => {
         const dim = unmatched.has(s.id)
         return (

@@ -79,8 +79,11 @@ import { SELF_CASTER } from '../../shared/buffTrust'
 import { idKey } from '../log/parseCommon'
 import { CastAnchors } from './buffAnchors'
 import { HoldGroup } from './buffRounds'
-import { MAX_SAMPLE_MS, SESSION_GAP_MS, spellKey, unwitnessedTimeoutMs } from './buffsShapes'
+import { BUFF_TIMERS_FOLD_SCHEMA, packHeld, unpackHeld, type BuffTimersFoldState } from './buffTimersFold'
+import { learningRecordCapMs, MAX_SAMPLE_MS, SESSION_GAP_MS, spellKey, unwitnessedTimeoutMs } from './buffsShapes'
 import { SpellStats } from './buffsStats'
+import { validate } from '../foldCache/schema'
+import type { FoldCheckpointable } from '../foldCache/serialize'
 import type { EqModule } from './types'
 
 /**
@@ -198,12 +201,18 @@ interface Held {
  *
  * THE JOIN WINDOW IS DB-FLOOR-SCALE, and that is the point. Remembering for the CULLED schedule
  * would be circular — that schedule is the underestimate. The floor `spells.json` states is the one
- * number in the system a bad observation cannot drag down, so the memory lives until
- * `dbFloor + unwitnessedTimeoutMs('db')`: the same 60 s slack JOS-156 gives a hold that has learned
- * nothing, measured from the same DB row. (For Dazzle that is 96 s + 60 s = 156 s, and the real
- * wear-off lands at 136 s.) With no DB row there is no floor and the live hold was already governed
- * by {@link CC_UNKNOWN_CAP_MS}, so the memory simply matches it. It is never SHORTER than the
- * schedule the live row had, or the memory would expire before the thing it remembers.
+ * number in the system a bad observation cannot drag down, so the memory is measured from THAT row.
+ * JOS-203 settled how far: `learningRecordCapMs` — 3× the DB base (for Dazzle, 3 × 96 s = 288 s,
+ * against a real wear-off at 136 s), which is the owner's ruling that a learning record retires on
+ * the FLOOR's scale and never on the display grace. It used to be `dbFloor + 60 s` (156 s for
+ * Dazzle), which is the display number wearing a learner's hat. With no DB row there is no floor
+ * and the live hold was already governed by {@link CC_UNKNOWN_CAP_MS}, so the memory simply matches
+ * it. It is never SHORTER than the schedule the live row had, or the memory would expire before the
+ * thing it remembers.
+ *
+ * THE BUFFS HALF NOW RETIRES ITS OWN RECORDS ON THIS RULE TOO (`buffsInstanceRules.ts
+ * reapOrphanedOpen`), which is the symmetry JOS-203 asked for: that half had the memory — the open
+ * cast a late wear-off pairs against — and no reaper at all.
  */
 interface LateJoin {
   /** Canonical mob key — the entity half; the map key pairs it with `lineKey`. */
@@ -235,7 +244,14 @@ function setDuration(held: Held, est: { ms: number | null; source?: 'db' | 'obse
   else delete held.source
 }
 
-export class BuffTimersModule implements EqModule<BuffTimersSnap, BuffTimersDelta> {
+// THE CHECKPOINT DECLARATION (JOS-208 phase 2) is `BUFF_TIMERS_FOLD_SCHEMA`, in
+// `buffTimersFold.ts` — this file is at the repo's line ceiling. Read it for what this half
+// stores, and above all for what it does NOT: the two halves it SHARES with the buffs module (the
+// cast anchors and the duration learner) are checkpointed exactly once, by their owner.
+
+export class BuffTimersModule
+  implements EqModule<BuffTimersSnap, BuffTimersDelta>, FoldCheckpointable<BuffTimersFoldState>
+{
   readonly id = 'buffTimers'
 
   private holds = new Map<string, Held>()
@@ -644,8 +660,10 @@ export class BuffTimersModule implements EqModule<BuffTimersSnap, BuffTimersDelt
    */
   private remember(held: Held, dropped: readonly { startedTs: number; clean: boolean }[], liveLifeMs: number): void {
     const dbMs = this.stats.dbDurationFor(held.lineKey)
-    // The DB floor's own schedule, never shorter than the one the row actually had — see LateJoin.
-    const window = Math.max(liveLifeMs, dbMs != null ? dbMs + unwitnessedTimeoutMs('db') : CC_UNKNOWN_CAP_MS)
+    // The LEARNING-RECORD schedule (JOS-203): 3× the DB floor, never shorter than the one the row
+    // actually had. Same rule, same function, as the buffs half's orphaned open record — see
+    // buffsShapes.ts `learningRecordCapMs` and {@link LateJoin}.
+    const window = Math.max(liveLifeMs, learningRecordCapMs(dbMs, CC_UNKNOWN_CAP_MS))
     for (const h of dropped) {
       if (!h.clean) continue
       this.culled.set(`${held.entityKey}|${held.lineKey}`, {
@@ -726,5 +744,33 @@ export class BuffTimersModule implements EqModule<BuffTimersSnap, BuffTimersDelt
     if (!this.dirty) return null
     this.dirty = false
     return { seq: this.rev, delta: this.buildSnap() }
+  }
+
+  // ---- the checkpoint seam (JOS-208) ---------------------------------------------------------
+
+  readonly foldSchema = BUFF_TIMERS_FOLD_SCHEMA
+
+  serializeFold(): BuffTimersFoldState {
+    return {
+      holds: [...this.holds].map(([key, h]) => [key, packHeld(h)]),
+      ends: this.ends.map((e) => ({ ...e })),
+      culled: [...this.culled].map(([key, c]) => [key, { ...c }]),
+      recentMints: this.recentMints.map((m) => ({ ...m })),
+      lastEventTs: this.lastEventTs,
+      rev: this.rev
+    }
+  }
+
+  deserializeFold(state: unknown): boolean {
+    if (!validate(BUFF_TIMERS_FOLD_SCHEMA, state).ok) return false
+    const s = state as BuffTimersFoldState
+    this.holds = new Map(s.holds.map(([key, h]) => [key, unpackHeld(h)]))
+    this.ends = s.ends
+    this.culled = new Map(s.culled)
+    this.recentMints = s.recentMints
+    this.lastEventTs = s.lastEventTs
+    this.rev = s.rev
+    this.dirty = true
+    return true
   }
 }

@@ -301,7 +301,13 @@ export const ZONES: readonly ZoneEntry[] = [
   { short: 'lfaydark', name: 'The Lesser Faydark', era: 'classic' },
   { short: 'beholder', name: 'Gorge of King Xorbb', aliases: ["Beholder's Maze"], era: 'classic' },
   { short: 'misty', name: 'Misty Thicket', era: 'classic' }, // classic stem; `mistythicket` is the Live revamp
-  { short: 'mistmoore', name: 'Castle Mistmoore', aliases: ['Mistmoore Castle'], era: 'classic' },
+  // The in-game zone line says `The Castle of Mistmoore`; wiki and catalog say `Mistmoore Castle`.
+  {
+    short: 'mistmoore',
+    name: 'Castle Mistmoore',
+    aliases: ['Mistmoore Castle', 'The Castle of Mistmoore'],
+    era: 'classic'
+  },
   { short: 'neriakc', name: 'Neriak - Third Gate', era: 'classic' },
   { short: 'neriakd', name: 'Neriak Palace', era: 'classic' }, // brewall only
   { short: 'nexus', name: 'The Nexus' },

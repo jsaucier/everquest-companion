@@ -25,7 +25,7 @@ const lc = (s: string): string => s.replace(/[\\/]+$/, '').toLowerCase()
 
 // --- PERSIST ACROSS LAUNCHES: resolveDiscoveredRoot -------------------------
 //
-// A positive discovery is remembered so the NEXT launch skips the EIGHT reg-query subprocesses +
+// A positive discovery is remembered so the NEXT launch skips the eight-tree registry read +
 // drive walk entirely; a remembered root that no longer holds self-heals; a null is never cached
 // (a fresh user who has not run `/log on` keeps getting the cheap idle rescan, not a sticky no).
 

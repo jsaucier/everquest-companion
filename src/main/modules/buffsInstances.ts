@@ -50,6 +50,7 @@ import {
   isPermanentIllusion,
   landingSpec,
   openLeftBehindOnZone,
+  reapOrphanedOpen,
   unwitnessedCullCap
 } from './buffsInstanceRules'
 
@@ -600,6 +601,11 @@ export class BuffInstances {
       // rule produces.
       if (now - a.startedTs > unwitnessedCullCap(a) && this.active.delete(ik)) changed = true
     }
+    // …AND THE RECORDS THE CULL ABOVE LEFT BEHIND (JOS-203). The loop above can only ever reach a
+    // record through its active row, so before this the open cast of a culled row had no reaper at
+    // all. It is NOT part of `changed`: nothing in the snapshot describes an open record, so a reap
+    // must not push a delta. `buffsInstanceRules.ts` states the schedule and the defect.
+    reapOrphanedOpen(this.open, this.active, (k) => this.stats.dbDurationFor(k), now)
     if (changed) this.dirty = true
   }
 
@@ -751,4 +757,27 @@ export class BuffInstances {
   private build(spec: ActiveSpec): ActiveBuff {
     return buildActive(spec, this.stats, this.pets)
   }
+
+  // ---- THE CHECKPOINT SEAM IS NOT IN THIS FILE (JOS-208 phase 2) ------------------------------
+  //
+  // `packInstances` / `unpackInstances` in `buffsFoldShapes.ts` read and write the three
+  // collections above, which are public and always have been. Two reasons it sits there rather
+  // than here, and the second is the load-bearing one:
+  //
+  //   * this file is AT the repo's 400-code-line ceiling, and the house answer to that is a
+  //     split rather than a widened threshold;
+  //   * this class is not the checkpointed UNIT. `BuffsModule` is — it owns the six
+  //     collaborators, validates one blob for all of them and refuses as one — so the code that
+  //     packs this half belongs beside the declaration that describes it, not scattered across
+  //     the six objects it happens to read.
+  //
+  // WHAT IS STORED, argued where the reader will look for it: all three collections travel, and
+  // the OPEN records are the ones that would be tempting to leave behind because nothing in the
+  // snapshot describes them. They are the LEARNING records — what a wear-off pairs against to
+  // mint a duration sample — so dropping them would mean a restore silently stopped learning
+  // from every cycle in flight, and nothing shows that until a bar counts down from the wrong
+  // number weeks later. `active` is stored as ROWS rather than rebuilt from `open` + `stats`,
+  // because the two are not in bijection by design: a permanent illusion is an active with no
+  // open record, and the unwitnessed cull deletes a row while deliberately KEEPING its open
+  // record (JOS-149/156/203). `dirty` is absent — a restored fold has published nothing.
 }

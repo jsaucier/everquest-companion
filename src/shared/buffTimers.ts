@@ -282,6 +282,84 @@ export function timerDrops(
     .map((r) => ({ id: r.id, name: timerDropLabel(r) }))
 }
 
+// ----- DISMISSAL: a display verdict, and structurally nothing else (JOS-203) -----
+
+/**
+ * WHAT A DISMISSAL IS — AND WHAT IT STRUCTURALLY CANNOT BE (JOS-203, owner law).
+ *
+ * The report that opened the ticket (01KZQ6QAWKX8W6VNTKFRP69NZ5) asks for "some method to manually
+ * clear buffs/debuffs", and names the case: a debuff on a mob you kill OUT OF LOG RANGE prints no
+ * death line, so nothing in the world ever states that it ended and the row serves its whole stated
+ * duration plus grace — up to twelve minutes of a bar sorting above the ones that are real.
+ *
+ * THE ANSWER IS A DISPLAY VERDICT AND NEVER A MODEL EVENT. Dismissing a row censors no instance,
+ * closes no landing, mints and refuses no duration sample, and retires no learning record. IT
+ * CANNOT: a dismissal is renderer state held by the overlay window that drew the bar, and no part
+ * of it is ever sent to main. The learner does not ignore it — the learner has no way to hear about
+ * it, because there is no path for it to travel. A player who clears a slow bar at 0s and then
+ * walks back into range still teaches the model everything that slow's wear-off has to teach
+ * (`BuffInstances.recordFade` pairs against the OPEN record, which the display never touches, and
+ * which now retires on the learning-record schedule — main/modules/buffsShapes.ts
+ * `learningRecordCapMs`).
+ *
+ * A VERDICT NAMES ONE READING OF ONE ROW, NOT THE ROW FOREVER. It carries the row's `id`, its
+ * `startedTs` and its `count`, and it suppresses only a row that is still that reading or older.
+ * That is what makes "a bar you dismiss stays dismissed" survive every delta and every re-hydrate
+ * (both replace the whole row set, and the verdict is re-applied to the new one) while a FRESH
+ * LANDING draws again: a new landing moves the clock, and another mob of that name joining the
+ * group moves the count. New evidence is not the bar you dismissed.
+ */
+export interface TimerDismissal {
+  /** The `startedTs` the row was showing when it was dismissed. */
+  startedTs: number
+  /** The count chip it was showing (1 when it had none). */
+  count: number
+}
+
+/** The verdicts one timer window is currently holding, keyed by row id. */
+export type TimerDismissals = ReadonlyMap<string, TimerDismissal>
+
+/** The verdict a row would be dismissed under right now. */
+export function timerDismissalOf(row: BuffTimerRow): TimerDismissal {
+  return { startedTs: row.startedTs, count: row.count ?? 1 }
+}
+
+/** True when this row is the reading that was dismissed, or an older one. */
+export function isTimerDismissed(row: BuffTimerRow, dismissals: TimerDismissals): boolean {
+  const d = dismissals.get(row.id)
+  return d != null && row.startedTs <= d.startedTs && (row.count ?? 1) <= d.count
+}
+
+/** The rows a window draws once its dismissals are applied. Order is the caller's, never re-sorted. */
+export function dismissTimerRows(
+  rows: readonly BuffTimerRow[],
+  dismissals: TimerDismissals
+): BuffTimerRow[] {
+  if (dismissals.size === 0) return [...rows]
+  return rows.filter((r) => !isTimerDismissed(r, dismissals))
+}
+
+/**
+ * How many verdicts a window remembers. A BOUND, not a policy: a verdict costs two numbers and
+ * expires by being outlived (a later landing is not the reading it names), so nothing here needs a
+ * clock — but a set that only ever grows is the unbounded map this ticket is also about.
+ */
+export const MAX_TIMER_DISMISSALS = 50
+
+/** Record one dismissal, most-recent last, evicting the oldest past {@link MAX_TIMER_DISMISSALS}. */
+export function withTimerDismissal(prev: TimerDismissals, row: BuffTimerRow): Map<string, TimerDismissal> {
+  const next = new Map(prev)
+  // Delete first so a re-dismissal moves to the END of the insertion order — the eviction below is
+  // oldest-first, and a row the user just cleared twice is the last one they want forgotten.
+  next.delete(row.id)
+  next.set(row.id, timerDismissalOf(row))
+  for (const k of next.keys()) {
+    if (next.size <= MAX_TIMER_DISMISSALS) break
+    next.delete(k)
+  }
+  return next
+}
+
 /** What a row reads RIGHT NOW. `fraction` is 1 at the landing and 0 at/after the stated end. */
 export interface TimerReading {
   elapsedMs: number

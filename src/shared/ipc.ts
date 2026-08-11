@@ -256,6 +256,15 @@ export const IPC = {
   // hands the target down (today: the mob to drill into).
   onFocusView: 'app:focusedView',
 
+  // ---- the mouse's Back button (JOS-201) ----
+  // main -> renderer(main app): the user pressed the browser-Back button on their mouse while
+  // THIS window had focus. No payload: the message is the press, and what "back" means is a
+  // question only the renderer can answer (src/renderer/src/appBack.tsx). The event is
+  // WINDOW-SCOPED by construction — it originates in a BrowserWindow `app-command` handler
+  // (src/main/appBack.ts), so a press landing in EverQuest, or in any other app, never reaches
+  // here. There is deliberately no global hook and no forward channel.
+  onAppBack: 'app:back',
+
   // ---- class-combo corrections (docs/plans/class-combo-inference.md § 5.3) ----
   // READS need no channel of their own — the combo module rides the generic module transport
   // (`module:getSnapshot('combo')` + `module:delta`). These two exist because a correction is a
@@ -463,6 +472,21 @@ export const IPC = {
   // repeat is refused by the phase accounting itself (shared/perf.ts `addMark`).
   perfRendererHydrated: 'perf:rendererHydrated',
 
+  // ---- the startup checkpoint (JOS-208) -------------------------------------------------
+  //
+  // ONE SWITCH, AND IT TAKES EFFECT NEXT LAUNCH. The checkpoint is read once, at the moment a
+  // character's log is attached, so flipping it mid-session cannot retroactively change how this
+  // launch started — the graphics prefs' shape and for the same reason, which is why there is
+  // deliberately no "apply now" channel here either.
+  //
+  // renderer -> main: the persisted switch, as the launch RESOLVED it. Returns
+  // `{ stored: boolean; active: boolean; why: FoldCacheDecision }` so the surface can say when a
+  // dev environment override is disagreeing with the preference rather than silently lying.
+  foldCacheGet: 'foldCache:get',
+  // renderer -> main: set the preference. Arg: boolean; a non-boolean leaves it alone. Returns
+  // the same shape as the getter.
+  foldCacheSet: 'foldCache:set',
+
   // ---- graphics compatibility (JOS-40 — shared/graphicsPrefs.ts) ------------------------
   //
   // Two switches for machines whose driver dislikes what this app draws: software rendering
@@ -502,6 +526,36 @@ export const IPC = {
   // through so a name added mid-session anchors the next cast rather than the next launch.
   // Returns what was stored.
   buffTrustSet: 'buffTrust:set',
+
+  // ---- respawn clocks (JOS-194 — shared/respawn.ts) -------------------------------------
+  //
+  // WHICH MOBS GET A CLOCK. The clocks themselves are log-derived and ride the generic module
+  // transport (`respawn`); this pair carries the ONE thing the log cannot state — the mobs you
+  // chose to watch and the respawn you typed for them.
+  //
+  // main -> renderer: the persisted watch list. Returns RespawnPrefs.
+  respawnGet: 'respawn:get',
+  // renderer -> main: replace it. VALIDATED AT THE HANDLER through the same normalizer the store
+  // reader uses, applied to the running module, and PUSHED immediately (`registry.flushNow`) —
+  // the module's own revision counter is what keeps the push from being deduped, because a watch
+  // edit advances no log seq (JOS-87). Returns what was stored.
+  respawnSet: 'respawn:set',
+  // renderer -> main: "that sighting WAS the spawn — start this row's clock from it" (owner
+  // ruling, prototype round 3). The app never does this on its own: a sighting proves the mob is
+  // up and says nothing about when it spawned, so re-basing a clock is a judgement and needs a
+  // click. Payload is the ROW ID the surfaces already draw; main re-checks that the row exists and
+  // is currently seen. Returns whether it took effect. Called from the Timers tab AND from an
+  // INTERACTIVE floating window (a locked one is click-through and has no clicks to give).
+  respawnConfirmSighting: 'respawn:confirmSighting',
+  // renderer -> main: "stop watching this mob" (owner ruling, prototype round 4). The same write
+  // `respawnSet` could express, given its own channel because it is called from surfaces that have
+  // no business holding the whole watch list: a clock row and an INTERACTIVE floating window each
+  // know one mob, and handing either of them the entire list to rewrite would be a second place
+  // that can lose a watch the user did not touch. Payload is the canonical mob KEY the rows
+  // already carry; main removes it through the shared pure helper, persists, applies to the
+  // running module and pushes (`registry.flushNow`) exactly as the setter does. Returns whether
+  // anything was actually watching that name — false is a no-op, not a failure.
+  respawnUnwatch: 'respawn:unwatch',
 
   // ---- main window text size (JOS-123 — shared/uiScale.ts) ------------------------------
   //

@@ -57,6 +57,8 @@ import {
   timerRows as rows,
   timerTargets as targets
 } from './buffTimerSteps.mjs'
+// CLEARING A BAR BY HAND (JOS-203) — its own narrative, beside the other step modules.
+import { stepDismissBar } from './buffDismissSteps.mjs'
 import type { FixtureLog } from './logFixture.mjs'
 
 /** The main window's overlay bridge — the same one the title-bar menu calls. */
@@ -557,6 +559,8 @@ async function main(): Promise<void> {
     if (debuffsOverlay) {
       await stepChainMez(debuffsOverlay, buffsOverlay, log)
       await stepBreakClearsOneTarget(debuffsOverlay, log)
+      // …and the bar the break line SPARED is the one the user clears by hand (JOS-203).
+      await stepDismissBar(debuffsOverlay, log)
     } else {
       note('the debuffs overlay window never appeared — the mez assertions could not run')
     }

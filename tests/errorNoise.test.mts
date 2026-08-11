@@ -157,10 +157,19 @@ test('THE WIRING: logError asks the rule, counts the suppression, and never touc
   const src = read('src/main/errorLog.ts')
   // The report is taken FIRST, so a suppressed line still produces its error report — the fleet
   // loses no observation, only the local file gets shorter.
-  assert.ok(src.indexOf('noteError(source, payload)') < src.indexOf('const repeat = errorRepeat('))
-  // Both sinks obey one verdict: a dev watching stdout reads the same flood errors.log does.
+  //
+  // THIS ASSERTION USED TO PASS VACUOUSLY (found while fixing JOS-197). `logError` has called
+  // `noteError(source, payload, Date.now(), captureSite)` since JOS-111, so the literal it looked
+  // for was absent, `indexOf` returned -1, and `-1 < anything` is true — it would have gone on
+  // being green with the two calls in either order, or with `noteError` deleted outright. The
+  // prefix is matched now, and BOTH orderings that matter are checked.
+  assert.ok(src.includes('noteError(source, payload, Date.now(), captureSite)'))
+  assert.ok(src.indexOf('noteError(source, payload,') < src.indexOf('const repeat = errorRepeat('))
+  // Both sinks obey one verdict: a dev watching stdout reads the same flood errors.log does. Since
+  // JOS-197 they obey it through ONE writer, which is also the only door to the console.
   assert.match(src, /if \(!repeat\.write && repeat\.notice === null\) return/)
-  assert.match(src, /console\.error\(PREFIX, repeat\.notice\)/)
+  assert.match(src, /writeLine\(ts, \[PREFIX, repeat\.notice\]/)
+  assert.match(src, /writeLine\(ts, \[PREFIX, `\[\$\{source\}\]`, body\]/)
   // The line is built from `source` + `body`, which is what keeps the timestamp out of the key.
   assert.match(src, /errorRepeat\(source, body\)/)
   // The rule is a LEAF — no imports at all — so it cannot close a cycle on the app's error path

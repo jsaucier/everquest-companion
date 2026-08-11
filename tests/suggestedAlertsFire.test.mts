@@ -420,11 +420,10 @@ test('JOS-161 B1: the bard mez LANDING alert fires for both songs', () => {
   }
 })
 
-test('JOS-161 B2: the mez BREAK alert fires for both songs, by name', () => {
-  for (const [key, line] of [
-    ["sionachie's dreams", BARD.dreamsBroke],
-    ["solon's bewitching bravura", BARD.bravuraBroke]
-  ] as const) {
+test('JOS-161 B2: the mez BREAK alert fires by name', () => {
+  // Bravura left this list in JOS-200 — it is a charm, and B2b below is its assertion. The mez
+  // half is unchanged and still has to work.
+  for (const [key, line] of [["sionachie's dreams", BARD.dreamsBroke]] as const) {
     const breaks = suggestionsFor(entryFor(key)).find((s) => s.template === 'breaks')?.def
     assert.ok(breaks, `the wizard must offer a "breaks" suggestion for ${key}`)
     assert.deepEqual(breaks.trigger, {
@@ -438,11 +437,53 @@ test('JOS-161 B2: the mez BREAK alert fires for both songs, by name', () => {
   }
 })
 
+test('JOS-200 B2b: the CHARM break alert fires by name — the bard song and the enchanter line', () => {
+  // The chip three reporters went looking for and could not find. Two things had to change for it
+  // to exist: the song moved from `ccSpell` to `charmSpell` (so its break is an `uncharm` at all),
+  // and `charmBreaks` gave the CHARM roster a per-spell offer it never had — which is why `allure`
+  // is asserted right beside it. An enchanter typing "Allure" into the wizard had the identical
+  // hole; only the family-wide group existed for them.
+  for (const [key, line] of [
+    ["solon's bewitching bravura", BARD.bravuraBroke],
+    ['allure', '[Wed Aug 05 22:31:00 2026] Your Allure spell has worn off of an ice giant.']
+  ] as const) {
+    const entry = entryFor(key)
+    const charmBreaks = suggestionsFor(entry).find((s) => s.template === 'charmBreaks')?.def
+    assert.ok(charmBreaks, `the wizard must offer a "charmBreaks" suggestion for ${key}`)
+    // No `refresh` key: an `uncharm` carries only `mob` and `spell`, so pinning the name IS the
+    // trigger. (Measured for JOS-200: 3,382 of 3,383 wear-off-of lines in the owner's whole log
+    // are rank-less, so the catalog's display name is the string the sentence carries.)
+    assert.deepEqual(charmBreaks.trigger, {
+      type: 'event',
+      kind: 'uncharm',
+      where: { spell: entry.name }
+    })
+    const fired = fire([charmBreaks], [line])
+    assert.equal(fired.length, 1, `${key}: the charm-break line must fire it`)
+    assert.equal(fired[0].matchedText, line)
+  }
+})
+
+test('JOS-200 B2c: the two break chips are disjoint — no spell is offered both', () => {
+  // `classifyWornOff` tests `charmSpell` before `ccSpell`, so a spell in both rosters would be
+  // handed a `breaks` chip whose `cc` trigger the parser guarantees will never fire. Walk the whole
+  // catalog rather than a sample: this is a property of the two regexes, and the cheapest place to
+  // notice a future stem that overlaps is here.
+  const both = catalog.entries.filter((e) => e.templates.breaks && e.templates.charmBreaks)
+  assert.deepEqual(both.map((e) => e.name), [], 'a spell offered both chips has one that cannot fire')
+  // …and the song at the heart of JOS-200 is on the charm side of that line, not the mez side.
+  const bravura = entryFor("solon's bewitching bravura")
+  assert.equal(bravura.templates.charmBreaks, true)
+  assert.equal(bravura.templates.breaks, false)
+})
+
 test('JOS-161 B3: the break alert is pinned — another song`s break does not fire it', () => {
   // The whole point of a PER-SPELL break alert beside the family-wide group: it has to be able to
   // tell the two songs apart. `where.spell` on a `cc` refresh compares the name the break line
   // itself carries, which is why the rename had to happen for the level-39 song at all.
   const dreams = suggestionsFor(entryFor("sionachie's dreams")).find((s) => s.template === 'breaks')!.def
+  // Since JOS-200 a Bravura break is not even a `cc` — it is an `uncharm` — so this holds twice
+  // over: wrong spell AND wrong event.
   assert.equal(fire([dreams], [BARD.bravuraBroke]).length, 0, 'a Bravura break is not a Dreams break')
   assert.equal(
     fire([dreams], ['[Sun Aug 09 13:43:23 2026] Your Mesmerization spell has worn off of a scareling.']).length,
@@ -462,7 +503,11 @@ test('JOS-161 B4: the whole suggested set, on the reporter`s own cast-and-land p
     new Set([
       "suggest:solon's bewitching bravura:lands",
       "suggest:solon's bewitching bravura:landsOnOther",
-      "suggest:solon's bewitching bravura:breaks"
+      // …`:charmBreaks` since JOS-200, where it used to be `:breaks`. The LANDING pair above is
+      // unchanged and stays a `cc` apply on purpose: `<mob>'s eyes glaze over.` is shared verbatim
+      // with three real mez songs and nothing in the line separates them, so the app still cannot
+      // tell whose hold just landed — only, from the break line, whose hold just ended.
+      "suggest:solon's bewitching bravura:charmBreaks"
     ])
   )
   const named = fired.find((f) => f.alertId === "suggest:solon's bewitching bravura:landsOnOther")
@@ -476,8 +521,22 @@ test('JOS-161 B5: `breaks` is offered for the crowd-control roster and nobody el
   for (const key of ['mesmerization', 'ensnare', "largo's assonant binding", "kelin's lucid lullaby"]) {
     assert.ok(entryFor(key).templates.breaks, `${key} is crowd control`)
   }
+  // `allure` stays on this list — it is a CHARM, so `breaks` (a `cc` trigger) still cannot fire for
+  // it. What changed in JOS-200 is that it now gets `charmBreaks` instead of nothing (B2b).
   for (const key of ['clarity', 'shiftless deeds', 'allure', 'drifting death']) {
     assert.equal(entryFor(key).templates.breaks, false, `${key} is not a mez or a root`)
+  }
+})
+
+test('JOS-200 B5b: `charmBreaks` is offered for the charm roster and nobody else', () => {
+  // The mirror of B5, and the same law: the flag is a CLAIM the alert can fire. A spell
+  // `charmSpell` does not match parses its wear-off to `cc` or `buffFade`, where an `uncharm`
+  // trigger never sees it.
+  for (const key of ['allure', 'charm', 'dictate', 'enslave death', "solon's bewitching bravura"]) {
+    assert.ok(entryFor(key).templates.charmBreaks, `${key} is a charm`)
+  }
+  for (const key of ['clarity', 'shiftless deeds', 'mesmerization', "sionachie's dreams"]) {
+    assert.equal(entryFor(key).templates.charmBreaks, false, `${key} is not a charm`)
   }
 })
 

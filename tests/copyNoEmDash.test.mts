@@ -37,8 +37,9 @@
 //     a repo doc, never into the app.
 //   * `src/main/speech/phonemes.ts`, where U+2014 is a token id in the Kokoro TTS model's
 //     phoneme VOCABULARY. Rewriting it would corrupt the mapping; it is data, not prose.
-//   * `src/main/presence.ts`, whose em dashes sit inside an embedded PowerShell script's own
-//     `#` comments.
+//   * `src/main/presence.ts` was carved out here until JOS-182, for em dashes that sat inside an
+//     embedded PowerShell script's own `#` comments. The script is gone and so is the carve-out;
+//     the file is now ordinary main-process code covered by the paragraph above.
 //   * the three `.html` shells (index/overlay/cursor). Their em dashes are all inside `<!-- -->`
 //     and `/* */` comments; they carry no rendered sentences.
 //   * the GLYPH AS A DATA PLACEHOLDER is not a special case here — JOS-106 replaced those with

@@ -87,6 +87,7 @@ import { graphicsBridge } from './graphics'
 // The buff externals allowlist (JOS-140), spread in below for the same file-size reason. Shape
 // and normalizer live together in shared/buffTrust.ts.
 import { buffTrustBridge } from './buffTrust'
+import { respawnBridge } from './respawn'
 // The main window's text size (JOS-123), split out for the same file-mass reason. Its shapes are
 // a single number; the ladder and the normalizer live in shared/uiScale.ts.
 import { uiScaleBridge } from './uiScale'
@@ -184,6 +185,8 @@ export type {
 }
 export type { PackInstallProgress, PackMutationResult, PackPreviewList, RegistryListResult }
 export type { AppFocus, UpdateStatus }
+// `FoldCacheState` is deliberately NOT re-exported here: Preferences reads it straight from
+// `@shared/foldCachePrefs`, which is where the switch's vocabulary lives.
 export type { CursorRingPrefs, OverlayAutoHidePrefs }
 export type { ShareApplyResult, SharePreview }
 export type { FeedbackDraft, FeedbackEnv, LogSliceMeta, SubmitErrorCode }
@@ -277,6 +280,7 @@ const api = {
   ...graphicsBridge,
   // …and the buff externals allowlist (./buffTrust.ts), likewise.
   ...buffTrustBridge,
+  ...respawnBridge,
   // …and the main window's text size (./uiScale.ts), likewise.
   ...uiScaleBridge,
   // …and `restartApp` (./dev.ts), whose handler refuses in a packaged build.
@@ -560,6 +564,17 @@ const api = {
     ipcRenderer.on(IPC.onFocusView, listener)
     return () => ipcRenderer.removeListener(IPC.onFocusView, listener)
   },
+  /**
+   * The mouse's Back button was pressed in THIS window (JOS-201). No payload — the message is the
+   * press; what "back" means is the renderer's own question (src/renderer/src/appBack.tsx). Main
+   * only forwards a `browser-backward` app-command that arrived on the focused main window
+   * (src/main/appBack.ts), so nothing global and nothing from the game reaches here.
+   */
+  onAppBack: (cb: () => void): (() => void) => {
+    const listener = (): void => cb()
+    ipcRenderer.on(IPC.onAppBack, listener)
+    return () => ipcRenderer.removeListener(IPC.onAppBack, listener)
+  },
 
   // ---- auto-update (Task #27; reworked in Task #55) ----
   /** Subscribe to update lifecycle pushes (checking/available/downloading/ready/error). */
@@ -601,6 +616,7 @@ const api = {
   /** Merge-patch the overlay auto-hide prefs; applies to the live overlays immediately. */
   setOverlayAutoHide: (patch: Partial<OverlayAutoHidePrefs>): Promise<OverlayAutoHidePrefs> =>
     ipcRenderer.invoke(IPC.overlayAutoHideSet, patch),
+
 
   // ---- clipboard ----
   /**

@@ -54,6 +54,7 @@
 // and it lets the two sources land on the same number for the same dump (measured above).
 
 import type { ContainerKind, InventoryDump } from './inventory'
+import { PRIMARY_ITEM_SECTION } from './inventory'
 
 /** Where a dump's generation instant came from — the log's own receipt, or the file's mtime. */
 export type InventoryBaselineSource = 'log' | 'mtime'
@@ -171,13 +172,21 @@ const CONTAINER_STORAGE: Record<ContainerKind, InventoryStorage> = {
   personalDepot: 'personalDepot'
 }
 
-/** Which storages this dump actually evidenced, in a stable order. */
+/**
+ * Which storages this dump actually evidenced, in a stable order.
+ *
+ * A CONTAINER token is evidence wherever it is filed (JOS-185): the dump can carry more than one
+ * item-shaped table now, and a `Personal-Depot1` row proves the depot was dumped whichever table
+ * the client put it in. `equip` is the exception and takes the `Location` table alone, for the
+ * same reason the character sheet does — what you are WEARING is a claim only that table makes.
+ */
 export function storagesCoveredBy(dump: InventoryDump): InventoryStorage[] {
   const seen = new Set<InventoryStorage>()
   const walk = (rows: InventoryDump['items']): void => {
     for (const row of rows) {
-      if (row.place.kind === 'equip') seen.add('equip')
-      else if (row.place.kind === 'container') seen.add(CONTAINER_STORAGE[row.place.container])
+      if (row.place.kind === 'equip') {
+        if (row.section === PRIMARY_ITEM_SECTION) seen.add('equip')
+      } else if (row.place.kind === 'container') seen.add(CONTAINER_STORAGE[row.place.container])
       walk(row.children)
     }
   }

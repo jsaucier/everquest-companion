@@ -105,6 +105,70 @@ export function whoBoundaries(
 }
 
 /**
+ * A `/who` ROW THAT CONTRADICTS THE EVIDENCE BEHIND IT — the swap cut nothing else can see
+ * (JOS-192).
+ *
+ * THE DEFECT THIS EXISTS FOR. `whoBoundaries` above needs TWO rows to disagree, and the log has
+ * eleven rows in 1.1M lines. Inside a slice nothing else cut, `slotsFor` rule 1 takes the LAST
+ * `/who` row in that slice and states the WHOLE slice with it — so a player who swaps loadouts,
+ * sees the app naming the trio they left, and types `/who` on themselves to correct it has their
+ * correction applied backwards over every hour the slice already covered. The range-stat chips,
+ * the boss loadout sections and the level-up toasts all rewrite to a loadout that was not being
+ * played then, and the one honest thing in the picture — the pre-swap inference — is the thing
+ * that gets overwritten. That is the trigger report's other half.
+ *
+ * THE RULE. A `/who` row states the loadout AT ITS OWN TIMESTAMP and nowhere else. When the
+ * evidence in front of it inside its own segment SUSTAINS a class the row does not name, the game
+ * and the log disagree about the same span, which can only mean a swap happened between them — so
+ * the boundary is cut AT THE ROW and the span before it keeps what it inferred.
+ *
+ * WHY DEPARTURE ALONE, when `reinstatedDrops` demands departure AND arrival. That rule compares
+ * evidence to evidence across a ding, where "everything looks departed" right after the cut simply
+ * because no time has passed. This one compares evidence to a STATEMENT: a class carrying ≥2
+ * hourly buckets of exclusive evidence that the game says you are not running is a contradiction
+ * on its own, and waiting for the new loadout to prove itself would reintroduce the hours of
+ * staleness the row was typed to end.
+ *
+ * WHY IT CANNOT MANUFACTURE BOUNDARIES. It is silent when the row AGREES with the evidence — the
+ * ordinary case, and the reason CW1's seven rows still yield four intervals — and it only ever
+ * looks at evidence the same `exclusiveSpans` bar admits everywhere else in this file. `/who`
+ * observations are excluded from that evidence: a row is a statement, never a score (§ 4.4), and a
+ * single-class row would otherwise draw an exclusive span for itself.
+ *
+ * `dated` is every boundary already placed (including cuts this pass has made), so `from` is the
+ * start of the row's own segment and the window is never wider than the era it describes.
+ */
+export function whoShiftBoundaries(
+  observations: readonly ClassObservation[],
+  rows: readonly WhoRow[],
+  dated: readonly Boundary[],
+  firstTs: number
+): Boundary[] {
+  const out: Boundary[] = []
+  const evidence = observations.filter((o) => o.source !== 'who')
+  for (const row of rows) {
+    const placed = [...dated, ...out]
+    if (placed.some((b) => b.at === row.ts)) continue
+    const before = placed.filter((b) => b.at <= row.ts).map((b) => b.at)
+    const from = before.length > 0 ? Math.max(...before) : firstTs
+    if (row.ts <= from) continue
+    const departed = exclusiveSpans(
+      evidence.filter((o) => o.ts >= from && o.ts < row.ts)
+    ).filter((s) => !row.classes.includes(s.cls))
+    if (departed.length === 0) continue
+    // The window opens no earlier than the last word of a class that is gone — the same honest
+    // left edge `reinstatedDrops` uses — and closes at the row, which is where the game spoke.
+    out.push({
+      lo: Math.max(from, ...departed.map((s) => s.last)),
+      hi: row.ts,
+      at: row.ts,
+      reason: 'who'
+    })
+  }
+  return out
+}
+
+/**
  * A non-increasing level ding. The window is honestly WIDE — the Aug 2 swap's is 33.9 h — and
  * the UI is expected to draw it as a range. Exported so a test can assert that the evidence
  * shift genuinely NARROWS this rather than replacing a window nobody looked at.
@@ -554,9 +618,16 @@ export function buildIntervals(input: IntervalInput): ComboInterval[] {
   // after the merge rather than inside it because the test needs the observations, and because
   // it may only ever ADD a cut the merge deleted (see reinstatedDrops).
   const dated = mergeBoundaries([...merged, ...reinstatedDrops(observations, drops, merged)])
+  // …then the two `/who` rules, NARROW FIRST. `whoShiftBoundaries` cuts at a row the evidence
+  // behind it contradicts (JOS-192) — a swap the log otherwise never dates, and the reason a
+  // correcting `/who` no longer relabels the hours in front of it. Its cuts are handed to
+  // `whoBoundaries` as already-dated, so a disagreement between two rows that the row-level rule
+  // has just placed does not open a second, three-hours-wide boundary for the same swap.
+  const shifted = whoShiftBoundaries(observations, input.whoRows, dated, observations[0].ts)
   const boundaries = mergeBoundaries([
     ...dated,
-    ...whoBoundaries(input.whoRows, dated)
+    ...shifted,
+    ...whoBoundaries(input.whoRows, [...dated, ...shifted])
   ]).filter((b) => b.at > observations[0].ts)
   const slices = sliceTimeline(observations, boundaries, observations[0].ts)
   const built = slices.map((slice, i) => toInterval(slice, input, i))

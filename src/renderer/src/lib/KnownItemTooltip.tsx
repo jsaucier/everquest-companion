@@ -291,6 +291,43 @@ const NEVER_UPWARD = [
   { name: 'preventOverflow', options: { mainAxis: false, altAxis: true } }
 ]
 
+/**
+ * THE CARD'S CHROME IS A CONSTANT, SO IT IS DECLARED ONCE (JOS-206).
+ *
+ * These three objects used to be written inline in the `slotProps` below, which means a fresh
+ * object literal — with a fresh nested `sx` inside it — on every render of every anchor. The Sky
+ * tab mounts about 230 of these at the default page cap (95 required-item chips plus 135 item-name
+ * links), so a keystroke in its search box was allocating ~700 objects and handing emotion 460 `sx`
+ * values it had never seen before, worth roughly 8 ms per character. Nothing here depends on props,
+ * so hoisting is behaviour-preserving by inspection and pays off on every surface that draws this
+ * card, not only the one that reported the stall.
+ *
+ * The click-through popper's two guarantees still read together (header, points 1 and 2): it cannot
+ * be moved above its anchor, and it cannot be hit. `disableInteractive` already leaves MUI's popper
+ * at `pointer-events: none`; this repeats it because that is a library default and this is the
+ * defect the whole mode exists for.
+ */
+const CLICK_THROUGH_POPPER = { modifiers: NEVER_UPWARD, sx: { pointerEvents: 'none' } } as const
+
+const CARD_SURFACE = {
+  sx: {
+    bgcolor: EQ_ITEM_COLORS.bg,
+    border: `1px solid ${EQ_ITEM_COLORS.border}`,
+    borderRadius: 1,
+    maxWidth: 380,
+    p: 1,
+    boxShadow: 6
+  }
+} as const
+
+const CARD_ARROW = {
+  sx: { color: EQ_ITEM_COLORS.bg, '&::before': { border: `1px solid ${EQ_ITEM_COLORS.border}` } }
+} as const
+
+/** The two shapes `slotProps` takes, hoisted for the same reason — one per mode, not one per row. */
+const CLICK_THROUGH_SLOTS = { popper: CLICK_THROUGH_POPPER, tooltip: CARD_SURFACE, arrow: CARD_ARROW }
+const PLAIN_SLOTS = { tooltip: CARD_SURFACE, arrow: CARD_ARROW }
+
 export interface KnownItemTooltipProps {
   /** item name exactly as displayed (keeps its ` +N`) */
   name: string
@@ -379,26 +416,9 @@ export function KnownItemTooltip({
       disableInteractive={nested || clickThrough}
       enterDelay={nested ? 120 : 250}
       leaveDelay={nested ? 0 : 80}
-      slotProps={{
-        popper: clickThrough
-          ? // Both halves of the guarantee, said out loud: the card cannot be moved above its
-            // anchor, and it cannot be hit. `disableInteractive` already leaves MUI's popper at
-            // `pointer-events: none`; this repeats it because that is a library default and this
-            // is the defect the whole mode exists for.
-            { modifiers: NEVER_UPWARD, sx: { pointerEvents: 'none' } }
-          : undefined,
-        tooltip: {
-          sx: {
-            bgcolor: EQ_ITEM_COLORS.bg,
-            border: `1px solid ${EQ_ITEM_COLORS.border}`,
-            borderRadius: 1,
-            maxWidth: 380,
-            p: 1,
-            boxShadow: 6
-          }
-        },
-        arrow: { sx: { color: EQ_ITEM_COLORS.bg, '&::before': { border: `1px solid ${EQ_ITEM_COLORS.border}` } } }
-      }}
+      // Two constants, picked by the mode — see the block above them for why they are not written
+      // here any more.
+      slotProps={clickThrough ? CLICK_THROUGH_SLOTS : PLAIN_SLOTS}
     >
       {children}
     </Tooltip>

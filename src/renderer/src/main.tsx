@@ -5,6 +5,9 @@ import CssBaseline from '@mui/material/CssBaseline'
 import { theme } from './theme/theme'
 import App from './App'
 import { ErrorBoundary } from './lib/ErrorBoundary'
+// The mouse's Back button (JOS-201). ABOVE App on purpose — the app-level answer is a fallback
+// SLOT rather than a stack entry, and effects run children-first; see appBack.tsx's header.
+import { AppBackProvider } from './appBack'
 import { DEV_TOOLS, DEV_TOOLS_DEFINE, OWNER_TOOLS } from './devFlags'
 import { currentViewId } from './lib/currentView'
 
@@ -73,7 +76,9 @@ ReactDOM.createRoot(container).render(
     <ErrorBoundary>
       <ThemeProvider theme={theme}>
         <CssBaseline />
-        <App />
+        <AppBackProvider>
+          <App />
+        </AppBackProvider>
       </ThemeProvider>
     </ErrorBoundary>
   </React.StrictMode>

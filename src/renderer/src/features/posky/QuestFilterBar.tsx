@@ -28,7 +28,7 @@
 // was the same: the poppers go, here and in every file that draws this tab. Hover text that
 // survives is a native `title` — an OS tooltip is not in the DOM and has no hit area at all.
 
-import type { JSX } from 'react'
+import { type JSX, memo, useState } from 'react'
 import {
   Box,
   Button,
@@ -55,16 +55,47 @@ export interface QuestFilterBarProps {
   onReload: () => Promise<void>
 }
 
+/**
+ * WHY THE CONTROLS BELOW TAKE THEIR OWN STATE RATHER THAN `list` (JOS-206).
+ *
+ * `useQuestList` returns a NEW object every render, so a component that takes `list` can never be
+ * memoized — and this bar re-renders on every character typed into the search box, because the
+ * search box writes list state that the rows below are drawn from. Measured, that was ~4 ms per
+ * keystroke, most of it the three Autocompletes rebuilding their option lists, adornments and
+ * chips to draw exactly what they were already drawing. Each group therefore takes the pieces it
+ * actually reads — all of them identity-stable at their source (state values, `useState` setters,
+ * a `useMemo`'d facet table) — and is wrapped in `memo`, so typing re-renders the search field and
+ * the Stack around it and nothing else.
+ */
+
 // The three "which quests are mine right now" pickers, in the order a player narrows: who I am,
 // where I am, what I am standing in front of. Each is a closed list of what the data offers, and
 // each stores its picks, so this is also the group whose state survives leaving the tab.
-function QuestPickers({ list, classes }: { list: QuestListState; classes: string[] }): JSX.Element {
+const QuestPickers = memo(function QuestPickers({
+  classes,
+  facets,
+  selectedClasses,
+  setSelectedClasses,
+  islands,
+  setIslands,
+  bosses,
+  setBosses
+}: {
+  classes: string[]
+  facets: QuestListState['facets']
+  selectedClasses: string[]
+  setSelectedClasses: (v: string[]) => void
+  islands: string[]
+  setIslands: (v: string[]) => void
+  bosses: string[]
+  setBosses: (v: string[]) => void
+}): JSX.Element {
   return (
     <>
       <ChipMultiSelect
         options={classes}
-        value={list.selectedClasses}
-        onChange={(v) => list.setSelectedClasses(v)}
+        value={selectedClasses}
+        onChange={setSelectedClasses}
         label="Filter by class"
         placeholder="All classes"
         // The stable handle the JOS-157 drill-down spec reads: a click on a Classes-tab row has to
@@ -77,18 +108,18 @@ function QuestPickers({ list, classes }: { list: QuestListState; classes: string
           persistence spec reads back, and both offer `withPicked` options so a stored pick the
           data no longer knows still shows as a removable chip. */}
       <ChipMultiSelect
-        options={withPicked(list.facets.islands, list.islands)}
-        value={list.islands}
-        onChange={(v) => list.setIslands(v)}
+        options={withPicked(facets.islands, islands)}
+        value={islands}
+        onChange={setIslands}
         label="Filter by island"
         placeholder="All islands"
         minWidth={190}
         testId="posky-island-filter"
       />
       <ChipMultiSelect
-        options={withPicked(list.facets.bosses, list.bosses)}
-        value={list.bosses}
-        onChange={(v) => list.setBosses(v)}
+        options={withPicked(facets.bosses, bosses)}
+        value={bosses}
+        onChange={setBosses}
         label="Filter by boss"
         placeholder="All bosses"
         minWidth={230}
@@ -96,7 +127,88 @@ function QuestPickers({ list, classes }: { list: QuestListState; classes: string
       />
     </>
   )
-}
+})
+
+/**
+ * THE SEARCH BOX HOLDS ITS OWN TEXT (JOS-206).
+ *
+ * It used to be a controlled field reading `list.query`, so every character travelled up to
+ * `useQuestList`, back down through this whole bar, and only then into the input — the echo the
+ * user sees was queued behind the list's own re-render. Local state puts the character on screen
+ * first and publishes it after; `useDeferredValue` in `useQuestList` already handles the rest.
+ *
+ * IT STILL FOLLOWS A PROGRAMMATIC WRITE, which is the half that is easy to lose: `revealQuest`
+ * (a celebration toast's deep link) and the ambiguous-quest chips both SET the query, and a field
+ * that only ever published would sit there showing the old text. The prev-props pattern below is
+ * React's documented way to adjust state during render — `lastPublished` is what this component
+ * last saw or sent, so a `query` that differs from it can only have come from somewhere else.
+ */
+const QuestSearchField = memo(function QuestSearchField({
+  query,
+  setQuery
+}: {
+  query: string
+  setQuery: (v: string) => void
+}): JSX.Element {
+  const [text, setText] = useState(query)
+  const [lastPublished, setLastPublished] = useState(query)
+  if (query !== lastPublished) {
+    setLastPublished(query)
+    setText(query)
+  }
+  return (
+    <TextField
+      size="small"
+      // The handle tests/e2e/sky-turnin.e2e.mts narrows the list with — the same
+      // `[data-testid="…"] input` idiom the two facet pickers already carry.
+      data-testid="posky-search"
+      // JOS-207 added the boss and the island to what this matches, and the label says so: the
+      // two facts a player standing in the zone is most likely to type were the two the box
+      // silently did not search, and a control that has grown has to be seen to have grown.
+      // questSearch.ts owns the rule; this string is the promise it keeps.
+      label="Search quest / item / reward / boss / island"
+      value={text}
+      onChange={(e) => {
+        setText(e.target.value)
+        // Recorded as well as published, so the sync check above does not fire on the way back.
+        setLastPublished(e.target.value)
+        setQuery(e.target.value)
+      }}
+      // Wide enough that the (now longer) label fits its own notch rather than being clipped by
+      // it. The bar wraps (`flexWrap` on the Stack below), so buying the room costs a row on a
+      // narrow window and never truncates the promise.
+      sx={{ minWidth: 320 }}
+    />
+  )
+})
+
+/** The sort order. Its own memoized component for the reason the block above `QuestPickers` gives:
+ *  a `TextField select` is a MUI Select, and re-drawing one per keystroke buys nothing. */
+const QuestSortSelect = memo(function QuestSortSelect({
+  sort,
+  setSort
+}: {
+  sort: SortKey
+  setSort: (v: SortKey) => void
+}): JSX.Element {
+  return (
+    <TextField
+      select
+      size="small"
+      label="Sort"
+      // The handle tests/e2e/sky-dropdowns.e2e.mts opens: that spec's whole subject is whether a
+      // click on this control reaches it, so the control needs a name a spec can say.
+      data-testid="posky-sort"
+      value={sort}
+      onChange={(e) => setSort(e.target.value as SortKey)}
+      sx={{ minWidth: 180 }}
+    >
+      {SORT_OPTIONS.map((o) => (
+        <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>
+      ))}
+    </TextField>
+  )
+})
 
 /**
  * The four narrowing CHECKBOXES, split out of the bar for the same reason `QuestPickers` above was:
@@ -116,7 +228,25 @@ function QuestPickers({ list, classes }: { list: QuestListState; classes: string
  * bar: these boxes sit between the Sort select and "Count items from", so a card centred on one of
  * them opens into the band a neighbouring option list uses.
  */
-function QuestToggles({ list }: { list: QuestListState }): JSX.Element {
+const QuestToggles = memo(function QuestToggles({
+  hideCompleted,
+  setHideCompleted,
+  hideTurnedIn,
+  setHideTurnedIn,
+  hideNoItems,
+  setHideNoItems,
+  favoritesOnly,
+  setFavoritesOnly
+}: {
+  hideCompleted: boolean
+  setHideCompleted: (v: boolean) => void
+  hideTurnedIn: boolean
+  setHideTurnedIn: (v: boolean) => void
+  hideNoItems: boolean
+  setHideNoItems: (v: boolean) => void
+  favoritesOnly: boolean
+  setFavoritesOnly: (v: boolean) => void
+}): JSX.Element {
   return (
     <>
       <FormControlLabel
@@ -126,8 +256,8 @@ function QuestToggles({ list }: { list: QuestListState }): JSX.Element {
             // The stable handle for the persistence spec (tests/e2e/sky-filters.e2e.mts): this
             // box's tick is a stored preference, so it is one of the two an e2e reads back.
             data-testid="posky-hide-completed"
-            checked={list.hideCompleted}
-            onChange={(e) => list.setHideCompleted(e.target.checked)}
+            checked={hideCompleted}
+            onChange={(e) => setHideCompleted(e.target.checked)}
           />
         }
         label="Hide quests I have every item for"
@@ -137,21 +267,21 @@ function QuestToggles({ list }: { list: QuestListState }): JSX.Element {
         control={
           <Checkbox
             data-testid="posky-hide-turned-in"
-            checked={list.hideTurnedIn}
-            onChange={(e) => list.setHideTurnedIn(e.target.checked)}
+            checked={hideTurnedIn}
+            onChange={(e) => setHideTurnedIn(e.target.checked)}
           />
         }
         label="Hide quests I have turned in"
       />
       <FormControlLabel
-        control={<Checkbox checked={list.hideNoItems} onChange={(e) => list.setHideNoItems(e.target.checked)} />}
+        control={<Checkbox checked={hideNoItems} onChange={(e) => setHideNoItems(e.target.checked)} />}
         label="Only quests with turn-ins"
       />
       <FormControlLabel
         control={
           <Checkbox
-            checked={list.favoritesOnly}
-            onChange={(e) => list.setFavoritesOnly(e.target.checked)}
+            checked={favoritesOnly}
+            onChange={(e) => setFavoritesOnly(e.target.checked)}
             icon={<StarBorderIcon />}
             checkedIcon={<StarIcon />}
             sx={{ color: 'warning.main', '&.Mui-checked': { color: 'warning.main' } }}
@@ -161,47 +291,21 @@ function QuestToggles({ list }: { list: QuestListState }): JSX.Element {
       />
     </>
   )
-}
+})
 
-// The three pickers, search, sort, the four toggles, and the inventory controls that decide
-// which items the whole tab counts you as holding.
-export default function QuestFilterBar({
-  list,
-  classes,
+/** The RIGHT group: what the tab counts you as holding, and how to refresh it. Memoized like the
+ *  rest — neither control has anything to do with the search box. */
+const InventorySource = memo(function InventorySource({
   countSource,
   onCountSource,
   onReload
-}: QuestFilterBarProps): JSX.Element {
+}: {
+  countSource: CountSource
+  onCountSource: (s: CountSource) => void
+  onReload: () => Promise<void>
+}): JSX.Element {
   return (
-    <Stack direction="row" spacing={2} flexWrap="wrap" alignItems="center" useFlexGap>
-      <QuestPickers list={list} classes={classes} />
-      <TextField
-        size="small"
-        // The handle tests/e2e/sky-turnin.e2e.mts narrows the list with — the same
-        // `[data-testid="…"] input` idiom the two facet pickers already carry.
-        data-testid="posky-search"
-        label="Search item / quest / reward"
-        value={list.query}
-        onChange={(e) => list.setQuery(e.target.value)}
-        sx={{ minWidth: 240 }}
-      />
-      <TextField
-        select
-        size="small"
-        label="Sort"
-        // The handle tests/e2e/sky-dropdowns.e2e.mts opens: that spec's whole subject is whether a
-        // click on this control reaches it, so the control needs a name a spec can say.
-        data-testid="posky-sort"
-        value={list.sort}
-        onChange={(e) => list.setSort(e.target.value as SortKey)}
-        sx={{ minWidth: 180 }}
-      >
-        {SORT_OPTIONS.map((o) => (
-          <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>
-        ))}
-      </TextField>
-      <QuestToggles list={list} />
-      <Box sx={{ flexGrow: 1 }} />
+    <>
       {/* This one carried a three-sentence popper explaining what each source counted, and it
           was the WORST anchor on the row: the widest control, at the wrapping end of the bar,
           directly over the accordion. It is gone rather than restated, and deliberately not
@@ -235,6 +339,45 @@ export default function QuestFilterBar({
           Reload inventory
         </Button>
       </span>
+    </>
+  )
+})
+
+// The three pickers, search, sort, the four toggles, and the inventory controls that decide
+// which items the whole tab counts you as holding.
+export default function QuestFilterBar({
+  list,
+  classes,
+  countSource,
+  onCountSource,
+  onReload
+}: QuestFilterBarProps): JSX.Element {
+  return (
+    <Stack direction="row" spacing={2} flexWrap="wrap" alignItems="center" useFlexGap>
+      <QuestPickers
+        classes={classes}
+        facets={list.facets}
+        selectedClasses={list.selectedClasses}
+        setSelectedClasses={list.setSelectedClasses}
+        islands={list.islands}
+        setIslands={list.setIslands}
+        bosses={list.bosses}
+        setBosses={list.setBosses}
+      />
+      <QuestSearchField query={list.query} setQuery={list.setQuery} />
+      <QuestSortSelect sort={list.sort} setSort={list.setSort} />
+      <QuestToggles
+        hideCompleted={list.hideCompleted}
+        setHideCompleted={list.setHideCompleted}
+        hideTurnedIn={list.hideTurnedIn}
+        setHideTurnedIn={list.setHideTurnedIn}
+        hideNoItems={list.hideNoItems}
+        setHideNoItems={list.setHideNoItems}
+        favoritesOnly={list.favoritesOnly}
+        setFavoritesOnly={list.setFavoritesOnly}
+      />
+      <Box sx={{ flexGrow: 1 }} />
+      <InventorySource countSource={countSource} onCountSource={onCountSource} onReload={onReload} />
     </Stack>
   )
 }

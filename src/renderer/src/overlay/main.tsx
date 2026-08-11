@@ -5,6 +5,8 @@ import EventLogOverlay from './EventLogOverlay'
 import HealMeter from './HealMeter'
 import ToastOverlay from './ToastOverlay'
 import BuffsOverlay from './BuffsOverlay'
+import XpOverlay from './XpOverlay'
+import RespawnOverlay from './RespawnOverlay'
 import { isHealOverlayKind } from '@shared/types'
 import { isTimerOverlayKind } from '@shared/buffTimers'
 
@@ -24,12 +26,20 @@ import { isTimerOverlayKind } from '@shared/buffTimers'
 //                                       buffs window keeps the beneficial rows, the debuffs
 //                                       window keeps the debuff + crowd-control rows, and both
 //                                       read the same two modules
+//   'xp'                              → the progress read (JOS-195): xp/hr, next level (or the AA
+//                                       pace at the cap) and motes per hour, over the app-wide
+//                                       slice vocabulary with `session` as its own default
+//   'respawn'                         → the respawn clocks (JOS-194): one countdown per watched
+//                                       mob that has died, started by the death message and
+//                                       numbered from your own kills
 //   everything else                   → the damage meter (fight / zone selection lives inside)
 const kind = window.eqOverlay?.kind ?? 'fight'
 
 function Surface(): React.JSX.Element {
   if (kind === 'events') return <EventLogOverlay />
   if (kind === 'toast') return <ToastOverlay />
+  if (kind === 'xp') return <XpOverlay />
+  if (kind === 'respawn') return <RespawnOverlay />
   if (isTimerOverlayKind(kind)) return <BuffsOverlay kind={kind} />
   if (isHealOverlayKind(kind)) return <HealMeter />
   return <OverlayMeter />

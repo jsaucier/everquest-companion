@@ -29,9 +29,12 @@
 // of that index instead of a second bus subscription that could reset out of step.
 
 import type { EqModule } from './types'
+import { S, validate, type FoldSchema } from '../foldCache/schema'
+import type { FoldCheckpointable } from '../foldCache/serialize'
+import { CONSIDER_FACTION_RUNGS } from '../../shared/considerFaction'
 import type { LogEvent } from '../../shared/logEvents'
 import type { ConsiderDelta, ConsiderRow, ConsiderSnap, MobKnowledge } from '../../shared/types'
-import { MobLootIndex, mobKey } from '../mobLookupParse'
+import { MobLootIndex, mobKey, type MobLootFoldState } from '../mobLookupParse'
 
 /** How many considered mobs the ring keeps. Oldest fall off the front. */
 export const CONSIDER_CAP = 50
@@ -75,7 +78,50 @@ function adoptDisplay(current: string | undefined, incoming: string): string {
   return incomingIsLower || !currentIsLower ? incoming : current
 }
 
-export class ConsiderModule implements EqModule<ConsiderSnap, ConsiderDelta> {
+/**
+ * THE CHECKPOINT DECLARATION (JOS-208 phase 2), and the module that pays one of phase 1's three
+ * named debts: the shared `MobLootIndex` rides in this blob, because this module owns its
+ * lifetime (it folds every loot event into it and resets it on epoch).
+ *
+ * `knowledge` IS NOT STORED, and it is the one exclusion here that is not store-derived. Drop
+ * knowledge is resolved ASYNCHRONOUSLY from the wiki/catalog cache and only ever for LIVE cons
+ * (`probe` is called with `live` true, plus the bounded backfill on the first tick), so a COLD
+ * replay of the same bytes produces rows with no knowledge at all. Storing it would make the warm
+ * arm richer than the cold one — a divergence in the direction that looks like an improvement,
+ * which is the most dangerous kind. The rows come back bare and the same backfill tick that
+ * enriches a cold start enriches this one.
+ *
+ * `probing` (lookups in flight) and `backfilled` (has the first live tick run) are LIVE session
+ * facts for the same reason and are restored to their fresh-module values.
+ */
+const CONSIDER_ROW_SCHEMA: FoldSchema = S.obj({
+  id: S.str,
+  mob: S.str,
+  ts: S.num,
+  rare: S.bool,
+  level: S.opt(S.num),
+  faction: S.enum(...CONSIDER_FACTION_RUNGS.map((r) => r.faction)),
+  difficulty: S.str,
+  zone: S.opt(S.str),
+  cons: S.num
+})
+
+const CONSIDER_FOLD_SCHEMA: FoldSchema = S.obj({
+  ring: S.arr(CONSIDER_ROW_SCHEMA),
+  zone: S.opt(S.str),
+  seq: S.num,
+  ownLoot: S.arr(S.tuple(S.str, S.arr(S.tuple(S.str, S.obj({ item: S.str, count: S.num, lastTs: S.num })))))
+})
+
+/** The consider module's complete event-derived state, own-loot index included. */
+export interface ConsiderFoldState {
+  ring: Omit<ConsiderRow, 'knowledge'>[]
+  zone?: string
+  seq: number
+  ownLoot: MobLootFoldState
+}
+
+export class ConsiderModule implements EqModule<ConsiderSnap, ConsiderDelta>, FoldCheckpointable<ConsiderFoldState> {
   readonly id = 'consider'
   /** newest LAST (the UI reverses), one entry per mob key. */
   private ring: ConsiderRow[] = []
@@ -217,5 +263,42 @@ export class ConsiderModule implements EqModule<ConsiderSnap, ConsiderDelta> {
     }
     this.dirty = new Set()
     return { seq: this.seq, delta: { upserted } }
+  }
+
+  // ---- the checkpoint seam (JOS-208) ---------------------------------------------------------
+
+  readonly foldSchema = CONSIDER_FOLD_SCHEMA
+
+  serializeFold(): ConsiderFoldState {
+    return {
+      // `knowledge` is dropped per row (see the declaration) and the rest copied, because a row is
+      // MUTATED in place when a lookup lands.
+      ring: this.ring.map(({ knowledge: _knowledge, ...row }) => ({ ...row })),
+      ...(this.zone === undefined ? {} : { zone: this.zone }),
+      seq: this.seq,
+      ownLoot: this.deps.ownLoot?.serializeFold() ?? []
+    }
+  }
+
+  deserializeFold(state: unknown): boolean {
+    if (!validate(CONSIDER_FOLD_SCHEMA, state).ok) return false
+    const s = state as ConsiderFoldState
+    // `knowledge: undefined` EXPLICITLY, and the differential matrix is why this line exists.
+    // `foldConsider` always writes the key (`knowledge: prev?.knowledge`), so a cold row carries
+    // it present-and-undefined; a restored row rebuilt without it carried no key at all, and the
+    // published snapshots differed by exactly that — caught at p2-pet-arc-bound.log's decile-50
+    // on the first run of the widened matrix. The restore reproduces the shape the fold produces,
+    // rather than the shape that happens to be convenient.
+    this.ring = s.ring.map((row) => ({ ...row, knowledge: undefined }))
+    this.byId = new Map(this.ring.map((row) => [row.id, row]))
+    this.zone = s.zone
+    this.seq = s.seq
+    this.dirty = new Set()
+    this.probing = new Set()
+    this.backfilled = false
+    // A caller with no index (the bench, a unit test) simply has nothing to restore INTO — and a
+    // blob it never wrote is empty for the same reason, so the two agree without a special case.
+    this.deps.ownLoot?.deserializeFold(s.ownLoot)
+    return true
   }
 }

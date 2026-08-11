@@ -43,11 +43,39 @@
 // display ("Thelvorn, Blade of Light", commas and all).
 
 import type { EqModule } from './types'
+import { S, validate, type FoldSchema } from '../foldCache/schema'
+import type { FoldCheckpointable } from '../foldCache/serialize'
 import type { LogEvent } from '../../shared/logEvents'
 import type { ItemTierRow, ItemTiersDelta, ItemTiersSnap } from '../../shared/types'
 import { itemBaseName, itemTierFromName, itemTierKey } from '../../shared/itemStats'
 
-export class ItemTiersModule implements EqModule<ItemTiersSnap, ItemTiersDelta> {
+/**
+ * THE CHECKPOINT DECLARATION (JOS-208 phase 2). `tier` and `lastTier` are OPTIONAL and mean it:
+ * absent is UNKNOWN, never tier 0 (the module's own law, stated in its header), and the grammar's
+ * refusal of null is what keeps that distinction from being encoded twice.
+ */
+const ITEM_TIERS_FOLD_SCHEMA: FoldSchema = S.obj({
+  rows: S.rec(
+    S.obj({
+      key: S.str,
+      name: S.str,
+      tier: S.opt(S.num),
+      lastTier: S.opt(S.num),
+      merges: S.num,
+      firstAt: S.num,
+      lastAt: S.num
+    })
+  ),
+  seq: S.num
+})
+
+/** The item-tier module's complete event-derived state. */
+export interface ItemTiersFoldState {
+  rows: ItemTiersSnap
+  seq: number
+}
+
+export class ItemTiersModule implements EqModule<ItemTiersSnap, ItemTiersDelta>, FoldCheckpointable<ItemTiersFoldState> {
   readonly id = 'itemTiers'
   private rows: ItemTiersSnap = {}
   private seq = 0
@@ -136,5 +164,24 @@ export class ItemTiersModule implements EqModule<ItemTiersSnap, ItemTiersDelta> 
     for (const key of this.dirty) changed[key] = this.rows[key]
     this.dirty.clear()
     return { seq: this.seq, delta: { changed } }
+  }
+
+  // ---- the checkpoint seam (JOS-208) ---------------------------------------------------------
+
+  readonly foldSchema = ITEM_TIERS_FOLD_SCHEMA
+
+  serializeFold(): ItemTiersFoldState {
+    const rows: ItemTiersSnap = {}
+    for (const [key, row] of Object.entries(this.rows)) rows[key] = { ...row }
+    return { rows, seq: this.seq }
+  }
+
+  deserializeFold(state: unknown): boolean {
+    if (!validate(ITEM_TIERS_FOLD_SCHEMA, state).ok) return false
+    const s = state as ItemTiersFoldState
+    this.rows = s.rows
+    this.seq = s.seq
+    this.dirty.clear()
+    return true
   }
 }

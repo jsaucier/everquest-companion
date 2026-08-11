@@ -33,6 +33,7 @@ import { type JSX, useEffect, useLayoutEffect, useMemo, useRef, useState } from 
 import { Box, Snackbar, Stack } from '@mui/material'
 import type { LootEvent } from '@shared/types'
 import type { NavBack } from '../../appRouting'
+import { useBackTarget } from '../../appBack'
 import { useWindowedRows } from '../../lib/useWindowedRows'
 import { itemCountKey } from '../../lib/itemName'
 import type { InventoryRow } from '../inventory/reconcile'
@@ -142,6 +143,19 @@ interface TakeoverProps {
 
 function LootDetailTakeover(p: TakeoverProps): JSX.Element {
   const { item, events, slice, detail, nav, invByKey } = p
+  // Back consults the origin stack FIRST and falls back to closing the pane — the whole JOS-43
+  // contract in one line. `nav.back()` reports whether it navigated, so a natively opened drill
+  // (nothing parked) behaves exactly as it did before.
+  //
+  // ONE expression, read by TWO things (JOS-201): the arrow below, and the mouse's Back button,
+  // which registers it for as long as this pane is on screen. Never a second opinion about what
+  // Back means here. The ledger behind it registers nothing — it has no Back affordance — so a
+  // press there falls through to the app-level origin walk.
+  const back = (): boolean => {
+    if (!nav?.back()) detail.close()
+    return true
+  }
+  useBackTarget(back)
   return (
     <ItemDetailPane
       item={item}
@@ -155,12 +169,7 @@ function LootDetailTakeover(p: TakeoverProps): JSX.Element {
       slice={slice}
       stats={itemStats[itemCountKey(item)]}
       isQuestItem={questItemNames.has(itemCountKey(item))}
-      // Back consults the origin stack FIRST and falls back to closing the pane — the whole
-      // JOS-43 contract in one line. `back()` reports whether it navigated, so a natively
-      // opened drill (nothing parked) behaves exactly as it did before.
-      onBack={() => {
-        if (!nav?.back()) detail.close()
-      }}
+      onBack={back}
       onList={detail.close}
       origin={nav?.origin?.label ?? null}
     />

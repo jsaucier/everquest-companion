@@ -39,13 +39,16 @@ import { startTelemetry, stopTelemetry } from './telemetry'
 import { registerAppSchemes } from './appSchemes'
 import { applyGraphicsSafeMode } from './graphics'
 import { installImageCacheProtocol } from './imageCache'
+// The wiki art this build SHIPS (JOS-198). Pure path probing — Electron's three path facts are
+// passed in below, so the module itself imports nothing from electron.
+import { bundledImageRoots, findBundledImagesDir } from './bundledImages'
 import { installSpeechCacheProtocol } from './speech/cache'
 import { registerIpc } from './ipc'
 import { DATA_READY_MS, bus, buffsModule, epoch, sendWorldRebuilt, sessionDetector } from './pipeline'
 import { markStartupPhase, startPerfSampler, stopPerf } from './perf'
 import { initPresenceEffects, stopPresenceEffects } from './presenceEffects'
 import { provisionDefaultPacks } from './provisionPacks'
-import { getActiveCharacter, startTailing, stopSession } from './session'
+import { getActiveCharacter, markTailPosition, saveFoldCheckpoint, startTailing, stopSession } from './session'
 import { runSmokeFeedback } from './smokeFeedback'
 import { STORE_READY_MS, getOverlayConfig, getPerfHudPrefs } from './store'
 import { initUpdater } from './updater'
@@ -55,8 +58,10 @@ import {
   getMainWindow,
   hardenSession,
   hardenWebContents,
+  reconcileOverlayDisplays,
   sendToMain
 } from './windows'
+import { watchDisplays } from './windowPlacement'
 import { OVERLAY_KINDS } from '../shared/types'
 
 // --- custom schemes: the permanent image cache (eqimg://) and the speech cache (eqspeech://) ---
@@ -215,11 +220,26 @@ if (!gotSingleInstanceLock) {
     // Permissions are a SESSION property; every window here uses the default session (no
     // custom `partition` anywhere — the same fact that lets one eqimg:// handler serve them all).
     hardenSession(session.defaultSession)
-    // Serve `eqimg://item/<id>` from <userData>/image-cache BEFORE any window loads a page
-    // that can reference an item icon. One handler on the default session covers the main
-    // window and every overlay (none of them use a custom partition).
+    // Serve `eqimg://item/<id>` BEFORE any window loads a page that can reference an item icon.
+    // One handler on the default session covers the main window and every overlay (none of them
+    // use a custom partition). Since JOS-198 the FIRST place it looks is the art this build
+    // ships — `resources/wiki-images/`, whose three possible addresses (project root in dev and
+    // e2e, inside the asar, beside it once unpacked) are probed here rather than guessed at in
+    // the cache. A build without it resolves to null and falls back to the runtime cache,
+    // exactly as before.
+    const bundledDir = findBundledImagesDir(
+      bundledImageRoots({
+        appPath: app.getAppPath(),
+        resourcesPath: process.resourcesPath ?? '',
+        cwd: process.cwd()
+      })
+    )
+    logInfo(
+      `[everquest-companion] Bundled wiki images: ${bundledDir ?? 'none (falling back to the runtime cache)'}`
+    )
     installImageCacheProtocol(protocol, {
       userData: USER_DATA,
+      bundledDir,
       onError: (msg, err) => logError('main:imageCache', { message: msg, err })
     })
     // …and `eqspeech://<hash>` from <userData>/speech-cache, beside it and for the same
@@ -246,7 +266,13 @@ if (!gotSingleInstanceLock) {
           // …and what the fold's duty cycle actually cost (JOS-50), plus how many bytes it read
           // (JOS-57, the fleet reading's size bucket). Both absent on a machine with no log to
           // replay, where there was no fold to have a duty and no bytes to have a size.
-          ...(res ? { replay: res.replay, bytesReplayed: res.logBytes } : {})
+          ...(res ? { replay: res.replay, bytesReplayed: res.logBytes } : {}),
+          // JOS-57's two discriminators, each forwarded ONLY when the session actually measured
+          // it: how much of that read was bytes appended since our last clean exit, and how long
+          // the first megabyte took to arrive. `TailResult` leaves both absent rather than zero
+          // when there was nothing to compare against, and that distinction has to survive here.
+          ...(res?.newBytes === undefined ? {} : { newBytes: res.newBytes }),
+          ...(res?.firstMbMs === undefined ? {} : { firstMbMs: res.firstMbMs })
         })
       })
       .catch((err: unknown) => {
@@ -312,9 +338,16 @@ if (!gotSingleInstanceLock) {
       if (getOverlayConfig(kind).open) createOverlayWindow(kind)
     }
 
+    // …and keep them on a display that exists (JOS-187). The line above places them against the
+    // monitors present at launch; this one re-places them when that changes under a running app —
+    // the moment the player unplugs the widescreen their meters are parked on. Registered after
+    // the restore for the obvious reason (there is nothing to reconcile before it) and never
+    // removed: it is app-lifetime, like the security catch-alls above.
+    watchDisplays(reconcileOverlayDisplays)
+
     // Presence-driven features (overlay auto-hide + the cursor ring). LAST, because both act on
     // windows that must already exist. Costs one store read when both are off — which is the
-    // default install: `presenceNeeded()` decides whether the watcher child is spawned at all.
+    // default install: `presenceNeeded()` decides whether the watcher thread is started at all.
     initPresenceEffects()
 
     // The performance HUD (docs/plans/perf-profiling.md P1). Costs one store read when it is
@@ -331,16 +364,36 @@ if (!gotSingleInstanceLock) {
 }
 
 /**
- * REAPING THE WATCHER, BELT AND BRACES. `window-all-closed` below is the ordinary teardown, but
- * it is not the only way this process ends: an auto-updater `quitAndInstall`, a `app.quit()`
+ * STOPPING THE WATCHER, BELT AND BRACES. `window-all-closed` below is the ordinary teardown, but
+ * it is not the only way this process ends: an auto-updater `quitAndInstall`, an `app.quit()`
  * from anywhere, or an OS session logoff can reach `before-quit` on a path that never lands
- * there. The presence watcher is a CHILD PROCESS, and Windows does not kill children with their
- * parent — one missed teardown is a PowerShell loop polling user32 forever with nobody reading
- * the pipe. `stopPresenceEffects()` is idempotent, so running it on both events costs nothing.
- * (The child also self-reaps when this pid disappears — see presence.ts — which is what covers
- * the kill -9 case that no in-process handler can.)
+ * there. The presence watcher is a WORKER THREAD, and a live thread is one more thing holding a
+ * quitting process open. `stopPresenceEffects()` is idempotent, so running it on both events
+ * costs nothing.
+ *
+ * THE HARD CASE STOPPED EXISTING IN JOS-182, which is worth recording rather than quietly
+ * deleting: the watcher used to be a `powershell.exe` CHILD, Windows does not kill children with
+ * their parent, and one missed teardown left a PowerShell loop polling user32 forever with nobody
+ * reading the pipe. It carried a self-reap for exactly the kill -9 case no in-process handler can
+ * cover. A thread cannot outlive its process, so both the hazard and its workaround are gone.
  */
-app.on('before-quit', () => teardownStep('main:stopPresence', stopPresenceEffects))
+app.on('before-quit', () => {
+  teardownStep('main:stopPresence', stopPresenceEffects)
+  // …and the tail mark, for the same belt-and-braces reason and one more (JOS-57 scope addition):
+  // `app.quit()` does NOT emit `window-all-closed`, so an auto-updater's `quitAndInstall` would
+  // otherwise leave no mark and blind the very next launch — the one right after an update, which
+  // is exactly the launch a startup measurement most wants to see. Writing it on both events is
+  // one store key written twice, and the later write is the better answer.
+  teardownStep('main:logTailMark', markTailPosition)
+  // …AND THE FOLD CHECKPOINT, on exactly the argument the line above makes (JOS-208). `app.quit()`
+  // does not emit `window-all-closed`, so an auto-updater's `quitAndInstall` would leave no
+  // checkpoint — and the launch right after an update is a launch that may WELL still be able to
+  // use one: invalidation is per-shape and per-semantics now, so a release that moved neither keeps
+  // every user's cache warm. Idempotent for the same reason `markTailPosition` is: it is one file
+  // written twice by a temp+rename, from a process that is no longer folding, so both writes
+  // describe the same byte and the later one wins.
+  teardownStep('main:foldCheckpoint', () => void saveFoldCheckpoint())
+})
 
 /**
  * One teardown step, isolated. `window-all-closed` runs a LIST of these before `app.quit()`,
@@ -360,9 +413,16 @@ function teardownStep(label: string, fn: () => void): void {
 }
 
 app.on('window-all-closed', () => {
+  // THE FOLD CHECKPOINT (JOS-208), and it goes FIRST — before `stopSession` stops the tailer,
+  // because the offset it writes is the tailer's own (`Tailer.checkpointOffset()`). A no-op unless
+  // the flag is on, and a `teardownStep` like everything else here: a checkpoint that throws must
+  // not be able to veto a quit, and the answer to a failed write is the cold start the app does
+  // today. THIS IS THE CLEAN-SHUTDOWN HALF of "write at clean shutdown + occasional quiet moments"
+  // — a crash leaves the previous checkpoint, which is still valid for the bytes it describes.
+  teardownStep('main:foldCheckpoint', () => void saveFoldCheckpoint())
   teardownStep('main:stopSession', stopSession)
-  // Kill the presence watcher child + the cursor stream. Both already unref their timers, but a
-  // child process is not a timer: nothing else would reap it.
+  // Stop the presence watcher thread + the cursor stream. Both already unref, but an unref'd
+  // worker is still a running thread: nothing else would end it.
   teardownStep('main:stopPresence', stopPresenceEffects)
   // Stop the feedback drain's timers. They are unref'd, so they cannot be the reason the
   // process lives on; this is about not starting an attempt into a process that is quitting.

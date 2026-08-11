@@ -7,7 +7,7 @@
 //
 // ID CONVENTION:  `suggest:<spellKey>:<template>`
 //   spellKey = the catalog entry's canonical (lowercased, rank-stripped) key.
-//   template ∈ 'wearsOff' | 'fade' | 'lands' | 'landsOnOther' | 'breaks'.
+//   template ∈ 'wearsOff' | 'fade' | 'lands' | 'landsOnOther' | 'breaks' | 'charmBreaks'.
 //   Illusion is the SHARED, deduped suggestion `suggest:illusion:fade` (one alert for the
 //   generic `Your illusion fades.` line, which names no spell — see logEvents.ts IllusionFade).
 //
@@ -25,7 +25,13 @@ import type { AlertDef, LogEventKind, SpellCatalogEntry } from '@shared/types'
 import { spellIdFragment, parseSpellRank } from '../../../../shared/spellLines'
 import type { SpellRank } from '@shared/spellLines'
 
-export type TemplateKind = 'wearsOff' | 'fade' | 'lands' | 'landsOnOther' | 'breaks'
+export type TemplateKind =
+  | 'wearsOff'
+  | 'fade'
+  | 'lands'
+  | 'landsOnOther'
+  | 'breaks'
+  | 'charmBreaks'
 
 /**
  * RANK-AWARE templates (spell levelling intelligence). Everything above is rank-LESS by
@@ -170,6 +176,34 @@ export const SUGGEST_TEMPLATES: Record<
     verb: 'broke',
     sound: 'task-error-task-error-08',
     where: (name) => ({ spell: name, refresh: 'true' })
+  },
+  // The CHARM breaking, per spell (JOS-200) — `breaks`'s twin, and a different EVENT.
+  //
+  // WHY IT IS NOT `breaks`. One sentence, two rosters, two events: `classifyWornOff` tests
+  // `charmSpell` first and emits `uncharm`, then `ccSpell` and emits `cc {refresh:true}`. A charm
+  // break therefore never carries `refresh`, and the mez template's trigger cannot see it — which
+  // is exactly what three bards hit in a row (JOS-200: Solon's Bewitching Bravura was in the wrong
+  // roster AND had no charm-shaped chip to click even once it moved).
+  //
+  // WHY IT EXISTS BESIDE THE GROUP. `shared/alertGroups.ts` has fired "Charm break" for every
+  // charm at once since JOS-69, but a user goes looking by SPELL NAME — an enchanter typing
+  // "Allure", a bard typing "Bravura" — and until now the search surface had nothing for them.
+  // Same argument the per-spell mez break made in JOS-161, applied to the other roster.
+  //
+  // NO `refresh` KEY, deliberately: `uncharm` carries `mob` and `spell` and nothing else, so
+  // pinning the name is the whole trigger. Measured for JOS-200 over the owner's whole log: 3,382
+  // of 3,383 `Your <X> spell has worn off of <mob>.` lines are rank-less, so the catalog's display
+  // name is the string the sentence actually carries.
+  //
+  // SAME SOUND AS THE SEEDED CHARM-BREAK ALERT (`SOUND.charmBreak` in shared/alertGroups.ts, and
+  // DEFAULT_ALERT_SOUNDS.charmBreak in main): a user who owns both hears one charm-break voice.
+  // "I find myself... requiring your attention."
+  charmBreaks: {
+    chip: 'When the charm breaks',
+    kind: 'uncharm',
+    verb: 'charm broke',
+    sound: 'input-required-input-required-02',
+    where: (name) => ({ spell: name })
   }
 }
 
@@ -330,6 +364,11 @@ export function suggestionsFor(entry: SpellCatalogEntry, rank?: SpellRank | null
     out.push({ template: 'landsOnOther', def: buildDef(entry, 'landsOnOther') })
   }
   if (entry.templates.breaks) out.push({ template: 'breaks', def: buildDef(entry, 'breaks') })
+  // Disjoint with `breaks` by construction — `charmSpell` is tested first in classifyWornOff, so
+  // the two rosters cannot both claim a spell (tests/charmCcRoster.test.mts pins that).
+  if (entry.templates.charmBreaks) {
+    out.push({ template: 'charmBreaks', def: buildDef(entry, 'charmBreaks') })
+  }
   // Rank-pinned chips are offered only for a rank we have actually SEEN cast: a rank the log
   // has never printed cannot be confirmed to exist for this character, and an alert on a
   // spelling we guessed would sit there silently forever.

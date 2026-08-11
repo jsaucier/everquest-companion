@@ -11,7 +11,20 @@ import type { TelemetryPrefs } from '../shared/telemetry'
 import type { PerfHudPrefs } from '../shared/perf'
 import type { GraphicsPrefs } from '../shared/graphicsPrefs'
 import type { BuffTrustPrefs } from '../shared/buffTrust'
+import type { RespawnPrefs } from '../shared/respawn'
 import type { WindowBounds } from './store'
+
+/**
+ * One character's tail position at the last clean shutdown (JOS-57 scope addition). `at` is a wall
+ * clock and exists for the reader rather than for the measurement — it is what lets a support
+ * answer say "that mark is from three weeks ago"; nothing derived from it is ever transmitted.
+ */
+export interface LogTailMark {
+  /** Byte offset the live tailer had consumed to. */
+  offset: number
+  /** When it was written, epoch ms. */
+  at: number
+}
 
 export interface StoreShape {
   /**
@@ -47,6 +60,22 @@ export interface StoreShape {
    * unchanged and vice versa.
    */
   eqDiscoveredRoot?: string
+  /**
+   * WHERE THE TAIL HAD READ TO WHEN THIS APP LAST SHUT DOWN CLEANLY, per character (JOS-57 scope
+   * addition). The next launch subtracts it from the log's size to learn how many bytes it had to
+   * read COLD — the discriminator the fleet's startup reading was missing, because every other
+   * number it carries scales with the whole log rather than with the part nobody has read yet.
+   *
+   * ONLY A CLEAN SHUTDOWN WRITES ONE (`stopSession`), which is the honest half of the design: a
+   * crash leaves the previous launch's mark, so the delta it produces is "since we last got out
+   * cleanly" rather than "since last launch", and the reading is dropped altogether when the log
+   * has shrunk under the mark (a rotation) rather than reported as a smaller number.
+   *
+   * ADDITIVE + OPTIONAL ⇒ no schema bump, no migration — the `eqDiscoveredRoot` precedent above.
+   * It is also DISPOSABLE: every reader treats an absent or stale entry as "unknown", so the key
+   * can be deleted by hand at any time and the only consequence is one unmeasured launch.
+   */
+  logTailMarks?: Record<string, LogTailMark>
   /** last window position + size */
   windowBounds?: WindowBounds
   /** alerts extension: the user's alert definitions (Task #18) */
@@ -122,6 +151,21 @@ export interface StoreShape {
    * that predates the feature.
    */
   buffTrust?: BuffTrustPrefs
+  /**
+   * Which mobs get a respawn clock, and the numbers the user typed for them (JOS-194;
+   * shared/respawn.ts). ABSENT MEANS THE SHIPPED DEFAULT — no watches at all, because tracking is
+   * opt-in per mob and nothing clocks a mob you did not ask for — so it is another additive key
+   * on the carve-out above: no schema bump, no migration, and `normalizeRespawnPrefs` defaults
+   * every field, so an older build reading a store written here is unaffected and vice versa.
+   */
+  respawn?: RespawnPrefs
+  /**
+   * THE FOLD CHECKPOINT SWITCH (JOS-208, `src/main/storeFoldCache.ts`). ABSENT MEANS OFF — the
+   * rollout is off by default until the owner has run it by hand and the fleet's divergence count
+   * has stayed at zero — so it is another additive key on the same carve-out: no schema bump, no
+   * migration, and a build that predates the feature ignores it.
+   */
+  foldCache?: { enabled?: boolean }
   /**
    * The newest release whose notes this install has been SHOWN (JOS-73; shared/releaseNotes.ts).
    *

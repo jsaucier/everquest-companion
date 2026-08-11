@@ -42,7 +42,7 @@
 // deleted is a diagram you cannot place.
 
 import { useCallback, useEffect, useMemo, useState, useRef, type JSX } from 'react'
-import { Chip, Paper, Stack, Typography } from '@mui/material'
+import { Box, Chip, Paper, Stack, Typography } from '@mui/material'
 import MapIcon from '@mui/icons-material/Map'
 import type { CharacterDelta, CharacterSnap } from '@shared/types'
 import type { MapBounds, MapData, MapPackPrefs, ZoneShort } from '@shared/maps'
@@ -153,7 +153,37 @@ function useZoneSelection(raw: string | undefined): {
   return { zone: sel.zone, auto, mode: sel.mode, pick, followCurrent }
 }
 
-/** The head: what zone this is, where each layer came from, and the one honest "cannot". */
+/**
+ * COULD A MAP STILL BE DRAWN HERE? (JOS-205.)
+ *
+ * The chrome that describes a map — the toolbar's drawing controls, the credits line — used to
+ * materialise in the same frame the map did, which moved and shrank the pane the user was already
+ * looking at. Both now HOLD their space whenever an answer is still possible, so opening a zone,
+ * changing zone and coming back to the tab are all one layout rather than two.
+ *
+ * The only terminal "no" is a machine with no map packs at all: there is nothing to draw, ever,
+ * and reserving a row of ghosts over that machine's picker would claim otherwise. Everything else
+ * — the fetch in flight, the frame before the character module has said where you are, a zone the
+ * table cannot place — is a map that may yet arrive, so the space is kept. `!ready` is deliberately
+ * optimistic for the same reason: the listing has not answered, so it has not said no.
+ */
+function mapPossible(packs: { zones: readonly ZoneShort[]; ready: boolean }): boolean {
+  return !packs.ready || packs.zones.length > 0
+}
+
+/**
+ * The head: what zone this is, where each layer came from, and the one honest "cannot".
+ *
+ * IT IS ONE LINE TALL WHATEVER THE MAP TURNS OUT TO HOLD (JOS-205). Every chip on this row arrives
+ * WITH the map — the per-layer sources, the label count, the unparsed-line warning — so while the
+ * row wrapped it was a second way the pane below moved the moment a zone loaded: MEASURED at the
+ * app's minimum window width (900 px), the chips took the header from 97 px to 129 px and pushed
+ * the map down by exactly that. So the row is `nowrap` and the CHIPS are the shrinkable group
+ * (AGENTS.md's compact-bar rule): MUI already ellipsizes a chip's own label, each one carries a
+ * native `title` so the fact survives the ellipsis (JOS-143: a title, never a popper, on this
+ * surface), and the title text never shrinks because the zone's name is the one thing this row
+ * exists to say.
+ */
 function MapsHeader({
   title,
   zone,
@@ -165,31 +195,50 @@ function MapsHeader({
 }): JSX.Element {
   return (
     <Stack spacing={0.5} data-testid="maps-header" sx={{ flexShrink: 0 }}>
-      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-        <MapIcon sx={{ fontSize: 18, color: 'text.disabled' }} />
-        <Typography variant="h6" sx={{ mr: 0.5 }}>
+      <Stack direction="row" spacing={1} alignItems="center" flexWrap="nowrap" useFlexGap sx={{ minWidth: 0 }}>
+        <MapIcon sx={{ fontSize: 18, color: 'text.disabled', flexShrink: 0 }} />
+        <Typography variant="h6" noWrap sx={{ mr: 0.5, flexShrink: 0 }}>
           {title}
         </Typography>
         {zone != null && (
-          <Chip size="small" variant="outlined" data-testid="maps-zone-chip" label={zone} />
+          <Chip size="small" variant="outlined" data-testid="maps-zone-chip" label={zone} sx={{ flexShrink: 0 }} />
         )}
-        {/* Which pack each layer actually came from. Geometry and labels routinely come from
-            DIFFERENT packs (§6.3), and silently merging two while naming one would be exactly
-            the unlabelled inference the world-model laws forbid. */}
-        {data?.sources.map((s) => (
-          <Chip
-            key={`${String(s.layer)}#${s.packId}`}
-            size="small"
-            data-testid="maps-source"
-            label={`${LAYER_NAME[s.layer] ?? String(s.layer)}: ${s.packId}`}
-          />
-        ))}
-        {data != null && data.points.length > 0 && (
-          <Chip size="small" variant="outlined" label={`${String(data.points.length)} labels`} />
-        )}
-        {data != null && data.skipped > 0 && (
-          <Chip size="small" color="warning" variant="outlined" label={`${String(data.skipped)} unparsed lines`} />
-        )}
+        {/* THE SHRINKABLE GROUP, and the reason it clips rather than wraps: everything in it
+            arrives with the map, and a row that grows a line when a map loads moves the map.
+            `overflow:hidden` is the backstop under the chips' own ellipsis — without it a row
+            that cannot shrink far enough overflows the content area sideways, which is the one
+            thing the Maps tab must never do (maps.e2e.mts asserts exactly that). */}
+        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', minWidth: 0, overflow: 'hidden' }}>
+          {/* Which pack each layer actually came from. Geometry and labels routinely come from
+              DIFFERENT packs (§6.3), and silently merging two while naming one would be exactly
+              the unlabelled inference the world-model laws forbid. */}
+          {data?.sources.map((s) => (
+            <Chip
+              key={`${String(s.layer)}#${s.packId}`}
+              size="small"
+              data-testid="maps-source"
+              title={`${LAYER_NAME[s.layer] ?? String(s.layer)} drawn from the ${s.packId} pack`}
+              label={`${LAYER_NAME[s.layer] ?? String(s.layer)}: ${s.packId}`}
+            />
+          ))}
+          {data != null && data.points.length > 0 && (
+            <Chip
+              size="small"
+              variant="outlined"
+              title={`${String(data.points.length)} labels in this map`}
+              label={`${String(data.points.length)} labels`}
+            />
+          )}
+          {data != null && data.skipped > 0 && (
+            <Chip
+              size="small"
+              color="warning"
+              variant="outlined"
+              title={`${String(data.skipped)} lines of this map file could not be parsed`}
+              label={`${String(data.skipped)} unparsed lines`}
+            />
+          )}
+        </Box>
       </Stack>
       <Typography variant="caption" color="text.disabled">
         The log states the zone you entered and nothing else positional - so there is no automatic
@@ -260,13 +309,22 @@ function MapsEmpty({
  *
  * `noWrap` + tooltip because this is WORLD-SUPPLIED text of unbounded length (AGENTS.md: one
  * ellipsizing group for it, the tooltip keeps the facts) — the map owns the height, not its
- * footnote. A pack with no credit points renders nothing rather than an empty row — which is
- * why this takes the whole `MapData | null` and decides for itself: the caller stays one
+ * footnote. It takes the whole `MapData | null` and decides for itself: the caller stays one
  * expression, not another branch in a view that is already at the complexity ceiling.
+ *
+ * ITS LINE IS ONE LINE TALL WHEREVER A MAP COULD BE DRAWN (`reserve`, JOS-205). It used to
+ * render NOTHING until the credits existed, so it materialised in the same frame the map did and
+ * took 32 px (its line plus the stack's gap) off the bottom of the pane the user was already
+ * looking at — half of the measured bounce, the toolbar's wrap being the other half. `noWrap`
+ * already fixes the line count at one whatever the packs say, so the reservation is exact rather
+ * than a guess: same element, same box, `visibility:hidden` until there is something to credit.
+ * A pack with no credit points therefore also keeps the pane still, instead of trading one jump
+ * for another.
  */
-function MapCredits({ data }: { data: MapData | null }): JSX.Element | null {
-  if (data == null || data.credits.length === 0) return null
-  const line = data.credits.join(' · ')
+function MapCredits({ data, reserve }: { data: MapData | null; reserve: boolean }): JSX.Element | null {
+  const line = data == null ? '' : data.credits.join(' · ')
+  if (line === '' && !reserve) return null
+  const blank = line === ''
   return (
     <Tooltip title={line}>
       <Typography
@@ -274,9 +332,13 @@ function MapCredits({ data }: { data: MapData | null }): JSX.Element | null {
         color="text.secondary"
         noWrap
         data-testid="maps-credits"
-        sx={{ flexShrink: 0 }}
+        {...(blank ? { 'aria-hidden': true, 'data-reserved': 'true' } : {})}
+        sx={{ flexShrink: 0, ...(blank ? { visibility: 'hidden' } : {}) }}
       >
-        {line}
+        {/* A NO-BREAK space, spelled OUT rather than typed: an ordinary space collapses to
+            nothing and the reserved line would be zero pixels tall, which is the bug rather
+            than the fix - and an invisible byte in source is a repo rule of its own. */}
+        {blank ? '\u00a0' : line}
       </Typography>
     </Tooltip>
   )
@@ -307,6 +369,9 @@ export default function MapsView(): JSX.Element {
 
   const { packs, zones, ready } = useMapPacks()
   const { data, error, loading } = useMapData(zone, prefs)
+
+  // Does the chrome that describes a map hold its space? See `mapPossible` above (JOS-205).
+  const reserve = mapPossible({ zones, ready })
 
   // THE FLOORS. `zLevels` is the raw distinct set (measured: 10,694 values in the default set's
   // crystallos.txt), so it is clustered once per loaded map and stepped through by hand — there
@@ -346,6 +411,9 @@ export default function MapsView(): JSX.Element {
         mode={mode}
         onFollowCurrent={followCurrent}
         hasMap={data != null}
+        // A map could still be drawn here ⇒ the bar holds the row its drawing controls will need,
+        // so the pane below does not move when they arrive (JOS-205; `DrawnRow` measured it).
+        reserve={reserve}
         layers={layers}
         onLayers={setLayers}
         bands={bands}
@@ -383,7 +451,8 @@ export default function MapsView(): JSX.Element {
         locMarker={loc.marker}
         onJump={onJump}
       />
-      <MapCredits data={data} />
+      {/* Reserved for the same reason and on the same condition as the toolbar's row (JOS-205). */}
+      <MapCredits data={data} reserve={reserve} />
     </Stack>
   )
 }

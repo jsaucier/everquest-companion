@@ -163,3 +163,30 @@ export function defaultOverlayBounds(kind: OverlayKind, workArea: Bounds): Bound
     y: Math.max(workArea.y, Math.min(y, workArea.y + workArea.height - size.height))
   }
 }
+
+/**
+ * Per-kind OS WINDOW TITLE — never user-visible on a frameless overlay, but it is what shows up in
+ * a window list, a crash report, and the Task Manager row somebody screenshots into a bug report.
+ *
+ * It lives HERE, beside the size and the reserved slot, because it is the same kind of fact: a
+ * per-kind presentation constant with no Electron in it. It used to sit in windows.ts, whose
+ * subject is the runtime — BrowserWindow construction, the trust boundary, the hide policy — and
+ * which reached the 400-code-line ceiling the moment JOS-194 added a tenth row to this table. The
+ * repo's answer to that ceiling is a split, and a pure lookup table is the part of that file which
+ * was never about Electron in the first place.
+ *
+ * Partial + fallback, so a new kind can never break the build here: an untitled window gets
+ * Electron's default rather than a compile error in the middle of the window factory.
+ */
+export const OVERLAY_TITLE: Partial<Record<OverlayKind, string>> = {
+  fight: 'Fight Overlay',
+  overall: 'Zone Overlay',
+  events: 'Event Log Overlay',
+  'heal-fight': 'Fight Healing Overlay',
+  'heal-overall': 'Zone Healing Overlay',
+  toast: 'Celebration Overlay',
+  buffs: 'Buff Timer Overlay',
+  debuffs: 'Debuff Timer Overlay',
+  xp: 'XP Overlay',
+  respawn: 'Respawn Timer Overlay'
+}

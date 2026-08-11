@@ -125,12 +125,159 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '0.21.0',
+    date: '2026-08-11',
+    entries: [
+      {
+        kind: 'new',
+        text: 'A new Timers tab: respawn clocks built from your own kills. Watch a mob from Recently killed and the clock starts from the kill you already made - your measured gaps drive the estimate, and the wiki value is only a default under them.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The clocks are honest about what they know: a mob the log names reads UP instead of a stale countdown, a long-quiet estimate says due long ago instead of counting forever, and nothing is tracked until you ask. Hover a row for the mob\'s drops, your own gaps, and the wiki\'s word on it.'
+      },
+      {
+        kind: 'new',
+        text: 'Every clock is yours to overrule: an edit control shows the evidence - all your gaps, the wiki time, a link to the page - then takes entries like 44m 30s, marks the row as overridden, and reverts to the calculated value on request. A floating Respawn overlay carries the clocks over the game, scoped to the zone you are in.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Doing /who now corrects your level and classes everywhere, immediately - the app no longer believes an abandoned loadout\'s last level forever, and each surface says where its answer came from and how fresh it is.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A buff or debuff bar you dismiss stays dismissed without touching what the app has learned - and duration learning now waits long enough to catch buffs your AAs have extended well past the wiki\'s number.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The XP overlay shows AA per hour while you level, beside your level pace - not only at the cap.'
+      },
+      {
+        kind: 'changed',
+        text: 'Plane of Sky search answers instantly now, even with the whole list showing - and it finds bosses and islands too, so typing Gorgalosk or Island 7 narrows exactly like picking them would.'
+      },
+      {
+        kind: 'fixed',
+        text: 'The Maps tab holds its ground while it loads - nothing shifts when the map image arrives - and Castle Mistmoore\'s map opens when you zone in, now that the app understands the game\'s own name for it.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Rapidly toggling overlays from the title-bar menu no longer maximizes the window.'
+      }
+    ]
+  },
+  {
+    version: '0.20.0',
+    date: '2026-08-10',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'A bard\'s Solon\'s Bewitching Bravura is read as the charm it is, so the charm-break alert finally goes off when your charm lets go. Any charm can have an alert of its own now too - pick the spell by name and hear which one broke.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Alt-tab out of EverQuest and you stay where you went - the overlays no longer drag you back into the game as they hide.',
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: '"Hide overlays when you\'re not in EverQuest" now counts this app too, so the meters get out of the way while you browse the Companion - and the cursor ring rests here as well, since your pointer is not over the game. Clicking an overlay itself still keeps them up.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A press of the mouse\'s back button goes back a page inside the app - from an item description to the page that opened it. It only listens while the Companion is the focused window, so a back button bound in game stays the game\'s.',
+        fromReport: true
+      }
+    ]
+  },
+  {
     version: '0.19.0',
     date: '2026-08-10',
     entries: [
       {
         kind: 'fixed',
-        text: 'The full item card is back when you hover an item on a Plane of Sky quest. Point at a required item, an item in the expanded list, or a quest reward, and you get the item window itself - name, flags, stats, effects, in the game\'s own colours - with the island and every boss that drops it underneath, and whatever else that item is used for. The card had been taken away in 0.15.0 because it opened upward across the filter bar and swallowed the clicks aimed at Sort and the other pickers. It now opens downward, cannot be pushed back up over the toolbar, and lets a click pass straight through it - so the card is there and the dropdowns still take the first click you give them, card and all.'
+        text: 'With the cursor ring off, the app never touches your cursor - cursor tools like YoloMouse get the pointer to themselves, and toggling the ring takes effect immediately.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'All 780 item icons and boss portraits now ship inside the app - instant on a fresh install, there with the internet off. They come from two volunteer-run wikis, credited and linked on the new Thanks page in Preferences.'
+      },
+      {
+        kind: 'new',
+        text: 'A floating XP overlay: experience per hour, time to level (AA pace at max), and motes per hour by tier, with the Leveling tab\'s own time-slice picker and a checkbox per row. Turn it on from the Overlay menu.',
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: 'A creature page counts an item once across its +N upgrades - one line with the real total and your observed rate, like "1 per 14 kills" - and expands to each variant on click.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The Plane of Sky list keeps your place - starring, favoriting, or a drop landing no longer collapses it - and a remembered "Show all" button loads everything in one click.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'An overlay never goes missing with the monitor it was on: windows always land on a screen that exists, and your saved spot is restored when the monitor comes back.',
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: 'Finding your EverQuest folder no longer launches Windows command-line tools - the app asks Windows directly, about twenty times faster, and looks far less like malware to antivirus. The installer dropped its most suspicious-looking trick too.'
+      },
+      {
+        kind: 'fixed',
+        text: 'The "Add an alert" suggestion rows stop printing on top of themselves - crowded rows wrap to a second line instead.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A pet-only buff like Burnout now marks the pet as yours the moment it lands - so an upgraded pet shows in the meter without being ordered first.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Items in the Dragon\'s Hoard and other storage tabs now count - the app reads every table the inventory dump contains. Worn gear still comes from your equipment alone.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The /outputfile line gained a How: which windows to open (Bank, Dragon\'s Hoard, Tradeskill Depot) before typing it so the dump is complete - and a note that currency-tab items never dump at all.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Spirit of the Puma and 86 other spells whose wiki durations are written like "60s" or "6:00:00" get their timer bars - those spellings read correctly now. Sicken corrects from 1:00 to its real 1:24.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'All four Tuyen\'s chants get their own bars - a disease landing no longer draws as a resisted frost.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Dooming Darkness, Cascading Darkness and Sha\'s Lethargy turn up on the debuff window - three more landing lines the wiki words differently than the game, corrected.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The app no longer starts a hidden PowerShell to watch for EverQuest - it asks Windows directly. Antivirus stops objecting, and overlay auto-hide now works on machines where the old helper could never start.'
+      },
+      {
+        kind: 'fixed',
+        text: 'No fault may report itself more than a hundred times a session - after that it says so once and goes quiet. The install that reported one problem seven million times in a day is the reason.'
+      },
+      {
+        kind: 'fixed',
+        text: 'The full item card is back when hovering a Plane of Sky item - it opens downward and clicks pass straight through it, so the filter dropdowns keep every click.'
       }
     ]
   },
@@ -140,26 +287,26 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     entries: [
       {
         kind: 'new',
-        text: 'Search your alerts by anything you remember about them. The box above the list takes the alert name, the spell its trigger watches, the kind of thing it fires on, the sound pack, the sound, the phrase a spoken alert says, and the note - so the alert you only remember as "the one about confetti" or "the Rickman sting" is one word away. Near-misses and half-words count, every word you type has to land somewhere, and the matches stay in the order the list was already in rather than jumping about by how well they matched. Clear the box and the whole list comes back. Every alert still fires while a search is on - the box narrows what you are looking at, never what is running.'
+        text: 'Search your alerts by anything you remember - name, spell, trigger, sound, spoken phrase, or note. The box narrows what you see, never what fires.'
       },
       {
         kind: 'fixed',
-        text: 'Hovering an item on a Plane of Sky quest names the mob that drops it again, not just the island. Every boss the catalog knows for that item is listed with its level and zone, and the island rides the same line as the item name - so you can read who to kill and where to stand without expanding the quest. Since 0.15.0 that hover had answered with the island alone.',
+        text: 'Hovering a Plane of Sky item names the mobs that drop it again, with level and zone - since 0.15.0 the hover had answered with the island alone.',
         fromReport: true
       },
       {
         kind: 'fixed',
-        text: 'Dozens of spells the wiki describes with a placeholder name - Odium, Tangling Weeds, Elnerick\'s Entombment of Ice, the ward and blessing lines, the healing echoes - now open a timer bar when they land. The game says "a rock golem staggers under a dark curse" and the wiki page says "Target staggers under a dark curse", and that one word was the difference between a bar and nothing at all. Forty-four spells were checked against real logs and fixed together, so this is not one spell learning to work.',
+        text: 'Forty-four spells the wiki describes with a placeholder subject - Odium, Tangling Weeds, the ward and blessing lines, the healing echoes - now open timer bars when they land.',
         fromReport: true
       },
       {
         kind: 'fixed',
-        text: 'A mez that runs longer than the app expects finally teaches the timer instead of being thrown away. Your mez bar learns from the mezzes you cast, but a mez you break early is shorter than the real one - so a run of quick breaks taught the app a number below the truth, and every full-length mez after that had its bar taken away seconds before it actually wore off. The one cast that could have corrected the number was the one cast the wrong number destroyed. Now the app remembers a mez the bar has given up on for long enough to still learn from it when it does wear off, and it reads the game\'s own "has been awakened by" line to tell a mez somebody broke from a mez that ran its course - so a broken one can never push the full-length reading out of what it has learned. On the log this came from, a 136-second hold that taught nothing for weeks now sets the bar the first time it happens. The bar itself still disappears on exactly the same schedule as before.',
+        text: 'A mez that outlives its estimate still teaches the timer: late wear-offs are learned instead of thrown away, and broken mezzes can no longer drag the learned duration below the truth.',
         fromReport: true
       },
       {
         kind: 'fixed',
-        text: 'A boss pull starts when you pull the boss. A mez you cast on something else used to keep the previous skirmish open long after everything in it was dead, so the next fight opened as much as a minute early and its meter carried a scrap of the fight before it. A hold now lasts only as long as the mob it was cast on - it ends the moment that mob dies or leaves - and it is never claimed by your own charmed pet, which happens more than you would think when your pet and the things you are killing share a name. Mezzing one mob and taking your time with the other still holds the pull open exactly as before.'
+        text: 'A boss pull starts when you pull the boss - a mez hold ends when its mob dies or leaves, and is never claimed by your own charmed pet.'
       }
     ]
   },

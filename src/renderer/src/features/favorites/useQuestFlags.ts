@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react'
+import { useMemo, useSyncExternalStore } from 'react'
 
 // QUEST-LEVEL flags — favorite (star) and permanently ignored — as two small
 // localStorage-backed sets, siblings of the ITEM-level `useFavorites` store and
@@ -79,14 +79,24 @@ const favoriteStore = createQuestFlagStore(FAVORITES_KEY)
 const ignoredStore = createQuestFlagStore(IGNORED_KEY)
 const classFavoriteStore = createQuestFlagStore(CLASS_FAVORITES_KEY)
 
+/**
+ * The set MOVES ONLY WHEN A FLAG IS TOGGLED, so the object describing it moves only then either
+ * (JOS-206). `keys` was already documented as a stable identity; the wrapper around it was not,
+ * and a fresh `has` closure per render is the same defeat-the-memo hazard `useFavorites` states
+ * at length — anything that hands one of these down to a row would re-render every row on every
+ * keystroke. `store.toggle` is already a module-lifetime function.
+ */
 function useQuestFlagSet(store: QuestFlagStore): QuestFlagSet {
   const keys = useSyncExternalStore(store.subscribe, store.snapshot)
-  return {
-    keys,
-    has: (questKey: string) => keys.has(questKey.toLowerCase()),
-    toggle: store.toggle,
-    size: keys.size
-  }
+  return useMemo(
+    () => ({
+      keys,
+      has: (questKey: string) => keys.has(questKey.toLowerCase()),
+      toggle: store.toggle,
+      size: keys.size
+    }),
+    [keys, store]
+  )
 }
 
 /** Quests the user starred outright (pins them to the top of the list). */

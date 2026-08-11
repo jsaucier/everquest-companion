@@ -13,6 +13,20 @@
 // A LOADOUT WITH NO SPELLS IS NOT AN ERROR. BER, MNK and WAR have zero Template:Spellpage spells
 // (measured, wave O1): their spells list is empty at every level and says so in words, while the
 // skills list carries everything they actually gain.
+//
+// AND THE WAY OUT IS ON SCREEN WHETHER OR NOT THE LOADOUT IS KNOWN (JOS-192, trigger report
+// 01KZP6SDZJK6BPEWA4Z0MF5ANG). This panel pointed at the fix ONLY in its loadout-UNKNOWN state —
+// so a reporter looking at three classes they had stopped playing was shown the wrong answer
+// confidently and offered nothing. It now wears the same PROVENANCE chip the Profiles panel and
+// the character header use, and that chip's `inferred` tooltip names the two moves that correct
+// it. `inferred` is a claim about evidence, and a surface that never says so is asking to be
+// believed.
+//
+// THE POINTER IS A TOOLTIP AND NOT A LINE, AND THAT IS MEASURED RATHER THAN TASTE. This panel is
+// the LAST child of a `height: 100%` stack whose middle child is the scroller, so every pixel it
+// takes comes out of the charts. At the app's own minimum width one caption line here pushed the
+// two-column band far enough that the timeslice control was drawn under the panel above it —
+// `tests/e2e/leveling.e2e.mts` hit-tests exactly that and went red. The budget is zero.
 
 import { type JSX, useEffect, useRef, useState } from 'react'
 import { Box, IconButton, Paper, Stack, Typography, Chip } from '@mui/material'
@@ -20,6 +34,8 @@ import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'
 import ChevronRightIcon from '@mui/icons-material/ChevronRight'
 import { comboClassSet, unlocksAtLevel } from '@shared/levelUnlocks'
 import { Tooltip } from '../../lib/Tooltip'
+import { ProvenanceChip } from '../profiles/ClassComboChips'
+import { useComboSnap } from '../profiles/ClassComboData'
 import { UnlockList } from './UnlockList'
 import { useCurrentComboClasses, useLevelUnlocks } from './useLevelUnlocks'
 
@@ -120,6 +136,9 @@ export function NewAtLevelPanel({
 }: NewAtLevelPanelProps): JSX.Element {
   const data = useLevelUnlocks()
   const combo = useCurrentComboClasses()
+  // The same OPEN interval `useCurrentComboClasses` reduces to strings — kept whole here for the
+  // one thing the strings drop: where the loadout came from.
+  const current = useComboSnap().current
   // null = "follow the character" — so the panel keeps tracking dings until the user steps it.
   const [picked, setPicked] = useState<number | null>(null)
   const level = clampLevel(picked ?? currentLevel ?? LEVEL_MIN)
@@ -158,6 +177,7 @@ export function NewAtLevelPanel({
         )}
         <Box sx={{ flexGrow: 1 }} />
         <ComboChips classes={classes} resolved={resolved} ambiguous={combo.ambiguous} />
+        {known && current && <ProvenanceChip interval={current} />}
       </Stack>
 
       {known ? (
@@ -181,6 +201,7 @@ export function NewAtLevelPanel({
           Profile tab, and this fills in.
         </Typography>
       )}
+
     </Paper>
   )
 }

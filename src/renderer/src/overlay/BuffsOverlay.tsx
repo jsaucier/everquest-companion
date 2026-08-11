@@ -36,17 +36,20 @@
 // precisely the moment the log is silent. A 1 Hz local clock re-reads rows the renderer already
 // holds; it asks main for nothing.
 
-import { type JSX, useEffect, useMemo, useRef, useState } from 'react'
+import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { BuffsSnap, ModuleDelta } from '@shared/types'
 import {
   type BuffTimerRow,
   type BuffTimersSnap,
+  type TimerDismissals,
   type TimerGrouping,
   type TimerOverlayKind,
   buildTimerRows,
+  dismissTimerRows,
   orderTimerRows,
   rowsForSurface,
-  timerDrops
+  timerDrops,
+  withTimerDismissal
 } from '@shared/buffTimers'
 import { OverlayHeader } from './OverlayHeader'
 import { OverlayContent } from './overlayScale'
@@ -199,26 +202,28 @@ function useSecondsClock(): number {
  * sets and is unit-tested; this hook is only WHEN to ask. It watches the row set it is ALREADY
  * holding, so it can never announce a drop the model did not believe.
  *
- * `hydrations` is the JOS-172 guard, and it is why the rebuilt-world signal above is safe to add:
- * the count changes exactly when a row set arrived from a fresh SNAPSHOT rather than from a delta,
- * and rows that vanish across a re-fold of the whole log are not drops the player just suffered.
- * On a cold start with this window already open, the mid-fold hydrate and the post-fold one differ
- * by whatever wore off during the months in between — every one of which would otherwise flash.
+ * `epoch` is the JOS-172 guard, and it is why the rebuilt-world signal above is safe to add: it
+ * changes exactly when the row set changed for a reason that is NOT a removal the model believed.
+ * Two things do that. A fresh SNAPSHOT (rather than a delta) — on a cold start with this window
+ * already open, the mid-fold hydrate and the post-fold one differ by whatever wore off during the
+ * months in between, every one of which would otherwise flash. And, since JOS-203, a DISMISSAL —
+ * the user clearing a bar is not that buff dropping, and announcing "X dropped" at the instant they
+ * asked for the row to go away would be the window arguing with them.
  */
 function useDropFlash(
   rows: BuffTimerRow[],
   nowMs: number,
-  hydrations: number
+  epoch: number
 ): { id: string; name: string; at: number }[] {
   const prevRef = useRef<BuffTimerRow[] | null>(null)
-  const hydrationsRef = useRef(hydrations)
+  const epochRef = useRef(epoch)
   const [drops, setDrops] = useState<{ id: string; name: string; at: number }[]>([])
 
   useEffect(() => {
     const prev = prevRef.current
     prevRef.current = rows
-    const rebuilt = hydrationsRef.current !== hydrations
-    hydrationsRef.current = hydrations
+    const rebuilt = epochRef.current !== epoch
+    epochRef.current = epoch
     const gone = timerDrops(prev, rows, { rebuilt }).map((d) => ({ ...d, at: Date.now() }))
     if (gone.length === 0) return
     // KEYED BY ROW ID, and one line per buff: a re-cast that drops again while the first notice
@@ -227,12 +232,30 @@ function useDropFlash(
     // also run more than once for one transition (two modules, two deltas, StrictMode), and
     // deduping on the id makes that structurally harmless instead of merely unlikely.
     setDrops((d) => [...d.filter((x) => !gone.some((g) => g.id === x.id)), ...gone].slice(-3))
-  }, [rows, hydrations])
+  }, [rows, epoch])
 
   return drops.filter((d) => nowMs - d.at < DROP_FLASH_MS)
 }
 
 const DROP_FLASH_MS = 6_000
+
+/**
+ * THE BARS THIS WINDOW HAS BEEN TOLD TO STOP DRAWING (JOS-203).
+ *
+ * It is a `useState` and it stops here: nothing is sent to main, nothing is persisted, and the
+ * rule that reads it is a pure function over rows (shared/buffTimers.ts, where the owner's ruling
+ * is written). That is the whole of "the learner never notices" — there is no channel for it to
+ * notice through. The verdicts survive every delta and every re-hydrate because they are re-applied
+ * to whatever row set arrives; they do NOT survive closing the window, which is correct: a
+ * dismissal is a judgement about the bars in front of you, not a fact about the world.
+ */
+function useDismissals(): { dismissals: TimerDismissals; dismiss: (row: BuffTimerRow) => void } {
+  const [dismissals, setDismissals] = useState<TimerDismissals>(() => new Map())
+  const dismiss = useCallback((row: BuffTimerRow) => {
+    setDismissals((prev) => withTimerDismissal(prev, row))
+  }, [])
+  return { dismissals, dismiss }
+}
 
 /** Footer — interactive mode only: the bg-alpha slider + text size, matching every other kind. */
 function BuffsFooter({
@@ -365,14 +388,18 @@ export default function BuffsOverlay({ kind }: { kind: TimerOverlayKind }): JSX.
 
   // ABSENT means "this window's default", which is not the same for both — see SURFACE.
   const grouping = config?.grouping ?? surface.grouping
+  const { dismissals, dismiss } = useDismissals()
+  // THE DISMISSALS ARE THE LAST STEP, over the ordered rows of THIS surface: everything downstream
+  // — the groups, the header's count, the drop flash — is then talking about what is on screen.
   const rows = useMemo(
-    () => orderTimerRows(rowsForSurface(buildTimerRows(buffs, timers), kind), grouping),
-    [buffs, timers, kind, grouping]
+    () => dismissTimerRows(orderTimerRows(rowsForSurface(buildTimerRows(buffs, timers), kind), grouping), dismissals),
+    [buffs, timers, kind, grouping, dismissals]
   )
   const groups = useMemo(() => groupRows(rows, surface.selfLabel, grouping), [rows, surface.selfLabel, grouping])
   // ONE COUNTER OVER BOTH MODULES: either one re-hydrating is a rebuilt row set, and the two
-  // snapshots land as two separate promises — so a sum, which changes on each of them.
-  const drops = useDropFlash(rows, nowMs, buffsHydrations + timersHydrations)
+  // snapshots land as two separate promises — so a sum, which changes on each of them. The
+  // dismissal count joins it for the same reason (JOS-203): a row the user cleared did not drop.
+  const drops = useDropFlash(rows, nowMs, buffsHydrations + timersHydrations + dismissals.size)
 
   return (
     <div
@@ -416,7 +443,16 @@ export default function BuffsOverlay({ kind }: { kind: TimerOverlayKind }): JSX.
           <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', padding: '8px 2px' }}>{surface.empty}</div>
         ) : (
           groups.map((g) => (
-            <BuffTimerGroup key={g.key} label={g.label} inferred={g.inferred} rows={g.rows} nowMs={nowMs} />
+            <BuffTimerGroup
+              key={g.key}
+              label={g.label}
+              inferred={g.inferred}
+              rows={g.rows}
+              nowMs={nowMs}
+              // ONLY WHILE UNLOCKED (JOS-203, guard 1). A locked window is click-through, so a
+              // control on it could never be pressed — and drawing one would say otherwise.
+              onDismiss={locked ? undefined : dismiss}
+            />
           ))
         )}
 

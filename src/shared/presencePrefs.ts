@@ -35,8 +35,8 @@ export interface ScreenRect {
  */
 export interface PresenceState {
   /**
-   * Has the watcher reported ANYTHING yet? False for the first second or two of a launch (the
-   * child pays a one-time compile before its first line) and again if it ever dies.
+   * Has the watcher reported ANYTHING yet? False for the first moments of a launch (the watcher
+   * thread has three system libraries to open before its first line) and again if it ever dies.
    *
    * This exists so the app never acts on a GUESS. `eqRunning:false` before the first report
    * means "we have not looked", not "the game is closed" — and auto-hide would otherwise blink
@@ -46,7 +46,13 @@ export interface PresenceState {
   observed: boolean
   /** Is an EverQuest process running at all? (5 s cadence — a coarse, cheap fact.) */
   eqRunning: boolean
-  /** Is the EQ window the FOREGROUND window? (App-owned windows count as EQ-side — presence.ts.) */
+  /**
+   * Is the EQ window the FOREGROUND window?
+   *
+   * This app's ACCESSORY windows count as EQ-side (an overlay you are dragging, the cursor ring);
+   * the COMPANION window does not, so bringing the app to the front reads as "not in EverQuest"
+   * (JOS-199 — the whole matrix is `foregroundSide` in main/presenceProtocol.ts).
+   */
   eqFocused: boolean
   /** Last known EQ window rectangle, or null if we have never seen it foreground. */
   eqBounds: ScreenRect | null
@@ -241,7 +247,7 @@ export function normalizeOverlayAutoHide(value: unknown): OverlayAutoHidePrefs {
 }
 
 /**
- * Does anything need the presence watcher running? The watcher is a child process; it starts
+ * Does anything need the presence watcher running? The watcher is a worker thread; it starts
  * ONLY when a feature is switched on and stops the moment the last one goes off.
  *
  * Pure + exported because it is the exact predicate the gating tests pin: a user with every
@@ -249,4 +255,28 @@ export function normalizeOverlayAutoHide(value: unknown): OverlayAutoHidePrefs {
  */
 export function presenceNeeded(ring: CursorRingPrefs, autoHide: OverlayAutoHidePrefs): boolean {
   return ring.enabled || autoHide.hideWhenNotRunning || autoHide.hideWhenUnfocused
+}
+
+/**
+ * Does anything need the CURSOR looked at? (JOS-193 — owner ruling 2026-08-10.)
+ *
+ * `presenceNeeded` is about the watcher's existence; this is about ONE of the four facts it can
+ * report. The distinction exists because they are not the same question and the app was answering
+ * as though they were: overlay auto-hide ships ON, so the DEFAULT install starts the watcher — and
+ * the watcher then read `GetCursorInfo` ~69 times a second for `cursorVisible`, whose only
+ * consumer in the entire app is `cursorRingActive`, for a ring that is OFF by default. A user who
+ * never asked for a ring got a cursor polled 250,000 times an hour and nothing that read the
+ * answer.
+ *
+ * The rule the owner asked for is the plain one: WITH THE RING OFF, THE APP DOES NOT TOUCH THE
+ * CURSOR. Not the watcher's `GetCursorInfo`, not main's `screen.getCursorScreenPoint()`, and not a
+ * ring window that exists to be sampled into — so a cursor tool like Yolomouse is working against
+ * an app that is not in the room. The reason it is a named predicate rather than an inlined
+ * `ring.enabled` is that it is a CLAIM about the rest of the tree — that `cursorVisible` has
+ * exactly one consumer — and a claim wants somewhere to be written down and tested.
+ *
+ * Pure + exported for `tests/presence.test.mts`, like `presenceNeeded` beside it.
+ */
+export function cursorWatchNeeded(ring: CursorRingPrefs): boolean {
+  return ring.enabled
 }

@@ -57,6 +57,8 @@
 
 import type { EqModule } from './types'
 import { idKey } from '../log/parser'
+import { S, validate, type FoldSchema } from '../foldCache/schema'
+import type { FoldCheckpointable } from '../foldCache/serialize'
 import { KILL_EXP_JOIN_MS } from '../../shared/kills'
 import type { LogEvent } from '../../shared/logEvents'
 import type {
@@ -140,7 +142,88 @@ function capColumns(cap: number, cols: unknown[][]): number {
   return drop
 }
 
-export class ProgressionModule implements EqModule<ProgressionSnap, ProgressionDelta> {
+const NUMS: FoldSchema = S.arr(S.num)
+
+/**
+ * THE CHECKPOINT DECLARATION (JOS-208 phase 2) — the widest one in the tree, because this module
+ * IS its snapshot plus four small pieces of fold bookkeeping.
+ *
+ * WHAT IS HERE BESIDE THE COLUMNS, and why each one has to be:
+ *   * `droppedBy` — the per-column cumulative drop counts. `recomputeWindow` reads them to decide
+ *     the retention FLOOR, so a restore without them would report `windowStart: 0` — "nothing has
+ *     aged out" — for a fold that had dropped forty thousand samples.
+ *   * `claimed` / `charmed` / `everCharmed` — the pet-binding sets. They decide whether the next
+ *     death line is a CREDITED kill or a witnessed one, which is the difference between a rate
+ *     and a spectator count. Stored as ARRAYS (a Set is not in the grammar) and rebuilt on the
+ *     way in; their order is insertion order and nothing reads it.
+ *   * `pendingExp` — the experience line the very next kill line may claim. Same argument as the
+ *     kills module's `pendingExpTs`, one field wider because this join carries the size too.
+ *
+ * The DELTA (`this.p`) is absent, like every module's pending state.
+ */
+const PROGRESSION_FOLD_SCHEMA: FoldSchema = S.obj({
+  s: S.obj({
+    expTs: NUMS,
+    expPct: NUMS,
+    expFlag: NUMS,
+    killTs: NUMS,
+    killZone: NUMS,
+    killCredit: NUMS,
+    witnessTs: NUMS,
+    recentKills: S.arr(
+      S.obj({
+        ts: S.num,
+        name: S.str,
+        credit: S.num,
+        zone: S.str,
+        expFlag: S.opt(S.num),
+        expPct: S.opt(S.num)
+      })
+    ),
+    lootTs: NUMS,
+    zoneStart: NUMS,
+    zoneEnd: NUMS,
+    zoneName: S.arr(S.str),
+    offlineStart: NUMS,
+    offlineEnd: NUMS,
+    offlineCamped: NUMS,
+    levelTs: NUMS,
+    levelValue: NUMS,
+    aaGainTs: NUMS,
+    aaGainAmount: NUMS,
+    lastTs: S.num,
+    windowStart: S.num,
+    dropped: S.num
+  }),
+  droppedBy: S.obj({
+    exp: S.num,
+    kill: S.num,
+    witness: S.num,
+    loot: S.num,
+    zone: S.num,
+    offline: S.num
+  }),
+  claimed: S.arr(S.str),
+  charmed: S.arr(S.str),
+  everCharmed: S.arr(S.str),
+  pendingExp: S.opt(S.obj({ ts: S.num, pct: S.opt(S.num), party: S.bool })),
+  seq: S.num
+})
+
+/** The progression module's complete event-derived state. */
+export interface ProgressionFoldState {
+  s: ProgressionSnap
+  droppedBy: ProgressionDropFront
+  claimed: string[]
+  charmed: string[]
+  everCharmed: string[]
+  pendingExp?: PendingExp
+  seq: number
+}
+
+export class ProgressionModule
+  implements EqModule<ProgressionSnap, ProgressionDelta>, FoldCheckpointable<ProgressionFoldState>
+{
   readonly id = 'progression'
   private s: ProgressionSnap = blankSnap()
   private p: ProgressionDelta = blankDelta()
@@ -436,6 +519,53 @@ export class ProgressionModule implements EqModule<ProgressionSnap, ProgressionD
     p.dropped = this.s.dropped
     this.p = blankDelta()
     return { seq: this.seq, delta: p }
+  }
+
+  // ---- the checkpoint seam (JOS-208) ---------------------------------------------------------
+
+  readonly foldSchema = PROGRESSION_FOLD_SCHEMA
+
+  /**
+   * Every column is copied, because they are the LIVE arrays `push1` appends to and `capColumns`
+   * splices the front off — a blob that aliased them would keep changing after it was taken.
+   */
+  serializeFold(): ProgressionFoldState {
+    const s = this.s
+    const out: ProgressionSnap = {
+      ...s,
+      expTs: [...s.expTs], expPct: [...s.expPct], expFlag: [...s.expFlag],
+      killTs: [...s.killTs], killZone: [...s.killZone], killCredit: [...s.killCredit],
+      witnessTs: [...s.witnessTs],
+      recentKills: s.recentKills.map((k) => ({ ...k })),
+      lootTs: [...s.lootTs],
+      zoneStart: [...s.zoneStart], zoneEnd: [...s.zoneEnd], zoneName: [...s.zoneName],
+      offlineStart: [...s.offlineStart], offlineEnd: [...s.offlineEnd], offlineCamped: [...s.offlineCamped],
+      levelTs: [...s.levelTs], levelValue: [...s.levelValue],
+      aaGainTs: [...s.aaGainTs], aaGainAmount: [...s.aaGainAmount]
+    }
+    return {
+      s: out,
+      droppedBy: { ...this.droppedBy },
+      claimed: [...this.claimed],
+      charmed: [...this.charmed],
+      everCharmed: [...this.everCharmed],
+      ...(this.pendingExp === null ? {} : { pendingExp: { ...this.pendingExp } }),
+      seq: this.seq
+    }
+  }
+
+  deserializeFold(state: unknown): boolean {
+    if (!validate(PROGRESSION_FOLD_SCHEMA, state).ok) return false
+    const st = state as ProgressionFoldState
+    this.s = st.s
+    this.p = blankDelta()
+    this.droppedBy = st.droppedBy
+    this.claimed = new Set(st.claimed)
+    this.charmed = new Set(st.charmed)
+    this.everCharmed = new Set(st.everCharmed)
+    this.pendingExp = st.pendingExp ?? null
+    this.seq = st.seq
+    return true
   }
 }
 

@@ -106,12 +106,17 @@ export function noteRendererCrash(n = 1): void {
 
 /**
  * The game-window presence watcher restarted (`scheduleRestart`, src/main/presence.ts) — the one
- * funnel all three restart causes reach (the stale-child watchdog, the child-gone handler, and a
- * failed spawn).
+ * funnel all three restart causes reach (the staleness watchdog, the watcher-gone handler, and a
+ * start that threw).
  *
  * It is a SEPARATE counter from `restartFailures` in that module on purpose: that one is a
- * backoff index which resets to 0 on a healthy child, so it answers "how bad is it right now"
+ * backoff index which resets to 0 on a healthy watcher, so it answers "how bad is it right now"
  * and can never answer "how many times did this happen this session".
+ *
+ * IT IS ALSO THE FIELD THAT SHOULD FALL OFF A CLIFF (JOS-182). Every restart it counted used to
+ * be a `powershell.exe` spawn, and on the machines where that binary is missing or blocked it
+ * counted one every thirty seconds for the life of the session. The watcher is a worker thread
+ * now; a fleet where this number stays high is a fleet where something ELSE is wrong.
  */
 export function notePresenceRestart(n = 1): void {
   bump('presenceRestarts', n)

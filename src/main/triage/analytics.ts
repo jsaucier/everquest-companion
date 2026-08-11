@@ -27,11 +27,13 @@ import {
   percentileBucket,
   replayMsBucketLabel,
   sessionBucketLabel,
+  stutterMsBucketLabel,
   USAGE_METRICS
 } from '../../shared/telemetryRollup'
 import {
   bucketRange,
   LOG_SIZE_BYTES_EDGES,
+  NEW_BYTES_EDGES,
   TELEMETRY_FUNNEL_STEPS
 } from '../../shared/telemetry'
 import type {
@@ -359,7 +361,48 @@ function startupRow(
     // like every other rate here — so the division by 100 belongs at this boundary, once.
     dutyAchieved: dutyMean === null ? null : dutyMean / 100,
     meanEventsReplayed: ratio(events, launches),
-    blocksOver50: dimsOf(usage, USAGE_METRICS.startupBlocksOver50).get(version) ?? 0
+    blocksOver50: dimsOf(usage, USAGE_METRICS.startupBlocksOver50).get(version) ?? 0,
+    ...startupDiscriminators(version, usage)
+  }
+}
+
+/**
+ * THE TWO DISCRIMINATORS, per build (JOS-57 scope addition) — split out so `startupRow` stays
+ * inside the repo's factoring ceilings, and because they share one property the six above do not.
+ *
+ * THEY HAVE THEIR OWN DENOMINATOR. `launches` counts every launch that reported a replay; a
+ * stutter reading needs a fold long enough to hold a distribution and a first-MB reading needs a
+ * log at least that big, so both populations are SUBSETS. Dividing the late-tick sum by `launches`
+ * would silently deflate it toward zero on exactly the builds where short launches are common —
+ * so the divisor is the histogram's own total, which counts one row per launch that measured one.
+ */
+function startupDiscriminators(
+  version: string,
+  usage: readonly UsageRow[]
+): Pick<
+  TriageStartupRow,
+  | 'p50StutterLabel'
+  | 'p95StutterLabel'
+  | 'stutterLaunches'
+  | 'stutterLatePct'
+  | 'p50FirstMbLabel'
+  | 'p95FirstMbLabel'
+> {
+  const p50 = startupHistogram(dimsOf(usage, USAGE_METRICS.startupStutterP50), version)
+  const p95 = startupHistogram(dimsOf(usage, USAGE_METRICS.startupStutterP95), version)
+  const firstMb = startupHistogram(dimsOf(usage, USAGE_METRICS.startupFirstMbMs), version)
+  const measured = p95.reduce((sum, n) => sum + n, 0)
+  const late = ratio(dimsOf(usage, USAGE_METRICS.startupStutterLatePct).get(version) ?? 0, measured)
+  return {
+    p50StutterLabel: bucketLabelAt(p50, 50, stutterMsBucketLabel),
+    p95StutterLabel: bucketLabelAt(p95, 95, stutterMsBucketLabel),
+    stutterLaunches: measured,
+    // Whole percents on the wire, a fraction in this shape — the same boundary `dutyAchieved` keeps.
+    stutterLatePct: late === null ? null : late / 100,
+    // The first-MB histogram borrows the block ladder (see USAGE_METRICS.startupFirstMbMs), so it
+    // borrows its label function too rather than growing a second copy of the same ranges.
+    p50FirstMbLabel: bucketLabelAt(firstMb, 50, blockMsBucketLabel),
+    p95FirstMbLabel: bucketLabelAt(firstMb, 95, blockMsBucketLabel)
   }
 }
 
@@ -373,15 +416,32 @@ function buildStartup(usage: readonly UsageRow[]): TriageAnalyticsStartup {
     logSizes: mixRows(dimsOf(usage, USAGE_METRICS.startupLogSize)).map((r) => ({
       id: logSizeBucketLabel(Number(r.id)),
       n: r.n
+    })),
+    newBytes: mixRows(dimsOf(usage, USAGE_METRICS.startupNewBytes)).map((r) => ({
+      id: byteBucketLabel(NEW_BYTES_EDGES, Number(r.id)),
+      n: r.n
     }))
   }
 }
 
 /** A `logSizeBucket` index as the range it means — the same edges `setupLogSize` uses. */
 function logSizeBucketLabel(i: number): string {
-  const { lo, hi } = bucketRange(LOG_SIZE_BYTES_EDGES, Number.isInteger(i) ? i : 0)
-  const mb = (bytes: number): string => `${String(Math.round(bytes / 1_048_576))} MB`
-  return hi === null ? `≥ ${mb(lo)}` : i === 0 ? `< ${mb(hi)}` : `${mb(lo)}-${mb(hi)}`
+  return byteBucketLabel(LOG_SIZE_BYTES_EDGES, i)
+}
+
+/**
+ * A byte-bucket index as the range it means. ONE renderer for both byte ladders (JOS-57's scope
+ * addition brought the second), so a size and a delta can never be printed in two different
+ * vocabularies — and it prints KB below a megabyte, because the new-bytes ladder starts at 64 KB
+ * and `0 MB-0 MB` says nothing at all.
+ */
+function byteBucketLabel(edges: readonly number[], i: number): string {
+  const { lo, hi } = bucketRange(edges, Number.isInteger(i) ? i : 0)
+  const size = (bytes: number): string =>
+    bytes >= 1_048_576
+      ? `${String(Math.round(bytes / 1_048_576))} MB`
+      : `${String(Math.round(bytes / 1024))} KB`
+  return hi === null ? `≥ ${size(lo)}` : i === 0 ? `< ${size(hi)}` : `${size(lo)}-${size(hi)}`
 }
 
 // ---- versions ------------------------------------------------------------------------
