@@ -75,7 +75,9 @@ function EventConditionFields({ draft, onChange }: ConditionFieldProps): JSX.Ele
       </Stack>
       <Typography variant="caption" color="text.secondary">
         Leave the field blank to fire on every {draft.kind} event. A value in /slashes/ is a
-        case-insensitive regex. For <code>buffExpired</code>, use <code>target</code>=
+        case-insensitive regex. A plain <code>spell</code> name matches EVERY RANK of that spell
+        (&ldquo;Mesmerization&rdquo; hears Mesmerization III too) - write a /regex/ if you mean one
+        rank only. For <code>buffExpired</code>, use <code>target</code>=
         <code>self</code> for your own buffs, or omit <code>target</code> to match a buff
         wearing off you OR your pet/target.
       </Typography>
