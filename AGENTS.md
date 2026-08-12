@@ -101,8 +101,9 @@ archive. Layout: `src/main` (Node), `src/preload`, `src/renderer`,
   - `sky-filters.e2e` · expanded-quest step vs live-log viewKey remount ·
     5 sightings (2026-08-10/11 x3, 2026-08-12 six-spec sweep during JOS-253,
     2026-08-12 six-spec sky sweep during JOS-268 — green standalone
-    immediately after, 106s; multi-spec-sweep only, green standalone every
-    time) · documented in-file by the JOS-206 worker;
+    immediately after and green in the repeat of the same six-spec sweep;
+    multi-spec-sweep only, green standalone every time) · documented in-file
+    by the JOS-206 worker;
     needs the same order-hardening the spec's own comment describes; fix
     chip filed 2026-08-12 (Harden sky-filters expanded-quest step).
   - `combat-dashboard.e2e` · narrow-window resize never lands, settleStable
