@@ -541,6 +541,22 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   sentence is five spells, the alert is an alert on the FAMILY — which is
   also what keeps it alive across the level-up that replaces the spell. Full
   story: docs/agents-archive.md.
+  **A LITERAL `where.spell` MATCHER IS RANK-BLIND — ALL RANKS, FULL STOP**
+  (JOS-259, owner ruling 2026-08-12; domain law, verbatim: once you upgrade a
+  spell it never downgrades, even on a loadout swap). Only SOME of a spell's
+  lines carry the roman numeral — `castBegin`/`resist` keep it, the wear-off
+  family prints the bare name — so whole-string equality let one def satisfy
+  half its own spell's lines: a wizard's resisted alert for Elemental
+  Maelstrom went silent on the day they unlocked rank II while their fade
+  alert kept working. A literal spec now compiles with `spellLineKey(spec)`
+  beside it and `accepts` (main/modules/alerts.ts) compares the folded keys
+  when the exact compare misses — a pure WIDENING, so a def pinned to a rank
+  still fires on it. Untouched, on purpose: `/regex/` specs (user intent, not
+  a spelling), every non-`spell` key, and `damage.skill` (a spell name for
+  dtype spell/dot and a melee verb otherwise — an owner call of its own). NO
+  upgrade-offer compensation: `detectRankUpgrades` still only sees suffixed
+  defs, and that is now a convenience rather than the thing between a user
+  and a sound. Pinned in tests/rankBlindSpellAlerts.test.mts.
   **CAPTURE GROUPS SPEAK THE LOG, AND THE THREAT MODEL IS IN THE CODE** (JOS-103,
   `src/shared/alertCaptures.ts` — read its header before touching any of
   this). Alert defs are SHAREABLE, so a capture is a channel with a third
