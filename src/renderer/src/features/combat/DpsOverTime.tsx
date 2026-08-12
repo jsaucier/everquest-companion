@@ -304,10 +304,11 @@ function ChartLegend({
 }
 
 /**
- * One legend entry, as a button. HIDDEN reads two ways at once so it survives the distance this
- * chart is read from (the report was a 75-inch TV across a room): the swatch goes HOLLOW - an
- * outline where a solid bar was - and the whole entry dims. Colour alone would not carry, and a
- * dim-only entry reads as a rendering accident rather than a state.
+ * One legend entry, as a button. HIDDEN says so THREE ways, because the report this came from was
+ * a chart read across a room on a 75-inch TV and one subtle cue at that distance is no cue: the
+ * whole entry dims, the swatch goes hollow (an outline where a solid bar was), and the label is
+ * struck through — the same treatment every charting library's hidden series wears, so it needs
+ * no teaching. A dim-only entry reads as a rendering accident rather than as a state.
  */
 function Legend({
   id,
@@ -325,16 +326,18 @@ function Legend({
   onToggle: () => void
 }): React.JSX.Element {
   return (
-    // One clause naming the action, which is what a tooltip is for here: the click target looks
-    // like a caption, and nothing else on the strip says it can be pressed.
-    <Tooltip title={hidden ? `Show ${label}` : `Hide ${label}`}>
+    // One clause naming the ACTION, which is what a tooltip is for here: the click target looks
+    // like a caption, and nothing else on the strip says it can be pressed. The subject is the
+    // entry the tooltip is anchored to, and its label is already the button's accessible name —
+    // repeating it here would just be the caption twice.
+    <Tooltip title={hidden ? 'Show this line' : 'Hide this line'}>
       <ButtonBase
         onClick={onToggle}
         disableRipple
         aria-pressed={!hidden}
         data-testid={`chart-legend-${id}`}
         data-hidden={hidden ? '1' : '0'}
-        sx={{ borderRadius: 1, px: 0.25, opacity: hidden ? 0.5 : 1 }}
+        sx={{ borderRadius: 1, px: 0.25, opacity: hidden ? 0.55 : 1 }}
       >
         <Stack direction="row" spacing={0.5} alignItems="center">
           <Box
@@ -347,7 +350,11 @@ function Legend({
               boxSizing: 'border-box'
             }}
           />
-          <Typography variant="caption" color={hidden ? 'text.disabled' : 'text.secondary'}>
+          <Typography
+            variant="caption"
+            color={hidden ? 'text.disabled' : 'text.secondary'}
+            sx={{ textDecoration: hidden ? 'line-through' : undefined }}
+          >
             {label}
           </Typography>
         </Stack>
