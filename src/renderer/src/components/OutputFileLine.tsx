@@ -44,8 +44,21 @@
 // game rewrote this and we are still showing you the old one". It is OPTIONAL: a surface with no
 // load instant to offer renders precisely what it rendered before.
 
+// AND THE SIXTH (JOS-268): IT CAN BE SAID QUIETLY. The owner reviewed the JOS-253 surface on the
+// Sky tab and the ruling was that the line is too LOUD there — an outlined, full-width card
+// carrying a bold command, a clause and a button, sitting above the counts it annotates. That is
+// the right weight on a surface where the dump IS the subject (the Exaltations tab teaches the
+// command; the planner's card is about the export), and the wrong weight under a dropdown where
+// the dump is one of three ways to count.
+//
+// So `quiet` is a CHROME switch and nothing else: same words, same two instants, same stale rule,
+// same steps — caption-sized, in the disabled grey the stamps already use, with no card around it.
+// The only thing it takes off the row is the why-clause, which becomes the command's hover title
+// (the JOS-106 idiom: the long form lives in the hover, never in a caption). One component still
+// owns what the line SAYS; the caller owns where it sits.
+
 import { type JSX, useEffect, useState } from 'react'
-import { Box, Button, Collapse, Paper, Stack, Typography } from '@mui/material'
+import { Box, Button, Collapse, Paper, Stack, Typography, type SxProps, type Theme } from '@mui/material'
 import { formatDateTime } from '../lib/formatDate'
 import {
   outputAgeLabel,
@@ -98,6 +111,85 @@ function Stamp({
   )
 }
 
+/**
+ * THE TWO WEIGHTS THIS LINE COMES IN, as data rather than as branches in the render (JOS-268).
+ *
+ * Everything that differs between the loud line and the quiet one is a style, so it lives here and
+ * the component below picks ONE object — which is what keeps the tree a single rendering that
+ * cannot drift into two, and keeps the render inside the measured complexity ceiling.
+ */
+interface LineChrome {
+  /** the box the row sits in: a card, or nothing at all */
+  root: SxProps<Theme>
+  /** the command's own size and colour — the loudest thing on the loud line */
+  commandVariant: 'body2' | 'caption'
+  command: SxProps<Theme>
+  /** the steps toggle: a text button either way, sized to the row it is on */
+  toggle: SxProps<Theme>
+  /** the steps themselves. In flow under a card; a floating panel when the row is an overlay. */
+  panel: SxProps<Theme>
+  /** is the why-clause a column on the row, or the command's hover title? */
+  whyOnRow: boolean
+}
+
+const FULL: LineChrome = {
+  root: { px: 1.25, py: 0.75, mb: 1 },
+  commandVariant: 'body2',
+  command: { fontFamily: 'monospace', fontWeight: 700, flexShrink: 0 },
+  toggle: { flexShrink: 0, minWidth: 0, px: 0.75, py: 0 },
+  panel: { m: 0, mt: 0.75, pl: 2.5 },
+  whyOnRow: true
+}
+
+/**
+ * The understated one. No card (no border, no paper, no bottom margin — it sits ON whatever
+ * background the caller gives it), one text size for the whole row, and the same disabled grey the
+ * stamps are already in, so the freshness is the only thing that can go coloured. The line-height
+ * override is what lets the row live in a layout gap: MUI's caption is 1.66, which is 20px of row
+ * for 12px of text.
+ *
+ * The steps PANEL is the one thing that gets MORE chrome when the line gets less: a quiet line is
+ * an overlay, so its steps open over content and need a surface of their own to be readable.
+ */
+const QUIET: LineChrome = {
+  root: {
+    p: 0,
+    mb: 0,
+    border: 0,
+    borderRadius: 0,
+    bgcolor: 'transparent',
+    '& .MuiTypography-root': { lineHeight: 1.2 }
+  },
+  commandVariant: 'caption',
+  command: { fontFamily: 'monospace', fontWeight: 500, color: 'text.disabled', flexShrink: 0 },
+  toggle: {
+    flexShrink: 0,
+    minWidth: 0,
+    minHeight: 0,
+    px: 0.5,
+    py: 0,
+    fontSize: '0.75rem',
+    lineHeight: 1.2,
+    // Sentence case, in the same grey as its neighbours: the affordance stays available and stops
+    // shouting. A capitalised HOW beside two coarse timestamps reads as the row's headline.
+    textTransform: 'none',
+    color: 'text.disabled'
+  },
+  panel: {
+    m: 0,
+    mt: 0.5,
+    pl: 2.5,
+    pr: 1,
+    py: 0.5,
+    bgcolor: 'background.paper',
+    border: 1,
+    borderColor: 'divider',
+    borderRadius: 1,
+    boxShadow: 2
+  },
+  whyOnRow: false
+}
+
 export interface OutputFileLineProps {
   /** the command as the player must type it, verbatim — e.g. `/outputfile inventory` */
   command: string
@@ -125,6 +217,12 @@ export interface OutputFileLineProps {
    *   `undefined`— this surface does not load the file (the default). The slot is not rendered.
    */
   loadedAt?: number | null
+  /**
+   * Draw it UNDERSTATED (JOS-268): no card, caption-sized, disabled grey, why-clause on the hover.
+   * The words, the two instants and the stale rule are untouched — this is chrome. A surface that
+   * is ABOUT the dump leaves it off; a surface where the dump is a detail turns it on.
+   */
+  quiet?: boolean
   testId?: string
 }
 
@@ -134,6 +232,7 @@ export default function OutputFileLine({
   updatedAt,
   steps = [],
   loadedAt,
+  quiet = false,
   testId
 }: OutputFileLineProps): JSX.Element {
   const [now, setNow] = useState(() => Date.now())
@@ -154,19 +253,26 @@ export default function OutputFileLine({
   // check on purpose (see the prop's doc).
   const read = loadedAt ?? undefined
   const stale = outputIsStale(at, read)
+  const chrome = quiet ? QUIET : FULL
   return (
-    <Paper variant="outlined" data-testid={testId} sx={{ px: 1.25, py: 0.75, mb: 1 }}>
+    <Paper variant="outlined" data-testid={testId} sx={chrome.root}>
       <Stack direction="row" spacing={1} alignItems="baseline" sx={{ flexWrap: 'nowrap', minWidth: 0 }}>
         <Typography
-          variant="body2"
-          sx={{ fontFamily: 'monospace', fontWeight: 700, flexShrink: 0 }}
+          variant={chrome.commandVariant}
+          sx={chrome.command}
+          // On the quiet line the clause is one hover away rather than one column over — the row
+          // is a caption in a layout gap, and a second column of prose is the loudness the ticket
+          // is about. Nothing is lost: this is the same one clause, said on demand.
+          title={chrome.whyOnRow ? undefined : why}
           data-testid={sub(testId, 'command')}
         >
           {command}
         </Typography>
-        <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0, flexShrink: 1 }}>
-          {why}
-        </Typography>
+        {chrome.whyOnRow && (
+          <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0, flexShrink: 1 }}>
+            {why}
+          </Typography>
+        )}
         <Box sx={{ flexGrow: 1, minWidth: 8 }} />
         {/* The steps toggle sits BEFORE the age and never shrinks: it is a control, and the
             why-clause remains the one group allowed to give up room (the compact-bar contract). */}
@@ -176,7 +282,7 @@ export default function OutputFileLine({
             variant="text"
             onClick={() => setShowSteps((v) => !v)}
             data-testid={sub(testId, 'steps-toggle')}
-            sx={{ flexShrink: 0, minWidth: 0, px: 0.75, py: 0 }}
+            sx={chrome.toggle}
           >
             {showSteps ? 'Hide steps' : 'How'}
           </Button>
@@ -214,7 +320,7 @@ export default function OutputFileLine({
         <Box
           component="ol"
           data-testid={sub(testId, 'steps')}
-          sx={{ m: 0, mt: 0.75, pl: 2.5 }}
+          sx={chrome.panel}
         >
           {steps.map((s) => (
             <Typography key={s} component="li" variant="caption" color="text.secondary">

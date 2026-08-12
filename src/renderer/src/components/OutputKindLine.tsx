@@ -74,6 +74,8 @@ export interface OutputKindLineProps {
    * at once. `null` ⇒ this surface reads the dump and has none; omitted ⇒ it does not read it.
    */
   loadedAt?: number | null
+  /** Draw it understated (JOS-268) — chrome only, passed straight through to `OutputFileLine`. */
+  quiet?: boolean
   testId?: string
 }
 
@@ -85,6 +87,7 @@ export default function OutputKindLine({
   kind,
   why,
   loadedAt,
+  quiet,
   testId
 }: OutputKindLineProps): JSX.Element | null {
   const { status, ready } = useOutputStatus(kind)
@@ -96,6 +99,7 @@ export default function OutputKindLine({
       updatedAt={status.updatedAt ?? undefined}
       steps={status.steps}
       {...(loadedAt === undefined ? {} : { loadedAt })}
+      quiet={quiet}
       testId={testId}
     />
   )

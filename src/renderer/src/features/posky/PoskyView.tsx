@@ -6,7 +6,6 @@ import {
   Checkbox,
   Chip,
   FormControlLabel,
-  Snackbar,
   Stack,
   Tab,
   Tabs,
@@ -14,10 +13,6 @@ import {
 } from '@mui/material'
 import type { CountSource } from '@shared/types'
 import { useProgress, type QuestProgress } from './useProgress'
-// The `/outputfile` freshness line (JOS-44), wired to the registry: this tab's have/need chips
-// read the same dump the Exaltations tab does, so they get the same one-line treatment — the
-// command, one clause of why, and the FILE's own age (or "not yet run").
-import OutputKindLine from '../../components/OutputKindLine'
 import type { SharedItem, SharedItemsMap } from './sharedItems'
 import { QuestIgnoreButton } from '../favorites/QuestFlagButtons'
 import { QuestAccordion } from './QuestAccordion'
@@ -84,9 +79,10 @@ function IgnoredList({
 // counts — and which SOURCE the "have" numbers came from.
 //
 // HOW OLD that source is moved out of here in JOS-44: it is the `/outputfile` registry's line
-// (OutputKindLine, right above), which reads the file's own mtime rather than the store's record
-// of the last reload — so a dump this app has never loaded still dates itself honestly, and a
-// character who has never run the command reads "not yet run" instead of nothing at all.
+// (OutputKindLine), which reads the file's own mtime rather than the store's record of the last
+// reload — so a dump this app has never loaded still dates itself honestly, and a character who
+// has never run the command reads "not yet run" instead of nothing at all. Since JOS-268 that line
+// lives on the filter bar, under the dropdown that decides whether the dump is counted at all.
 function CountsLine({
   questCount,
   totalQuests,
@@ -455,7 +451,6 @@ export default function PoskyView({
     classes,
     countSource,
     setCountSource,
-    reloadInventory,
     recordTurnIn,
     undoTurnIn,
     inventoryInfo,
@@ -468,14 +463,6 @@ export default function PoskyView({
     nonce: focusNonce,
     onConsumed: onFocusConsumed
   })
-  const [toast, setToast] = useState<string | null>(null)
-
-  // Stable, because QuestFilterBar's right-hand group is memoized around it (JOS-206): a fresh
-  // arrow here would re-render the "Count items from" select on every character typed.
-  const onReload = useCallback(async (): Promise<void> => {
-    setToast(await reloadInventory())
-  }, [reloadInventory])
-
   // Counts describe the list you are looking at, so ignored quests are not in them.
   const totalQuests = list.visible.length
 
@@ -510,31 +497,20 @@ export default function PoskyView({
         <ClassUnlockList quests={list.visible} onOpenClass={list.showClassQuests} />
       ) : (
         <>
+          {/* THE FRESHNESS LINE MOVED INTO THIS BAR (JOS-268), and both halves of that are the
+              owner's ruling on the JOS-253 surface. WHERE: it hangs under the "Count items from"
+              dropdown as an absolutely-positioned caption, so it is beside the control it is
+              about and nothing below it moves when it appears. WHEN: only while an inventory-
+              backed source is selected — JOS-253 put it on ALWAYS, because `log` is the default
+              and a player who never opened the dropdown had no line at all, but the answer to
+              that was auto-loading (this app now reads the dump at startup and follows it), not a
+              permanent bar about a file the current source does not read. */}
           <QuestFilterBar
             list={list}
             classes={classes}
             countSource={countSource}
             onCountSource={setCountSource}
-            onReload={onReload}
-          />
-          {/* ALWAYS, SINCE JOS-253 — and the argument it replaces was a good one, so it is worth
-              stating what changed. JOS-44 showed this line only when the dump fed the numbers
-              (`countSource !== 'log'`), because a freshness line about a file nothing on screen
-              depends on is exactly the caveat the tooltip-and-caveat diet refuses. What that
-              missed is that `log` is the DEFAULT source: a player who never opened the "Count
-              items from" dropdown had no line, no age, and — until this ticket — a disabled
-              Reload button, so the tab's entire answer to "I just ran /outputfile, why did
-              nothing happen?" was blank space. The line is not a caveat about the numbers, it is
-              the control surface for the command the tab keeps telling people to type, and the
-              two instants on it are what make the blank case self-diagnosing.
-
-              `loadedAt` is what this tab knows and the registry cannot: the store's record of
-              when main last read a dump. `null` says we have never loaded one, which is a
-              different sentence from the file not existing and both can be true at once. */}
-          <OutputKindLine
-            kind="inventory"
-            loadedAt={inventoryInfo?.readAt ?? null}
-            testId="posky-inventory-fresh"
+            inventoryLoadedAt={inventoryInfo?.readAt ?? null}
           />
           <CountsLine
             questCount={quests.length}
@@ -545,14 +521,6 @@ export default function PoskyView({
           <QuestList quests={list.filtered} {...rows} />
         </>
       )}
-
-      <Snackbar
-        open={!!toast}
-        autoHideDuration={4000}
-        onClose={() => setToast(null)}
-        message={toast ?? ''}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      />
     </Stack>
   )
 }

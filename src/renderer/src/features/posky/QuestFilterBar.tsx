@@ -9,9 +9,15 @@
 // TWO KINDS OF CONTROL, and the `flexGrow` spacer between them is the whole layout argument.
 // LEFT: class / island / boss filters, search, sort and the four hide-toggles — all of them narrow
 // the list you are looking at, and all of them live on `useQuestList`'s state, so this file owns
-// none of that storage. RIGHT: "Count items from" and "Reload inventory" — these change what the
-// tab counts you as HOLDING, which moves every progress number under the bar rather than the set of
-// rows above it. Mixing the two groups would read as one undifferentiated row of knobs.
+// none of that storage. RIGHT: "Count items from" — it changes what the tab counts you as HOLDING,
+// which moves every progress number under the bar rather than the set of rows above it. Mixing the
+// two groups would read as one undifferentiated row of knobs.
+//
+// AND SINCE JOS-268 THE RIGHT GROUP CARRIES THE DUMP'S FRESHNESS TOO, quietly and out of flow: the
+// `/outputfile inventory` line hangs off the bottom edge of that one dropdown, appears only while
+// an inventory-backed source is selected, and never moves anything (the block on `InventorySource`
+// is the whole argument). The "Reload inventory" button that used to sit beside the dropdown is
+// gone — the app follows the file by itself now.
 //
 // The three pickers lead, in the order a player narrows: class (who am I), island (where am I),
 // boss (what am I standing in front of) — the WHERE facets sit beside the WHO facet rather than
@@ -31,18 +37,17 @@
 import { type JSX, memo, useState } from 'react'
 import {
   Box,
-  Button,
   Checkbox,
   FormControlLabel,
   MenuItem,
   Stack,
   TextField
 } from '@mui/material'
-import RefreshIcon from '@mui/icons-material/Refresh'
 import StarIcon from '@mui/icons-material/Star'
 import StarBorderIcon from '@mui/icons-material/StarBorder'
 import type { CountSource } from '@shared/types'
 import ChipMultiSelect from '../../components/ChipMultiSelect'
+import OutputKindLine from '../../components/OutputKindLine'
 import { SORT_OPTIONS, type SortKey } from './questSort'
 import { withPicked } from './questFacets'
 import type { QuestListState } from './useQuestList'
@@ -52,7 +57,12 @@ export interface QuestFilterBarProps {
   classes: string[]
   countSource: CountSource
   onCountSource: (s: CountSource) => void
-  onReload: () => Promise<void>
+  /**
+   * When this app last read the `/outputfile inventory` dump (`inventorySource.readAt`), or `null`
+   * for "never" — the freshness line's second instant (JOS-253). It rides down here rather than
+   * being drawn by the view because the line now BELONGS to the dropdown below (JOS-268).
+   */
+  inventoryLoadedAt: number | null
 }
 
 /**
@@ -293,19 +303,35 @@ const QuestToggles = memo(function QuestToggles({
   )
 })
 
-/** The RIGHT group: what the tab counts you as holding, and how to refresh it. Memoized like the
- *  rest — neither control has anything to do with the search box. */
+/**
+ * IS THE DUMP IN PLAY AT ALL — the whole gate on the freshness line (JOS-268, constraint 2).
+ *
+ * Three options, two of them inventory-backed: `inventory` counts the export plus loot since, and
+ * `both` counts the export IF ANY and falls back to the log (reconcile.ts's `netCount` is where
+ * that is decided). `log` reads the dump for nothing at all — under it the file could be a year
+ * old or missing and not one number on screen would differ.
+ *
+ * So "an inventory option is up" is read as SELECTED, not as offered: every option is always
+ * offered, which would make the gate a no-op, and the owner's words are "visible only when an
+ * inventory option comes up", i.e. when it is the one in the box. `both` counts as up even before
+ * a dump exists — that is precisely the source whose answer changes the moment one does, and
+ * "not yet run · not loaded yet" is the honest state of it.
+ */
+const countsFromInventory = (s: CountSource): boolean => s !== 'log'
+
+/** The RIGHT group: what the tab counts you as holding, and how fresh that is. Memoized like the
+ *  rest — neither the dropdown nor the line has anything to do with the search box. */
 const InventorySource = memo(function InventorySource({
   countSource,
   onCountSource,
-  onReload
+  inventoryLoadedAt
 }: {
   countSource: CountSource
   onCountSource: (s: CountSource) => void
-  onReload: () => Promise<void>
+  inventoryLoadedAt: number | null
 }): JSX.Element {
   return (
-    <>
+    <Box sx={{ position: 'relative', display: 'inline-flex' }}>
       {/* This one carried a three-sentence popper explaining what each source counted, and it
           was the WORST anchor on the row: the widest control, at the wrapping end of the bar,
           directly over the accordion. It is gone rather than restated, and deliberately not
@@ -326,35 +352,44 @@ const InventorySource = memo(function InventorySource({
         <MenuItem value="inventory">Export, plus loot since</MenuItem>
         <MenuItem value="both">Export if any, else log</MenuItem>
       </TextField>
-      {/* THE ROOT CAUSE OF JOS-253 WAS ON THIS BUTTON, and it was one clause: `disabled={countSource
-          === 'log'}`. `log` is the DEFAULT count source (useProgress's `loadCountSource`), so on a
-          fresh install this control was born disabled and stayed that way forever — no detection
-          path was ever consulted, no file was ever looked for, and the reporter who ran
-          `/outputfile inventory` in game and came back to a dead button was looking at a dropdown
-          he had never touched. The gate read as "reloading would change nothing under this
-          source", which is true of the NUMBERS and false of the ACT: a reload re-reads the dump
-          into the store, which the Loot ledger, the character sheet and the Exaltations tab all
-          read, and it is the one thing a user reaches for when they suspect the app has not
-          noticed their file. A control that is right about its own effect and wrong about what
-          the user is asking for is worse than no control.
+      {/* THE FRESHNESS LINE, HUNG UNDER THE DROPDOWN IT BELONGS TO (JOS-268).
 
-          It is also no longer the primary path: main reads the dump at session start and follows
-          it on every rewrite (JOS-253, session.ts), so this is the "do it now" affordance the
-          brief asked be kept, not the way inventory arrives. The span is gone with the disabled
-          state — it existed only because a disabled button swallows the mouse events a tooltip
-          needs, and an enabled one carries its own `title`. */}
-      <Button
-        variant="outlined"
-        // The handle tests/e2e/sky-inventory-autoload.e2e.mts reads: that spec pins this button
-        // as ENABLED under the default count source, which is the regression the ticket is.
-        data-testid="posky-reload-inventory"
-        title="Re-read your /outputfile inventory dump now. The app also loads it by itself whenever the game rewrites it."
-        startIcon={<RefreshIcon />}
-        onClick={() => void onReload()}
-      >
-        Reload inventory
-      </Button>
-    </>
+          There WAS a "Reload inventory" button here, and removing it is the ticket's fourth
+          constraint: main reads the dump at session start and follows it on every rewrite
+          (JOS-253, session.ts), so the button could only ever do again what the app had already
+          done by itself. (Its own history is worth one sentence, because it was the JOS-253 bug:
+          it carried `disabled={countSource === 'log'}` and `log` is the DEFAULT source, so on a
+          fresh install it was born disabled and no detection path was ever consulted.) The Loot
+          ledger keeps its own reload control; this surface no longer needs one.
+
+          ABSOLUTE, AND THAT IS THE POINT. The line is out of flow, anchored to the bottom edge of
+          the select above it, so the counts and the quest list underneath sit at exactly the same
+          y whether it is on screen or not — a caption that shoved the whole tab down when you
+          picked an inventory source, and pulled it back up when you picked the log, would be the
+          loudest thing on the tab. `right: 0` (with no `left`) keeps the box the width of its own
+          text, so it grows LEFTWARD across the panel background and eats no clicks it does not
+          own. It hangs in the gap the view's `Stack spacing` already leaves below the bar, which
+          is why the quiet chrome compresses its line-height (OutputFileLine's `QUIET`).
+
+          `loadedAt` is what this tab knows and the registry cannot: the store's record of when
+          main last read a dump. `null` says we have never loaded one, which is a different
+          sentence from the file not existing, and both can be true at once. */}
+      {countsFromInventory(countSource) && (
+        <Box
+          // FLUSH TO THE SELECT'S BOTTOM EDGE, with no margin of its own: the gap this hangs in is
+          // the view's own `Stack spacing` and it is 17px, which a 12px caption row fills almost
+          // exactly. Two pixels of offset here is two pixels of the row below.
+          sx={{ position: 'absolute', top: '100%', right: 0, zIndex: 1, whiteSpace: 'nowrap' }}
+        >
+          <OutputKindLine
+            quiet
+            kind="inventory"
+            loadedAt={inventoryLoadedAt}
+            testId="posky-inventory-fresh"
+          />
+        </Box>
+      )}
+    </Box>
   )
 })
 
@@ -365,7 +400,7 @@ export default function QuestFilterBar({
   classes,
   countSource,
   onCountSource,
-  onReload
+  inventoryLoadedAt
 }: QuestFilterBarProps): JSX.Element {
   return (
     <Stack direction="row" spacing={2} flexWrap="wrap" alignItems="center" useFlexGap>
@@ -392,7 +427,11 @@ export default function QuestFilterBar({
         setFavoritesOnly={list.setFavoritesOnly}
       />
       <Box sx={{ flexGrow: 1 }} />
-      <InventorySource countSource={countSource} onCountSource={onCountSource} onReload={onReload} />
+      <InventorySource
+        countSource={countSource}
+        onCountSource={onCountSource}
+        inventoryLoadedAt={inventoryLoadedAt}
+      />
     </Stack>
   )
 }
