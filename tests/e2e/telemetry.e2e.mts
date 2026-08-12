@@ -314,8 +314,10 @@ function stepOnDisk(userData: string): void {
 /**
  * THE STARTUP READING ACTUALLY FIRED (JOS-57) — read off the ring FILE, with the app that wrote
  * it gone. It cannot be observed from inside a running launch: the reading is produced when the
- * replay finishes and is carried by the next session report, which is a heartbeat five minutes
- * later or the `sessionEnd` written on the way out. So this is the only place the whole chain —
+ * replay finishes and is carried by the next session report, which is a heartbeat ten minutes
+ * later (JOS-269; it was five, and a suite that caps a spec at 5 min was never going to see it
+ * either way) or the `sessionEnd` written on the way out — and it is the `sessionEnd` arm this
+ * asserts, which is the arm that got MORE common, not less. So this is the only place the chain —
  * `replayDone` → perf.ts → the collector's pending slot → `sessionEnd` → the ring on disk — is
  * visible at once, and it is exactly the failure JOS-39 was about: a schema and a panel that are
  * both fine while nothing ever emits, which reads as "the fleet has no slow launches".

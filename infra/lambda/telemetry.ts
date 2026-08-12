@@ -233,13 +233,14 @@ export interface InstallFacts {
  * CTE or a column to smuggle it in. A CTE is the elegant answer and is exactly the kind of thing
  * that is not worth betting a live ingest endpoint on when the cluster is Aurora DSQL (a
  * documented SUBSET of postgres) and the only way to find out is to deploy it. One indexed
- * primary-key lookup, once per batch — i.e. once a minute per active install — is the cheap,
- * boring, verifiable option.
+ * primary-key lookup, once per batch — i.e. once every five minutes per active install since
+ * JOS-269, and it was once a minute before that — is the cheap, boring, verifiable option, and
+ * five times cheaper than the figure this paragraph was written against.
  *
  * THE RACE IS BENIGN AND BOUNDED. Two batches from one id could both read the old version and
- * both count an upgrade; that needs one client to have two flushes in flight, which the 60 s
- * serial flush loop does not do, and the cost if it ever happened is one extra count in an
- * additive counter. The alternative — a value read inside the guarded UPSERT — is not available
+ * both count an upgrade; that needs one client to have two flushes in flight, which a serial
+ * flush loop does not do at any period (and a longer one only widens the gap), and the cost if it
+ * ever happened is one extra count in an additive counter. The alternative — a value read inside the guarded UPSERT — is not available
  * without the CTE this deliberately avoids.
  *
  * NULL means "no row yet", i.e. a first-ever batch: a new install is not an upgrade.
@@ -418,7 +419,10 @@ function emitMetrics(batch: TelemetryBatch, roll: RollupResult, now: number): vo
     [
       { name: 'Batches', value: 1 },
       { name: 'EventsAccepted', value: batch.events.length },
-      // Heartbeats are the "is anyone in the app RIGHT NOW" signal: one per session per 5 min.
+      // Heartbeats are the "is anyone in the app RIGHT NOW" signal: one per session per HEARTBEAT
+      // PERIOD, which the client sets and this Lambda only counts (10 min since JOS-269). Anything
+      // reading this as a concurrency figure must bucket it at that same period - see
+      // src/main/triage/liveSessions.ts, which is the reader that does.
       { name: 'Heartbeats', value: counterOf(roll, USAGE_METRICS.heartbeats) },
       { name: 'SessionsStarted', value: counterOf(roll, USAGE_METRICS.sessions) },
       { name: 'ActiveInstalls', value: counterOf(roll, USAGE_METRICS.activeInstalls) },

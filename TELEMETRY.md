@@ -72,7 +72,7 @@ Once, when the app finishes starting up.
 
 ### `sessionHeartbeat`
 
-Every 5 minutes while the app is open — the "is anyone using it right now" signal. Present on the first of these that follows startup, once per launch: how long reading your log history took, and how smoothly. Reading a log after switching character is deliberately not measured. Every number in the group is a count or a duration; several are ranges rather than exact figures, and which is which is stated field by field below.
+Every 10 minutes while the app is open — the "is anyone using it right now" signal. Present on the first of these that follows startup, once per launch: how long reading your log history took, and how smoothly. Reading a log after switching character is deliberately not measured. Every number in the group is a count or a duration; several are ranges rather than exact figures, and which is which is stated field by field below.
 
 | Field | Values | What it means |
 | --- | --- | --- |

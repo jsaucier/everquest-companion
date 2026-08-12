@@ -1795,8 +1795,12 @@ via `scripts/sandbox/sandbox-lifecycle.ps1`.
     NEVER summed). Series history STARTS 2026-08-04 — there is no earlier
     data and never will be.
   - Live concurrency: CloudWatch `EQCompanion/Telemetry` `Heartbeats`,
-    `Channel=prod`, Sum over 300s ≈ concurrent sessions (channel-split, not
-    cohort-split — EMF dimension identity would orphan every widget).
+    `Channel=prod`, **Sum over 600s** ≈ concurrent sessions (channel-split,
+    not cohort-split — EMF dimension identity would orphan every widget).
+    **THE PERIOD IS THE CLIENT'S HEARTBEAT CADENCE, NOT A CHOICE** (JOS-269
+    took it 5 min → 10 min, so 300s was right until 2026-08-12 and halves the
+    answer now). `liveSessions.ts BUCKET_MS` is the same number and the two
+    move together or the readout silently lies.
   - Install truth is `analytics_install`; GitHub `download_count` is NOT
     installs (the auto-updater dominates it). DAU can slightly exceed
     installs across UTC day boundaries — artifact, not phantom users.
@@ -1829,6 +1833,20 @@ via `scripts/sandbox/sandbox-lifecycle.ps1`.
   tests/telemetryNet.test.mts pins the exact URL, the single fetch site, and
   the consent gates (nothing before the notice; opt-out destroys buffer +
   id). Full detail: docs/agents-archive.md.
+  **THE CADENCE IS A COST DIAL, THE CONTENT IS NOT (JOS-269, owner ruling
+  2026-08-12).** `FLUSH_INTERVAL_MS` 5 min and `HEARTBEAT_INTERVAL_MS` 10 min
+  (flush.ts) — was 60 s / 5 min, and the plan's T5 still says the old numbers
+  because plans are historical intent. Every event is a counter delta that
+  sums server-side, so batching harder loses NOTHING; every flush is one
+  request through API Gateway + Lambda + DSQL, which is the whole bill. What it
+  does cost is stated where it happens: a KILLED session's duration is only
+  known to its last heartbeat, so the tail of that histogram coarsens from
+  5 min to 10. **THREE NUMBERS ARE DERIVED FROM THESE AND MUST MOVE WITH
+  THEM**: `liveSessions.ts BUCKET_MS` (= the heartbeat, or Live now halves),
+  the "sessions in the last 10 min" tile note, and the sandbox smoke's
+  `$telemetryDwellSec` (must exceed ONE flush tick — nothing leaves the machine
+  except on one; `stopTelemetry` writes the ring, it does not POST). Changing
+  WHAT is collected is a different decision and remains owner law.
   **THE ADDITIVE-FIELD RULE (JOS-39, and it is a deploy-skew law).** The app
   auto-updates itself; the ingest Lambda is deployed by hand — so a shipped
   client is regularly talking to an OLDER copy of the shared contract. A NEW

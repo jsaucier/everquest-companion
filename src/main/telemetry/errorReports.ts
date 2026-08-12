@@ -323,7 +323,7 @@ function sessionAgeMs(now: number): number {
  * `healthCounters` is written even when zero BECAUSE the report itself is the per-version
  * "this build can report" signal, and `healthReports` is the denominator every rate is divided
  * by. That denominator already exists, so an empty errorReport would add a record to the ring
- * every five minutes to say nothing that `healthReports` does not already say.
+ * every ten minutes to say nothing that `healthReports` does not already say.
  */
 export function takeErrorReports(): EvErrorReport[] {
   const out: EvErrorReport[] = []

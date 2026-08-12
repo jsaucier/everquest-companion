@@ -308,8 +308,9 @@ if (!gotSingleInstanceLock) {
     // inside `startTelemetry` rather than restated here.
     //
     // WHAT THIS STARTS: an analytics id if the user's switch is on, a `sessionStart` record, a
-    // 5-minute heartbeat into the ring at <userData>/telemetry.json — and, ONLY once every gate
-    // is open, the 60 s flush loop that POSTs to the compiled-in endpoint. The flush timer is
+    // 10-minute heartbeat into the ring at <userData>/telemetry.json — and, ONLY once every gate
+    // is open, the 5-minute flush loop that POSTs to the compiled-in endpoint (JOS-269 stretched
+    // both; flush.ts holds the cost ruling and what it does and does not cost). The flush timer is
     // not created at all under `EQ_E2E=1`, with the switch off, or before the first-run notice
     // has rendered (`telemetryFlushEnabled`, telemetry/net.ts); when the notice is answered
     // mid-session the loop starts then, not next launch. Same predicate discipline as
