@@ -224,7 +224,13 @@ const HEALTH_FIELDS = [
  * `linesParsed`. The field is then not copied across at all rather than defaulted to 0, which is
  * what keeps `tests/telemetryContract.test.mts`'s round-trip assertion meaningful.
  */
-const HEALTH_OPTIONAL_FIELDS = ['imageFetchFailures', 'suppressedErrorLines'] as const
+const HEALTH_OPTIONAL_FIELDS = [
+  'imageFetchFailures',
+  'suppressedErrorLines',
+  // JOS-266's, optional for exactly the same reason and added the same way — which is what the
+  // rule is FOR: a third additive field costs one line here and nothing at either end of a skew.
+  'imageCacheReadFailures'
+] as const
 
 function vHealthCounters(o: Record<string, unknown>): Validated<TelemetryEvent> {
   const counts: number[] = []

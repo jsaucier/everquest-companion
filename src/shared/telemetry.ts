@@ -667,6 +667,16 @@ export interface EvHealthCounters {
    * the whole point of having it: the cap must not be able to make a looping build look healthy.
    */
   suppressedErrorLines?: number
+  /**
+   * Images the app had already cached on disk that could not be READ BACK (JOS-266). Optional for
+   * the same deploy-skew reason as the two fields above — it rides an event kind that has shipped.
+   *
+   * NOT AN ERROR, and for a stronger reason than `imageFetchFailures` has: the cache HEALS. The bad
+   * entry is evicted and the image is re-fetched as though it had never been cached, so the outcome
+   * the user gets is the picture. The field is in `HEALTH_NON_ERROR_FIELDS` — see
+   * ./telemetryRollup.ts — so it is counted and rendered without moving the release error rate.
+   */
+  imageCacheReadFailures?: number
 }
 export interface EvUpdateOutcome {
   t: 'updateOutcome'

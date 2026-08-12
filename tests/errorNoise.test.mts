@@ -22,6 +22,12 @@
 //      exactly how many times the thing happened, so a build that starts looping cannot look like a
 //      build that got better.
 //
+// A THIRD CASE JOINED THEM (JOS-266) and is covered where it belongs — the cache-read failure that
+// heals itself lives in `tests/imageCacheHeal.test.mts`, because it is a behaviour of the request
+// path rather than of the error funnel. What is asserted HERE is the two decisions this file owns
+// for every demotion: that the field is exempt from the release error rate, and that TELEMETRY.md
+// says what the counter means.
+//
 // WHAT IS DRIVEN AND WHAT IS PINNED. `errorRepeat` and the image-cache warn gate are LEAVES (they
 // import nothing, or nothing but other leaves), so this suite drives the real production code with
 // no Electron in the process — `tests/errorCounterHygiene.test.mts`'s technique, for its reason.
@@ -232,8 +238,12 @@ test('an image fetch failure is COUNTED but is not an ERROR — the release rate
   // The reading decision, pinned where it can be argued with. `errors / healthReports` per build
   // answers "did I release buggy code"; 17,632 failed downloads of somebody else's images would
   // swamp every real signal in it and would move with a wiki's uptime rather than with a release.
-  assert.deepEqual([...HEALTH_NON_ERROR_FIELDS], ['imageFetchFailures'])
+  assert.deepEqual([...HEALTH_NON_ERROR_FIELDS], ['imageFetchFailures', 'imageCacheReadFailures'])
   assert.equal(isErrorHealthField('imageFetchFailures'), false)
+  // JOS-266's, exempt for the same reason with a stronger claim: a cached image that will not read
+  // back is evicted and re-fetched, so the condition ends with the user seeing the picture. What it
+  // measures is a machine whose cache folder is being fought over, not a build that went wrong.
+  assert.equal(isErrorHealthField('imageCacheReadFailures'), false)
   // A DENY LIST, so a field added later and forgotten counts as an error — noisy and visible,
   // rather than silently vanishing from the rate.
   assert.equal(isErrorHealthField('somethingAddedNextYear'), true)
@@ -259,4 +269,11 @@ test('THE DOC says both new counters in the file users are pointed at', () => {
   const suppressed = rows.find((l) => l.includes('`suppressedErrorLines`'))
   assert.ok(suppressed, 'TELEMETRY.md documents the suppression counter')
   assert.match(suppressed, /A count only/)
+  // JOS-266's row, held to the same standard: it must read as something that FIXED ITSELF, and it
+  // must promise a count and nothing about which image or where it was kept.
+  const reread = rows.find((l) => l.includes('`imageCacheReadFailures`'))
+  assert.ok(reread, 'TELEMETRY.md documents the cache-read counter')
+  assert.match(reread, /downloaded again/)
+  assert.match(reread, /still shown/)
+  assert.match(reread, /Never which picture, and never where it was kept/)
 })

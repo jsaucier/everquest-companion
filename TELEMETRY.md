@@ -187,6 +187,7 @@ With each session report (every few minutes, and at close): counts of things tha
 | `speechFailures` | whole number | Times an utterance failed to speak. Downloaded voices only. |
 | `imageFetchFailures` | whole number (optional) | Times an item icon or portrait could not be downloaded, usually because the wiki was unreachable. The picture is hidden and the app carries on. Never which picture. |
 | `suppressedErrorLines` | whole number (optional) | The same error line repeating: after the first few, further copies are counted here instead of being written to the local error log again. A count only. |
+| `imageCacheReadFailures` | whole number (optional) | Times a picture the app had already saved could not be read back, so it was downloaded again. The picture is still shown. Never which picture, and never where it was kept. |
 
 ### `updateOutcome`
 

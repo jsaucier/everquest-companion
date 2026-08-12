@@ -1,11 +1,12 @@
 // ============================================================================
-// telemetry/health.ts — the health counters, as pending deltas (JOS-96, JOS-133).
+// telemetry/health.ts — the health counters, as pending deltas (JOS-96, JOS-133, JOS-266).
 // ============================================================================
 //
-// SEVEN FIELDS NOW. Five shipped with JOS-96; JOS-133 added two, and both were added for the same
-// reason rather than because more numbers are better: something that was being reported as an
-// ERROR was not one, and demoting it needed somewhere honest for the count to land. See
-// `noteImageFetchFailure` and `noteSuppressedErrorLine` for each argument.
+// EIGHT FIELDS NOW. Five shipped with JOS-96; JOS-133 added two and JOS-266 added the eighth, and
+// all three were added for the same reason rather than because more numbers are better: something
+// that was being reported as an ERROR was not one, and demoting it needed somewhere honest for the
+// count to land. See `noteImageFetchFailure`, `noteSuppressedErrorLine` and
+// `noteImageCacheReadFailure` for each argument.
 //
 // `EvHealthCounters` has been in the contract since wave A2 and NO CLIENT HAS EVER EMITTED IT.
 // This file is the missing producer half: the places in main that already KNOW something went
@@ -45,7 +46,7 @@
  *  itself, and the validator would reject the event anyway. */
 const MAX_HEALTH_COUNT = 1_000_000
 
-/** The seven fields, spelled once. Mirrors `HEALTH_FIELDS` in shared/telemetryValidate.ts. */
+/** The eight fields, spelled once. Mirrors `HEALTH_FIELDS` in shared/telemetryValidate.ts. */
 export interface HealthDelta {
   rendererCrashes: number
   mainErrorLogLines: number
@@ -54,6 +55,7 @@ export interface HealthDelta {
   speechFailures: number
   imageFetchFailures: number
   suppressedErrorLines: number
+  imageCacheReadFailures: number
 }
 
 const zero = (): HealthDelta => ({
@@ -63,7 +65,8 @@ const zero = (): HealthDelta => ({
   presenceRestarts: 0,
   speechFailures: 0,
   imageFetchFailures: 0,
-  suppressedErrorLines: 0
+  suppressedErrorLines: 0,
+  imageCacheReadFailures: 0
 })
 
 let pending: HealthDelta = zero()
@@ -170,6 +173,30 @@ export function noteParserStall(n = 1): void {
  */
 export function noteImageFetchFailure(n = 1): void {
   bump('imageFetchFailures', n)
+}
+
+/**
+ * A CACHED IMAGE ON DISK COULD NOT BE READ BACK, and the cache healed itself (JOS-266,
+ * `serveFromDisk`, src/main/imageCache.ts). The entry is evicted and the image is re-fetched as
+ * though it had never been cached, so the user sees the picture — a beat late — instead of a gap.
+ *
+ * IT IS A COUNTER BECAUSE THE SELF-HEAL MAKES IT ONE, which is the same argument
+ * `noteImageFetchFailure` makes one section up, arrived at from the other direction. The fleet's
+ * reading: ~290 occurrences of `image cache: could not read <path>` across 0.20–0.23 (fingerprint
+ * 8f0e7721ddcad03b alone 198×, `code=ENOENT` — a file that passed `existsSync` and was gone by the
+ * read, i.e. antivirus eviction or a user clearing the folder). Nothing in that is this build's
+ * fault and nothing in it is unhandled, so counting it as an error described the wrong thing.
+ *
+ * NOT SUMMED INTO THE RELEASE ERROR RATE (`HEALTH_NON_ERROR_FIELDS`, shared/telemetryRollup.ts) for
+ * `imageFetchFailures`' reason: a build cannot be blamed for a file some scanner took away. It is
+ * still worth watching — a version where this climbs is a version whose cache directory is being
+ * fought over — which is exactly what a counter, and not an error, is for.
+ *
+ * Live debugging keeps ONE WARN LINE PER FAILURE CODE PER SESSION (imageCache.ts) — console only,
+ * never errors.log, so it costs the error count nothing.
+ */
+export function noteImageCacheReadFailure(n = 1): void {
+  bump('imageCacheReadFailures', n)
 }
 
 /**

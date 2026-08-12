@@ -322,7 +322,7 @@ test('THE HONEST LEDGER: the health counters are NOT behind the cap, and that is
   // JOS-133 built `suppressedErrorLines` so a cap could exist without deflating the fleet's error
   // rate — "a build that started looping" must not "look like a build that got better". A budget
   // that silenced the counters too would undo exactly that. The distinction is COST, not principle:
-  // `healthCounters` emits seven integers per heartbeat whatever their magnitude, so there is
+  // `healthCounters` emits eight integers per heartbeat whatever their magnitude, so there is
   // nothing there to flood and nothing to bypass.
   const health = read('src/main/telemetry/health.ts')
   assert.doesNotMatch(health, /errorBudget|MAX_REPORTS_PER_FINGERPRINT/)

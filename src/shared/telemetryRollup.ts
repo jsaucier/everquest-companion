@@ -341,8 +341,14 @@ export type UsageMetric = (typeof USAGE_METRICS)[keyof typeof USAGE_METRICS]
  * exists to prevent. `suppressedErrorLines` is deliberately NOT here: it counts error lines that
  * a cap withheld from the local file, so leaving it out of the rate would let the cap flatter a
  * build that had started looping.
+ *
+ * `imageCacheReadFailures` (JOS-266) IS here, and it has the stronger claim of the two: a cached
+ * image that will not read back is evicted and re-fetched, so the condition ends with the user
+ * seeing the picture. What the number describes is a machine whose cache directory is being fought
+ * over — antivirus, a cleaner, a permissions change — which is a fact about that machine and not
+ * about the build that was running when it happened.
  */
-export const HEALTH_NON_ERROR_FIELDS: readonly string[] = ['imageFetchFailures']
+export const HEALTH_NON_ERROR_FIELDS: readonly string[] = ['imageFetchFailures', 'imageCacheReadFailures']
 
 /** Whether a `health` dim's field name is an ERROR for rate purposes. See the list above. */
 export function isErrorHealthField(field: string): boolean {
@@ -598,6 +604,8 @@ function foldHealth(
   // and an absent row reads identically to a zero row TO A SUM.
   add(bag, USAGE_METRICS.health, `${version}:imageFetchFailures`, ev.imageFetchFailures ?? 0)
   add(bag, USAGE_METRICS.health, `${version}:suppressedErrorLines`, ev.suppressedErrorLines ?? 0)
+  // …and JOS-266's, read through `?? 0` for the same reason a third time.
+  add(bag, USAGE_METRICS.health, `${version}:imageCacheReadFailures`, ev.imageCacheReadFailures ?? 0)
 }
 
 /**

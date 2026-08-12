@@ -281,6 +281,14 @@ export const TELEMETRY_DOC_EVENTS: readonly DocEvent[] = [
         name: 'suppressedErrorLines',
         type: `${COUNT} (optional)`,
         note: 'The same error line repeating: after the first few, further copies are counted here instead of being written to the local error log again. A count only.'
+      },
+      // JOS-266. SAID AS SOMETHING THAT FIXED ITSELF, because that is what it is: the picture the
+      // app had saved would not open, so it downloads it again and shows it. The note names the
+      // outcome the user got rather than the machinery, and promises a count and nothing else.
+      {
+        name: 'imageCacheReadFailures',
+        type: `${COUNT} (optional)`,
+        note: 'Times a picture the app had already saved could not be read back, so it was downloaded again. The picture is still shown. Never which picture, and never where it was kept.'
       }
     ]
   },

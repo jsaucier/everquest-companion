@@ -74,14 +74,15 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync } from 'node:fs'
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 // Console passthroughs (no prefix, no reformatting) — the ONE module in src/main that owns
 // the console. The default sinks below stay byte-identical to the console.* calls they were.
 import { E2E } from './e2e'
 import { logConsoleError, logInfo, logWarn } from './errorLog'
-// The health counter a failed network fetch bumps instead of logging an error (JOS-133).
-// `telemetry/health.ts` imports nothing at all, so this cannot close a cycle; see its header.
-import { noteImageFetchFailure } from './telemetry/health'
+// The health counters a failed network fetch (JOS-133) and a failed cache READ (JOS-266) bump
+// instead of logging an error. `telemetry/health.ts` imports nothing at all, so this cannot close
+// a cycle; see its header.
+import { noteImageCacheReadFailure, noteImageFetchFailure } from './telemetry/health'
 
 /** The scheme the renderer asks for. */
 export const EQIMG_SCHEME = 'eqimg'
@@ -546,6 +547,102 @@ export function describeFetchFailure(err: unknown): string {
   return err instanceof Error && err.name !== '' ? err.name : 'unknown'
 }
 
+// ---- A CACHE READ THAT FAILS HEALS ITSELF (JOS-266) --------------------------------------
+//
+// THE READING. `image cache: could not read <path>` arrived as a new error family: ~290 occurrences
+// across 0.20–0.23, the largest fingerprint 8f0e7721ddcad03b at 198 on one build, and the exemplar
+// says `code=ENOENT`. That is a file `existsSync` had just said was there and `readFile` could not
+// open a moment later — antivirus quarantining the folder, a cleaner emptying it, a permissions
+// change mid-session. It is not a shape this app can be wrong about; it is the disk moving.
+//
+// SO IT IS A MISS, AND A MISS IS SOMETHING THIS FILE ALREADY KNOWS HOW TO ANSWER. Two changes,
+// which are one decision:
+//   * EVICT AND RE-FETCH. The entry is unlinked (userData only — the bundle owns its bytes and a
+//     deletion there would not restore them) and `serveFromDisk` returns null, so the request
+//     falls through to the same fetch a never-cached image takes. The user sees the picture a beat
+//     late instead of a gap. Deleting is what makes "as if it were never cached" TRUE rather than
+//     approximately true: the fetch below writes a whole new file over a name nothing is holding.
+//     A file that cannot be read often cannot be deleted either, and that failure is swallowed on
+//     purpose — the re-fetch is what heals the request, the unlink is what tidies the directory.
+//   * WARN, DO NOT FILE. `onError` in the composition root is `logError`, so every one of those
+//     290 spent a line of errors.log and a `mainErrorLogLines` tick for a condition that ends with
+//     the user seeing the image. It is now a counter (`imageCacheReadFailures`) plus ONE warn line
+//     per failure CODE per session — console only, never errors.log, never the wire.
+//
+// PER CODE rather than per path or per session: ENOENT (the file vanished), EPERM/EACCES (something
+// is holding or forbidding it) and EISDIR (something else is living under that name) are three
+// different stories about the machine, and the second copy of any one of them says nothing the
+// first did not. Per PATH would be the flood the ticket removed — one wiki image per icon on screen.
+//
+// IT CANNOT SPIN. One request reads each candidate at most once, evicts at most once and fetches at
+// most once; nothing here retries, and a re-fetch that also fails takes the fetch failure path it
+// always did (a counter for the network leg, an error for a host that answered, and — since
+// JOS-198 — a remembered no that stops the renderer re-asking).
+
+/** Node's own error codes for a failed read: uppercase and underscores, nothing else. Anything
+ *  outside this shape is not a code we recognize and falls back to the error's NAME, which is the
+ *  same bound `describeFetchFailure` keeps — no caller can put arbitrary text into a warn line. */
+const ERROR_CODE_RE = /^[A-Z][A-Z_]{1,31}$/
+
+/** Failure codes already warned about this session. Bounded by `MAX_WARNED_READ_CODES`. */
+const warnedReadCodes = new Set<string>()
+
+/** How many distinct failure codes one session will warn about. The real set is a handful of errno
+ *  spellings, so this is a ceiling on a pathological disk rather than a budget anybody spends. */
+export const MAX_WARNED_READ_CODES = 16
+
+/**
+ * The one-word reason a cache read failed: the errno code when there is one (`ENOENT`, `EPERM`,
+ * `EBUSY`, `EISDIR` — the thing that actually distinguishes these), else the error's name.
+ * Total: this runs inside a catch and must never become the throw it is describing.
+ */
+export function describeReadFailure(err: unknown): string {
+  if (typeof err === 'object' && err !== null && 'code' in err) {
+    const code: unknown = (err as { code?: unknown }).code
+    if (typeof code === 'string' && ERROR_CODE_RE.test(code)) return code
+  }
+  return describeFetchFailure(err)
+}
+
+/** True the FIRST time this session a cache read has failed with `code`, false every time after. */
+export function takeImageReadWarning(code: string): boolean {
+  if (warnedReadCodes.has(code)) return false
+  if (warnedReadCodes.size >= MAX_WARNED_READ_CODES) return false
+  warnedReadCodes.add(code)
+  return true
+}
+
+/** Forget the warned codes. Tests only — a real session warns once per code and means it. */
+export function resetImageReadWarnings(): void {
+  warnedReadCodes.clear()
+}
+
+/**
+ * EVERYTHING A FAILED CACHE READ CAUSES, in the order it causes it: evict (userData only), count,
+ * and — the first time this session for this code — say so on the console. Returns nothing, because
+ * there is nothing for the caller to decide: `serveFromDisk` goes on to the next candidate and
+ * then, having found none, returns the same null a plain miss returns.
+ *
+ * At module scope rather than inside the handler's closure so it takes its two sinks as arguments
+ * and can be read (and pinned) as one decision instead of as eight lines of a `catch`.
+ */
+async function healUnreadableEntry(
+  path: string,
+  err: unknown,
+  repair: boolean,
+  warn: (msg: string) => void
+): Promise<void> {
+  if (repair) await unlink(path).catch(ignoreCleanupFailure)
+  noteImageCacheReadFailure()
+  const code = describeReadFailure(err)
+  if (takeImageReadWarning(code)) {
+    warn(
+      `[everquest-companion] image cache: could not read ${basename(path)} (${code}); ` +
+        `re-fetching it. Further read failures this session are counted, not logged.`
+    )
+  }
+}
+
 /**
  * Install the `eqimg://` handler on the default session. Call ONCE, after `app.whenReady()`
  * and before any window loads a page that references an icon (creating the window in the
@@ -643,10 +740,12 @@ export function installImageCacheProtocol(protocol: ProtocolLike, opts: ImageCac
    * Serve the first of `paths` that holds real image bytes, or null if none does.
    *
    * `repair` is the difference between the two roots this is called with. The userData cache
-   * OWNS its entries and can heal: a truncated file from some earlier build is deleted so the
-   * fetch below can replace it. The BUNDLE owns nothing — its bytes came from the installer,
-   * deleting one would not restore it, and on a per-machine install the directory may not even
-   * be writable — so a bundled file that fails to sniff is stepped over and left alone.
+   * OWNS its entries and can heal: a truncated file from some earlier build — or (JOS-266) one
+   * that will not open at all — is deleted so the fetch below can replace it. The BUNDLE owns
+   * nothing — its bytes came from the installer, deleting one would not restore it, and on a
+   * per-machine install the directory may not even be writable — so a bundled file that fails to
+   * sniff or to read is stepped over and left alone. Either way the RETURN is the same null a
+   * plain miss produces, which is what makes the fall-through to the fetch the whole heal.
    */
   async function serveFromDisk(paths: readonly string[], repair: boolean): Promise<GlobalResponse | null> {
     for (const path of paths) {
@@ -657,7 +756,11 @@ export function installImageCacheProtocol(protocol: ProtocolLike, opts: ImageCac
         if (mime) return imageResponse(bytes, mime)
         if (repair) await unlink(path).catch(ignoreCleanupFailure)
       } catch (err) {
-        onError(`[everquest-companion:error] image cache: could not read ${path}`, err)
+        // A READ THAT FAILED IS A MISS, NOT AN ERROR (JOS-266) — evicted, counted, and warned
+        // about once per code per session, never filed. See `healUnreadableEntry` above, and the
+        // section over it for the whole argument. This request then falls through to the same
+        // fetch a never-cached image takes, which is the heal.
+        await healUnreadableEntry(path, err, repair, warn)
       }
     }
     return null

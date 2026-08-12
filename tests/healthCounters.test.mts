@@ -31,6 +31,7 @@ import { validateTelemetryEvent } from '../src/shared/telemetryValidate'
 import { rollupBatch, USAGE_METRICS } from '../src/shared/telemetryRollup'
 import {
   noteErrorLogLine,
+  noteImageCacheReadFailure,
   noteImageFetchFailure,
   noteParserStall,
   notePresenceRestart,
@@ -57,11 +58,12 @@ const NO_HEALTH = {
   parserStalls: 0,
   presenceRestarts: 0,
   speechFailures: 0,
-  // JOS-133's two. They are OPTIONAL on the wire and always present in the DELTA, and this literal
-  // is the delta's shape — a `deepEqual` against it is what fails the day a field is added without
-  // being thought about.
+  // JOS-133's two and JOS-266's one. They are OPTIONAL on the wire and always present in the DELTA,
+  // and this literal is the delta's shape — a `deepEqual` against it is what fails the day a field
+  // is added without being thought about. It has now done that job twice.
   imageFetchFailures: 0,
-  suppressedErrorLines: 0
+  suppressedErrorLines: 0,
+  imageCacheReadFailures: 0
 }
 
 test('the health drain is a DELTA — a drain zeroes what it took, so nothing counts twice', () => {
@@ -246,7 +248,24 @@ test('JOS-133 wired two more, and BOTH are counts on paths that used to log an e
   assert.ok(errorLog.indexOf('noteError(source, payload,') < errorLog.indexOf('if (!budget.report)'))
 })
 
-test('the two new fields are OPTIONAL on the wire — an old client must not fail a batch', () => {
+test('JOS-266 wired the eighth, and it is the third count on a path that used to log an error', () => {
+  const read = (p: string): string => readFileSync(join(TEST_ROOT, p), 'utf8')
+  // 8. a cached image that will not READ BACK — the catch around `readFile` in `serveFromDisk`,
+  //    which used to hand the path to `onError` (i.e. `logError`, i.e. errors.log) for a condition
+  //    the cache heals by evicting the entry and re-fetching it. The behaviour is driven for real
+  //    in tests/imageCacheHeal.test.mts; what is asserted here is the counter's one call site.
+  const img = read('src/main/imageCache.ts')
+  const readCatch = img.slice(img.indexOf('const bytes = await readFile(path)'), img.indexOf('return null\n  }'))
+  assert.match(readCatch, /await healUnreadableEntry\(path, err, repair, warn\)/, 'the catch heals')
+  assert.doesNotMatch(readCatch, /onError\(/, 'and it no longer files an error')
+  assert.match(img, /async function healUnreadableEntry[\s\S]*?noteImageCacheReadFailure\(\)/, 'the heal counts')
+  assert.equal(img.match(/noteImageCacheReadFailure\(\)/g)?.length, 1, 'one call site, in that heal')
+  // …while the STORE failure beside it stays an error: a cache directory this app cannot write to
+  // is a fact about the install, and nothing downstream heals it.
+  assert.match(img, /onError\(`\[everquest-companion:error\] image cache: could not store/)
+})
+
+test('the three optional fields are OPTIONAL on the wire — an old client must not fail a batch', () => {
   // THE DEPLOY-SKEW HALF (the additive-field rule, shared/telemetry.ts). This validator also runs
   // in the ingest Lambda, which reads events from clients both newer and older than itself. If the
   // fields were required, a client predating them would be told 400 for the whole batch, and
@@ -254,6 +273,7 @@ test('the two new fields are OPTIONAL on the wire — an old client must not fai
   const old = { t: 'healthCounters', ...NO_HEALTH } as Record<string, unknown>
   delete old.imageFetchFailures
   delete old.suppressedErrorLines
+  delete old.imageCacheReadFailures
   const v = validateTelemetryEvent(old)
   assert.ok(v.ok && v.value.t === 'healthCounters')
   // Absent means ABSENT, not zero: the value is constructed field by field, so an older client's
@@ -263,12 +283,14 @@ test('the two new fields are OPTIONAL on the wire — an old client must not fai
   const fresh = takeHealth()
   noteImageFetchFailure(3)
   noteSuppressedErrorLine(9)
+  noteImageCacheReadFailure(4)
   const now = { t: 'healthCounters', ...takeHealth() } as const
   const rolled = rollupBatch(batchOf([now]), { firstOfDay: false, newInstall: false, upgraded: false })
   const row = (dim: string): number =>
     rolled.counters.find((c) => c.metric === USAGE_METRICS.health && c.dim === dim)?.n ?? 0
   assert.equal(row('0.6.0:imageFetchFailures'), 3)
   assert.equal(row('0.6.0:suppressedErrorLines'), 9)
+  assert.equal(row('0.6.0:imageCacheReadFailures'), 4)
   assert.deepEqual(fresh, NO_HEALTH, 'the drain before them was clean')
   resetHealth()
 })
