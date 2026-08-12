@@ -184,16 +184,16 @@ const NONE: ReadonlySet<string> = new Set()
 
 test('a proc lane counts every firing and keeps damage and healing apart', () => {
   const lanes = new Map<string, SpellProcLane>()
-  addSpellProc(lanes, { spell: 'Lifetap Strike', amount: 40, isHeal: false, active: NONE })
-  addSpellProc(lanes, { spell: 'Lifetap Strike', amount: 31, isHeal: true, active: NONE })
-  addSpellProc(lanes, { spell: 'Lifetap Strike II', amount: 9, isHeal: false, active: NONE })
+  addSpellProc(lanes, { spell: 'Lifetap Strike', side: 'damage', amount: 40, active: NONE })
+  addSpellProc(lanes, { spell: 'Lifetap Strike', side: 'heal', amount: 31, active: NONE })
+  addSpellProc(lanes, { spell: 'Lifetap Strike II', side: 'damage', amount: 9, active: NONE })
   const lane = lanes.get('lifetap strike')
   assert.equal(lane?.damage, 49)
   assert.equal(lane?.heal, 31)
   // THE TAP RULE. Two damage lines and one heal line is TWO firings, not three: one lifetap
   // prints both a hit and a heal, so the sides are counted apart and the lane takes the LARGER.
   // (Wave 2 shipped a single counter and w39's twelve firings reported 24.)
-  assert.deepEqual(lane?.hits, { damage: 2, heal: 1 })
+  assert.deepEqual(lane?.hits, { damage: 2, heal: 1, landing: 0 })
   assert.equal(laneCount(lane!), 2)
 })
 
@@ -201,7 +201,7 @@ test('a HEAL-ONLY proc still counts once — max, never damageHits alone', () =>
   const lanes = new Map<string, SpellProcLane>()
   // `Center`, delivered inside a Quick Buff burst (w40): a real firing that prints no damage
   // line at all. Counting only the damage side would erase it.
-  addSpellProc(lanes, { spell: 'Center', amount: 66, isHeal: true, active: NONE })
+  addSpellProc(lanes, { spell: 'Center', side: 'heal', amount: 66, active: NONE })
   const lane = lanes.get('center')
   assert.equal(laneCount(lane!), 1)
   assert.equal(lane?.damage, 0)
@@ -212,10 +212,10 @@ test('the per-state split folds the ACTIVE SET at the firing instant, side by si
   const lanes = new Map<string, SpellProcLane>()
   const blade: ReadonlySet<string> = new Set(['invocation:spellblade', 'stance:offensive'])
   // One tap under two states: both sides bump, both states record ONE firing — never two.
-  addSpellProc(lanes, { spell: 'Lifetap Strike', amount: 40, isHeal: false, active: blade })
-  addSpellProc(lanes, { spell: 'Lifetap Strike', amount: 31, isHeal: true, active: blade })
+  addSpellProc(lanes, { spell: 'Lifetap Strike', side: 'damage', amount: 40, active: blade })
+  addSpellProc(lanes, { spell: 'Lifetap Strike', side: 'heal', amount: 31, active: blade })
   // A second firing with nothing on: the lane grows, neither state does.
-  addSpellProc(lanes, { spell: 'Lifetap Strike', amount: 12, isHeal: false, active: NONE })
+  addSpellProc(lanes, { spell: 'Lifetap Strike', side: 'damage', amount: 12, active: NONE })
   const lane = lanes.get('lifetap strike')
   assert.equal(laneCount(lane!), 2)
   assert.equal(sidesCount(lane?.byState.get('invocation:spellblade')), 1)

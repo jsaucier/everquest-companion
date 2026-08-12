@@ -13,11 +13,16 @@
 // reader could read these forms — is understood without being hand-edited. `durationText` is the
 // wiki's own text either way; nothing here invents a duration the wiki did not state.
 //
-// WHY IT MATTERS AT ALL. `BuffInstances.applyMessageBuff` returns early for a landing with no
-// duration and no illusion flag, so a spell whose duration string this file cannot read is a spell
-// the buffs window can never draw — however correct its three messages are. A shaman reported
-// exactly that for Spirit of the Puma, whose wiki duration is the three characters `60s`; 89 rows
-// of the committed scrape were in that state.
+// WHY IT MATTERS AT ALL. `BuffInstances.applyMessageBuff` returns early for a landing that states
+// no duration, no illusion flag and no PERMANENCE (JOS-215's third arm — see `SpellStats.isPermanent`,
+// which reads `durationText` rather than the number this file derives from it). So a spell whose
+// duration string this file cannot read is a spell the buffs window can never draw — however correct
+// its three messages are. A shaman reported exactly that for Spirit of the Puma, whose wiki duration
+// is the three characters `60s`; 89 rows of the committed scrape were in that state.
+//
+// THE `Permanent` ARM IS NOT A GAP THIS FILE SHOULD CLOSE. `parseDurationMs` deliberately returns
+// null for the word, because a permanent buff has no number — inventing one would put a countdown
+// in front of a player for a buff that is never going to end. The model reads the WORD instead.
 
 /**
  * ms for one "<num> <unit>" component. Unit forms: sec/second(s), min/minute(s), hr/hour(s),

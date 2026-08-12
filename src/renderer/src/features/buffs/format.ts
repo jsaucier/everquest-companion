@@ -36,6 +36,20 @@ export function isOverdue(elapsedMs: number, p75: number | null, n: number): boo
   return p75 != null && n >= 2 && elapsedMs > p75
 }
 
+/**
+ * WHAT THE PROVENANCE CHIP MEANS, in the user's words (JOS-117 + JOS-212). Both learned sources
+ * wear the same "log" chip because the number came from the log either way, but they make OPPOSITE
+ * claims about the spell database, so the tooltip must not be shared: 'observed' says the log ran
+ * longer than the baseline, 'cluster' says the app's own repeated measurements overruled a baseline
+ * that is too long (a classic-era wiki number for a spell this game re-tiered). Saying "longer than
+ * the baseline" for a shorter number is the one thing this string may never do.
+ */
+export function estimatorSourceTitle(src: string | undefined): string {
+  if (src === 'db') return 'The spell-database baseline'
+  if (src === 'cluster') return 'From your logged casts - three clean casts agree it runs shorter than the baseline'
+  return 'From your logged casts - longer than the baseline'
+}
+
 import type { ActiveBuff, BuffClass } from '@shared/types'
 
 /**

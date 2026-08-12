@@ -29,6 +29,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { loadSpellDb } from '../src/main/data/spellDb.ts'
+import { parseEvent } from '../src/main/log/parser.ts'
 import { installSpellDb } from '../src/main/log/rulesets.ts'
 import { BuffsModule } from '../src/main/modules/buffs.ts'
 import { BuffTimersModule } from '../src/main/modules/buffTimers.ts'
@@ -37,7 +38,7 @@ import { SpellStats } from '../src/main/modules/buffsStats.ts'
 import { spellKey } from '../src/main/modules/buffsShapes.ts'
 import type { LogEvent } from '../src/shared/logEvents.ts'
 import type { BuffsSnap } from '../src/shared/types.ts'
-import { readFixture, replayBuffs, findActive, tsOf } from './harness.mts'
+import { readFixture, replayBuffs, replayBuffTimers, findActive, tsOf } from './harness.mts'
 
 const W18 = 'w18-charm-pet-kills.log'
 
@@ -94,7 +95,7 @@ test('JOS-156: the SAME line leaves the live pet its own buffs', () => {
   // is wearing a Swift Like the Wind the owner cast on it at 15:20:59. The censor reads the
   // spell's CLASS, so a detrimental row on that name goes and a beneficial one stays.
   const rows = onTarget(at(AFTER_FIRST_DEATH), 'Bzzazzt')
-  assert.deepEqual(rows, ['swift like the wind iv'], 'the pet keeps its haste and loses nothing else')
+  assert.deepEqual(rows, ['swift like the wind'], 'the pet keeps its haste and loses nothing else')
 })
 
 test('JOS-156: the player keeps their own buffs when a mob dies', () => {
@@ -138,7 +139,7 @@ test('JOS-156: all three death shapes clear the dead mob rows', () => {
   for (const line of shapes) {
     assert.deepEqual(
       onTarget(withDeathShape(line), 'Bzzazzt'),
-      ['swift like the wind iv'],
+      ['swift like the wind'],
       `the debuffs go and the pet buff stays: ${line.slice(27)}`
     )
   }
@@ -283,34 +284,44 @@ test('JOS-156: a real wear-off DOES still mint', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// THE CROWD-CONTROL HALF (modules/buffTimers.ts). A DEATH ENDS A HOLD BUT TEACHES NOTHING.
+// THE CROWD-CONTROL HALF (modules/buffTimers.ts).
 //
-// This half never had the ticket's defect: it reads `ev.name` off the one unified death event, so
-// all three shapes have always closed the right hold. What it DID do is mint — a mez ended by a
-// corpse was fed to the learner as if the spell had been observed running out, when a
-// land-to-death span is the hold being cut short. buffRounds.ts's ruling 5 has always listed a
-// death among the contaminating events; this is that sentence finally enforced on this path.
+// JOS-156: A DEATH TEACHES NOTHING. A mez ended by a corpse used to be fed to the learner as if
+// the spell had been observed running out, when a land-to-death span is the hold being cut short.
+// buffRounds.ts's ruling 5 has always listed a death among the contaminating events.
+//
+// JOS-228: …AND A DEATH IS NOT A MEZ ENDING AT ALL. The owner, live and urgent: kill a mob that
+// shares its name with a mezzed one and the mez bar vanished, with the mezzed mob still standing.
+// The name is all the log gives, so the two sentences are indistinguishable strings — but a
+// mesmerized mob CANNOT be killed while it is mesmerized (the first point of damage wakes it, and
+// the wake's own wear-off prints first: 1,472 of 1,518 wake lines share the exact second of that
+// mob's wear-off, wear-off first, measured over the owner's whole log). So a death arriving while
+// a mez hold still stands is about ANOTHER mob of that name, and the ruling is per-VERB: the three
+// landing sentences whose hold damage breaks refuse the corpse, while `has been ensnared.` — a
+// snare does nothing to stop you killing what it is on — keeps JOS-140 ruling 7's count-chip rule.
 //
 // Driven through the real module rather than a fixture because the owner's log has no mez whose
 // CLEAN cycle a death closes (every mez that dies in w10-cazic-slow.log was refreshed first, and a
 // refresh already contaminates), so no committed bytes can tell the two behaviours apart. The
-// events are the ones the parser emits for lines that window is full of.
+// events are the ones the parser emits for lines that window is full of; the acceptance pair at
+// the end of the file drives the RAW SENTENCES through the real parser instead.
 const MEZ = 'Mesmerization III'
+const SNARE = 'Ensnare'
 const MEZ_START = tsOf('[Sat Aug 01 20:50:33 2026] x')
 
 /** A bare BuffTimersModule over its own anchors + learner, with a self cast already anchored. */
-function timersWithAnchoredCast(ts: number): { timers: BuffTimersModule; stats: SpellStats } {
+function timersWithAnchoredCast(ts: number, spell = MEZ): { timers: BuffTimersModule; stats: SpellStats } {
   const db = loadSpellDb()
   installSpellDb(db)
   const anchors = new CastAnchors()
   const stats = new SpellStats(db)
   const timers = new BuffTimersModule(anchors, stats)
   timers.reset()
-  anchors.noteSelfCast(MEZ, ts)
+  anchors.noteSelfCast(spell, ts)
   return { timers, stats }
 }
 
-/** `<mob> has been mesmerized.` as the parser emits it with the DB installed. */
+/** `<mob> has been mesmerized.` as the parser emits it with the DB installed — VERB and all. */
 function ccLanding(mob: string, ts: number): LogEvent {
   return {
     kind: 'cc',
@@ -318,32 +329,45 @@ function ccLanding(mob: string, ts: number): LogEvent {
     ts,
     raw: `[x] ${mob} has been mesmerized.`,
     mob,
+    verb: 'mesmerized',
     candidates: [{ name: MEZ, durationMs: 24_000 }]
   }
 }
 
-function mezSamples(stats: SpellStats): number {
-  return stats.statFor(spellKey(MEZ))?.n ?? 0
+/** …and its snare sibling, the one verb in the family a corpse CAN explain. */
+function snareLanding(mob: string, ts: number): LogEvent {
+  return {
+    kind: 'cc',
+    seq: 1,
+    ts,
+    raw: `[x] ${mob} has been ensnared.`,
+    mob,
+    verb: 'ensnared',
+    candidates: [{ name: SNARE, durationMs: 660_000 }]
+  }
 }
 
-test('JOS-156: a hold ended by a DEATH mints no duration sample', () => {
+function samplesFor(stats: SpellStats, spell: string): number {
+  return stats.statFor(spellKey(spell))?.n ?? 0
+}
+
+function aDeath(ts: number): LogEvent {
+  return { kind: 'death', seq: 2, ts, raw: '[x] You have slain a scareling!', name: 'a scareling', bySelf: true }
+}
+
+test('JOS-228: a death on a same-named mob leaves the mez hold standing, clock untouched', () => {
   const { timers, stats } = timersWithAnchoredCast(MEZ_START)
   timers.onEvent(ccLanding('a scareling', MEZ_START + 1_000))
   assert.equal(timers.snapshot().state.holds.length, 1, 'the mez opened a hold')
 
-  timers.onEvent({
-    kind: 'death',
-    seq: 2,
-    ts: MEZ_START + 15_000,
-    raw: '[x] You have slain a scareling!',
-    name: 'a scareling',
-    bySelf: true
-  })
-  assert.equal(timers.snapshot().state.holds.length, 0, 'and the death closed it')
-  assert.equal(mezSamples(stats), 0, 'a corpse is not an observation of how long a mez lasts')
+  timers.onEvent(aDeath(MEZ_START + 15_000))
+  const holds = timers.snapshot().state.holds
+  assert.equal(holds.length, 1, 'the scareling you killed is not the scareling you mezzed')
+  assert.equal(holds[0].startedTs, MEZ_START + 1_000, 'and the bar is still counting from the landing')
+  assert.equal(samplesFor(stats, MEZ), 0, 'a corpse is not an observation of how long a mez lasts')
 })
 
-test('JOS-156: every death shape closes the hold, and none of them mints', () => {
+test('JOS-228: every death shape leaves the mez standing, and none of them mints', () => {
   const deaths: Omit<LogEvent & { kind: 'death' }, 'seq' | 'ts' | 'raw'>[] = [
     { kind: 'death', name: 'a scareling', bySelf: true },
     { kind: 'death', name: 'a scareling', bySelf: false, killer: 'phoboplasm' },
@@ -353,9 +377,79 @@ test('JOS-156: every death shape closes the hold, and none of them mints', () =>
     const { timers, stats } = timersWithAnchoredCast(MEZ_START)
     timers.onEvent(ccLanding('a scareling', MEZ_START + 1_000))
     timers.onEvent({ ...d, seq: 2, ts: MEZ_START + 15_000, raw: '[x] a death line' })
-    assert.equal(timers.snapshot().state.holds.length, 0, `killer=${d.killer ?? String(d.bySelf)}`)
-    assert.equal(mezSamples(stats), 0, `killer=${d.killer ?? String(d.bySelf)} taught the learner nothing`)
+    assert.equal(timers.snapshot().state.holds.length, 1, `killer=${d.killer ?? String(d.bySelf)}`)
+    assert.equal(samplesFor(stats, MEZ), 0, `killer=${d.killer ?? String(d.bySelf)} taught the learner nothing`)
   }
+})
+
+test('JOS-228: a round of three survives a fourth mob of the name dying, count and all', () => {
+  // The count chip is what is HELD, and a kill is evidence about a mob — not about the name. Before
+  // this the chip went 3 → 2 on a corpse that may never have been mezzed at all.
+  const { timers } = timersWithAnchoredCast(MEZ_START)
+  for (let i = 0; i < 3; i++) timers.onEvent(ccLanding('a scareling', MEZ_START + 1_000))
+  assert.equal(timers.snapshot().state.holds[0]?.count, 3, 'one AE round, one row, a chip of three')
+  timers.onEvent(aDeath(MEZ_START + 5_000))
+  assert.equal(timers.snapshot().state.holds[0]?.count, 3, 'the kill decrements nothing')
+})
+
+test('JOS-156 stands inside JOS-228: the death still contaminates the whole group', () => {
+  // The display ruling changed; the LEARNING ruling did not. A same-named death means the group has
+  // lost track of which mob of that name is which, so the break line that arrives afterwards — a
+  // clean cycle by every other measure — must still mint nothing.
+  const { timers, stats } = timersWithAnchoredCast(MEZ_START)
+  timers.onEvent(ccLanding('a scareling', MEZ_START + 1_000))
+  timers.onEvent(aDeath(MEZ_START + 10_000))
+  timers.onEvent({
+    kind: 'cc',
+    seq: 3,
+    ts: MEZ_START + 21_000,
+    raw: '[x] Your Mesmerization spell has worn off of a scareling.',
+    mob: 'a scareling',
+    refresh: true,
+    spell: MEZ
+  })
+  assert.equal(timers.snapshot().state.holds.length, 0, 'the BREAK is what ends the row')
+  assert.equal(samplesFor(stats, MEZ), 0, 'and the kill in the middle of it cost the sample')
+})
+
+test('JOS-228: a SNARE hold is still ended by a corpse — one landing, and it mints nothing', () => {
+  // The other side of the verb rule, so the refusal is a distinction rather than a blanket. Nothing
+  // about `has been ensnared.` stops you killing the mob, so JOS-140 ruling 7 is untouched here.
+  const { timers, stats } = timersWithAnchoredCast(MEZ_START, SNARE)
+  // ONE ROUND of two — a later second would REFRESH the landing it already holds rather than
+  // append a second one (buffRounds.ts's min(N, M) rule), which is a different test.
+  timers.onEvent(snareLanding('a scareling', MEZ_START + 1_000))
+  timers.onEvent(snareLanding('a scareling', MEZ_START + 1_000))
+  assert.equal(timers.snapshot().state.holds[0]?.count, 2, 'two snared scarelings, one row')
+  timers.onEvent(aDeath(MEZ_START + 15_000))
+  assert.equal(timers.snapshot().state.holds[0]?.count, undefined, 'a chip of one is omitted: 2 → 1')
+  timers.onEvent(aDeath(MEZ_START + 25_000))
+  assert.equal(timers.snapshot().state.holds.length, 0, 'and only an empty group removes the row')
+  assert.equal(samplesFor(stats, SNARE), 0, 'neither corpse was a duration')
+})
+
+test('JOS-228: a death records no CcEnd, so it cannot blank a row the buffs model kept', () => {
+  // An `ends` entry with no spell on it matches EVERY ActiveBuff on that entity in the projection
+  // (shared/buffTimers.ts `endedByCc`), so the death that closed this snare used to erase the slow
+  // the buffs half had deliberately kept standing at one fewer on its OWN count chip. Two models,
+  // one fact, and the wrong one winning (world-model law 4).
+  const { timers } = timersWithAnchoredCast(MEZ_START, SNARE)
+  timers.onEvent(snareLanding('a scareling', MEZ_START + 1_000))
+  timers.onEvent(aDeath(MEZ_START + 15_000))
+  assert.deepEqual(timers.snapshot().state.ends, [], 'the corpse is the buffs half’s to censor, not this one’s')
+})
+
+test('JOS-228: a mez whose mob really did die still leaves on its own schedule', () => {
+  // The bound on the cost. Refusing the corpse can only ever leave a row up until the
+  // unwitnessed-expiry cull takes it (estimate + grace, buffTimers.ts `sweep`) — the same polarity
+  // report P69NZ5 already documents for an out-of-range kill, never an eternal squat.
+  const { timers } = timersWithAnchoredCast(MEZ_START)
+  timers.onEvent(ccLanding('a scareling', MEZ_START + 1_000))
+  timers.onEvent(aDeath(MEZ_START + 5_000))
+  timers.onTick(MEZ_START + 1_000 + 24_000 + 59_000)
+  assert.equal(timers.snapshot().state.holds.length, 1, 'still inside the DB-floor grace')
+  timers.onTick(MEZ_START + 1_000 + 24_000 + 61_000)
+  assert.equal(timers.snapshot().state.holds.length, 0, 'and gone once nothing could still be holding')
 })
 
 test('JOS-156: …while a real break line still mints, so the CC refusal is a distinction', () => {
@@ -370,5 +464,91 @@ test('JOS-156: …while a real break line still mints, so the CC refusal is a di
     refresh: true,
     spell: MEZ
   })
-  assert.equal(mezSamples(stats), 1, 'a witnessed break IS a clean cycle')
+  assert.equal(samplesFor(stats, MEZ), 1, 'a witnessed break IS a clean cycle')
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE OWNER'S ACCEPTANCE, in raw sentences through the real parser (JOS-228). Everything above
+// hands the modules events; this hands them BYTES, so the new `CcEvent.verb` is proved to survive
+// the cascade rather than assumed.
+
+const P0 = '[Sat Aug 01 20:50:30 2026] You begin casting Mesmerization III.'
+const MEZ_A = '[Sat Aug 01 20:50:33 2026] a scareling has been mesmerized.'
+const KILL_B = '[Sat Aug 01 20:50:45 2026] You have slain a scareling!'
+const BREAK_A = '[Sat Aug 01 20:50:50 2026] Your Mesmerization spell has worn off of a scareling.'
+const KILL_A = '[Sat Aug 01 20:50:52 2026] You have slain a scareling!'
+
+test('JOS-228: the parser carries the landing VERB, which is the whole of what the ruling reads', () => {
+  // Direct, because losing the capture group would be SILENT: `verb` would be undefined, every
+  // hold would open with `mez:false`, and the next kill in the zone would take somebody's mez bar
+  // down again with only the acceptance test below to notice.
+  const verbs = ['mesmerized', 'enthralled', 'entranced', 'ensnared']
+  for (const verb of verbs) {
+    const ev = parseEvent(`[Sat Aug 01 20:50:33 2026] a scareling has been ${verb}.`, 0)
+    assert.equal(ev?.kind, 'cc', `${verb} is a crowd-control application`)
+    assert.equal((ev as Extract<LogEvent, { kind: 'cc' }>).verb, verb, `${verb} reaches the model as itself`)
+  }
+})
+
+test('JOS-228 acceptance: mez one scareling, kill the other, and the bar is still there', () => {
+  const { timers } = replayBuffTimers([P0, MEZ_A, KILL_B])
+  assert.equal(timers.holds.length, 1, 'the mez survives the kill of its namesake')
+  assert.equal(timers.holds[0].target, 'a scareling')
+  assert.equal(timers.holds[0].startedTs, tsOf(MEZ_A), 'counting from the landing, not restarted')
+  assert.equal(timers.holds[0].count, undefined, 'one held mob, so no count chip')
+})
+
+test('JOS-228 acceptance: killing the LAST one of the name takes the bar with it', () => {
+  // You cannot kill what you have not woken, so the real log prints the break BEFORE the corpse —
+  // and the break is what ends the row, exactly as it always has.
+  const { timers } = replayBuffTimers([P0, MEZ_A, KILL_B, BREAK_A, KILL_A])
+  assert.deepEqual(timers.holds, [], 'the bar goes away when the mob that was holding it does')
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// JOS-213 — A PACIFIED MOB CAN BE KILLED, SO THE ORDINARY DEATH CENSOR APPLIES.
+//
+// The calm line reaches the DEBUFFS window since JOS-213, and a mob timer that could not be
+// cleared by a corpse would be a bar squatting for the rest of Soothe's 150 s. It cannot take the
+// mez refusal above: that ruling rests on a hold DAMAGE BREAKS, which the log announces
+// (`<mob> has been awakened by <name>.`) before the corpse appears. A calm is not that — a
+// pacified mob is calm, not invulnerable — so the ordinary decrement-one censor is the right one,
+// and buffsInstanceRules.ts `deathCensorsOpen` has covered it since JOS-156 precisely because
+// the PACIFY family is a `cls: 'buff'` standing on a hostile.
+//
+// Fixture: w65-pacify-mob-death.log, the owner's own Lower Guk window (tests/extract-calm-
+// fixtures.mjs W65 has the hand-read). Two Soothes on `a shin ghoul knight`, two on
+// `a vampire bat`, then he kills the knight 35 s in.
+
+const W65 = 'w65-pacify-mob-death.log'
+const BEFORE_KNIGHT_DIES = tsOf('[Mon Jul 20 19:44:54 2026] x')
+const AFTER_KNIGHT_DIES = tsOf('[Mon Jul 20 19:44:55 2026] You have slain a shin ghoul knight!')
+/** The log's own confirmation, one second past the corpse — it must land on an empty group. */
+const AFTER_LATE_WEAR_OFF = tsOf('[Mon Jul 20 19:44:56 2026] Your Soothe spell has worn off of a shin ghoul knight.')
+
+test('JOS-213: killing a pacified mob clears ITS row and leaves the other pacified mob standing', () => {
+  const lines = readFixture(W65)
+  const before = replayBuffTimers(lines, { until: BEFORE_KNIGHT_DIES })
+  assert.deepEqual(
+    before.rows.filter((r) => r.name === 'Soothe').map((r) => r.target).sort(),
+    ['a shin ghoul knight', 'a vampire bat'],
+    'both calms should be standing before the kill'
+  )
+
+  const after = replayBuffTimers(lines, { until: AFTER_KNIGHT_DIES })
+  assert.deepEqual(
+    after.rows.filter((r) => r.name === 'Soothe').map((r) => r.target),
+    ['a vampire bat'],
+    'the corpse takes its own row and nothing else'
+  )
+})
+
+test('…and it MINTS NOTHING — a land-to-death span is not a duration, for a calm either', () => {
+  const lines = readFixture(W65)
+  const { spellStats } = replayBuffTimers(lines, { until: AFTER_LATE_WEAR_OFF })
+  assert.equal(
+    spellStats.statFor(spellKey('Soothe'), 'self')?.n ?? 0,
+    0,
+    'the death closed the landing and the late wear-off found nothing — neither may mint a sample'
+  )
 })

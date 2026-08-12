@@ -472,21 +472,6 @@ export const IPC = {
   // repeat is refused by the phase accounting itself (shared/perf.ts `addMark`).
   perfRendererHydrated: 'perf:rendererHydrated',
 
-  // ---- the startup checkpoint (JOS-208) -------------------------------------------------
-  //
-  // ONE SWITCH, AND IT TAKES EFFECT NEXT LAUNCH. The checkpoint is read once, at the moment a
-  // character's log is attached, so flipping it mid-session cannot retroactively change how this
-  // launch started — the graphics prefs' shape and for the same reason, which is why there is
-  // deliberately no "apply now" channel here either.
-  //
-  // renderer -> main: the persisted switch, as the launch RESOLVED it. Returns
-  // `{ stored: boolean; active: boolean; why: FoldCacheDecision }` so the surface can say when a
-  // dev environment override is disagreeing with the preference rather than silently lying.
-  foldCacheGet: 'foldCache:get',
-  // renderer -> main: set the preference. Arg: boolean; a non-boolean leaves it alone. Returns
-  // the same shape as the getter.
-  foldCacheSet: 'foldCache:set',
-
   // ---- graphics compatibility (JOS-40 — shared/graphicsPrefs.ts) ------------------------
   //
   // Two switches for machines whose driver dislikes what this app draws: software rendering

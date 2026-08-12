@@ -3,31 +3,10 @@
 // "complete the trade" line closes the group. Delta = turn-ins appended.
 
 import type { EqModule } from './types'
-import { S, validate, type FoldSchema } from '../foldCache/schema'
-import type { FoldCheckpointable } from '../foldCache/serialize'
 import type { LogEvent } from '../../shared/logEvents'
 import type { TurnInDelta, TurnInEvent, TurnInSnap } from '../../shared/types'
 
-/**
- * THE CHECKPOINT DECLARATION (JOS-208 phase 2). `pendingOffer` is IN it: an offer group is a
- * half-formed turn-in the very next `trade` line closes, so a checkpoint written between the two
- * — which a split point routinely is — must carry it or the turn-in is lost that a cold replay
- * records. `null` becomes absent, the grammar's one way to say "no such fact".
- */
-const TURNINS_FOLD_SCHEMA: FoldSchema = S.obj({
-  turnIns: S.arr(S.obj({ ts: S.num, npc: S.str, items: S.arr(S.str) })),
-  pendingOffer: S.opt(S.obj({ npc: S.str, items: S.arr(S.str) })),
-  seq: S.num
-})
-
-/** The turn-in module's complete event-derived state. */
-export interface TurnInsFoldState {
-  turnIns: TurnInEvent[]
-  pendingOffer?: { npc: string; items: string[] }
-  seq: number
-}
-
-export class TurnInsModule implements EqModule<TurnInSnap, TurnInDelta>, FoldCheckpointable<TurnInsFoldState> {
+export class TurnInsModule implements EqModule<TurnInSnap, TurnInDelta> {
   readonly id = 'turnins'
   private turnIns: TurnInEvent[] = []
   private pendingOffer: { npc: string; items: string[] } | null = null
@@ -76,32 +55,5 @@ export class TurnInsModule implements EqModule<TurnInSnap, TurnInDelta>, FoldChe
     const delta: TurnInDelta = { appended: this.pending }
     this.pending = []
     return { seq: this.seq, delta }
-  }
-
-  // ---- the checkpoint seam (JOS-208) ---------------------------------------------------------
-
-  readonly foldSchema = TURNINS_FOLD_SCHEMA
-
-  serializeFold(): TurnInsFoldState {
-    return {
-      // The rows are copied shallowly with their item lists, because a `pendingOffer`'s array is
-      // handed STRAIGHT to the TurnInEvent it closes (`items: this.pendingOffer.items`) and is
-      // pushed into by later offers — so an uncopied blob would alias a growing array.
-      turnIns: this.turnIns.map((t) => ({ ...t, items: [...t.items] })),
-      ...(this.pendingOffer === null
-        ? {}
-        : { pendingOffer: { npc: this.pendingOffer.npc, items: [...this.pendingOffer.items] } }),
-      seq: this.seq
-    }
-  }
-
-  deserializeFold(state: unknown): boolean {
-    if (!validate(TURNINS_FOLD_SCHEMA, state).ok) return false
-    const s = state as TurnInsFoldState
-    this.turnIns = s.turnIns
-    this.pendingOffer = s.pendingOffer ?? null
-    this.seq = s.seq
-    this.pending = []
-    return true
   }
 }

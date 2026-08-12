@@ -24,6 +24,7 @@ import type { BossKill, TargetStatus } from './bossStatus'
 import { CategorySection, LoadoutSections } from './BossSections'
 import { untilReset } from './lockout'
 import { useLockoutWeek } from './useLockoutWeek'
+import { defeatedThisWeek, everDefeated, filterRoster } from './rosterFilter'
 import type { MobTarget } from '../mobs/mobTarget'
 import Confetti from '../../lib/Confetti'
 
@@ -116,15 +117,21 @@ function BossToolbar({
       <FormControlLabel
         control={
           <Switch
+            data-testid="boss-defeated-only"
             checked={filters.defeatedOnly}
             onChange={(e) => filters.onDefeatedOnlyChange(e.target.checked)}
           />
         }
-        label="Defeated only"
+        // THE LABEL FOLLOWS THE MODE (JOS-237). The switch filters on what "defeated" means in
+        // the view you are standing in (rosterFilter.ts), so on the week view it must SAY so —
+        // "Defeated only" beside a roster of this week's clears reads as the all-time filter it
+        // used to be, which is the wrong answer written the wrong way round.
+        label={mode === 'week' ? 'Defeated this week' : 'Defeated only'}
       />
       <FormControlLabel
         control={
           <Switch
+            data-testid="boss-by-loadout"
             checked={filters.byLoadout}
             onChange={(e) => filters.onByLoadoutChange(e.target.checked)}
           />
@@ -197,13 +204,24 @@ export default function BossView({ onOpenMob }: { onOpenMob: (t: MobTarget) => v
   }
   const compact = density === 'compact'
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    let list = statuses
-    if (defeatedOnly) list = list.filter((s) => s.killed)
-    if (q) list = list.filter((s) => s.target.name.toLowerCase().includes(q))
-    return list
-  }, [statuses, query, defeatedOnly])
+  // The week's clock, and it is the ONLY one on this view: the ladder, the chips, the tally and
+  // — since JOS-237 — the "Defeated only" filter all read this same window. Idle on OVERALL.
+  const { week, lockOf } = useLockoutWeek(mode === 'week')
+
+  /**
+   * WHAT THE SWITCH FILTERS ON, and the whole of JOS-237 (rosterFilter.ts carries the argument).
+   * The all-time flag is right for the OVERALL roster and wrong for the week view, which is about
+   * this reset week and nothing else — so the predicate is the mode's, not the roster's.
+   */
+  const defeated = useMemo(
+    () => (mode === 'week' ? defeatedThisWeek(week) : everDefeated),
+    [mode, week]
+  )
+
+  const filtered = useMemo(
+    () => filterRoster(statuses, { query, defeatedOnly, defeated }),
+    [statuses, query, defeatedOnly, defeated]
+  )
 
   const byCategory = useMemo(() => {
     const map = new Map<string, TargetStatus[]>()
@@ -217,13 +235,14 @@ export default function BossView({ onOpenMob }: { onOpenMob: (t: MobTarget) => v
     )
   }, [filtered])
 
-  const { week, lockOf } = useLockoutWeek(mode === 'week')
+  // The tally counts the WHOLE roster, never `filtered` — it is the denominator the filter is
+  // measured against, so it must not move when a switch is flipped.
   const locked = statuses.filter((s) => lockOf(s).length > 0).length
-  const defeated = statuses.filter((s) => s.killed).length
+  const everKilled = statuses.filter((s) => s.killed).length
   const tally =
     mode === 'week'
       ? `${locked} / ${statuses.length} locked this week · resets in ${untilReset(week)} · green rung = cleared`
-      : `${defeated} / ${statuses.length} defeated · badge = highest instance tier`
+      : `${everKilled} / ${statuses.length} defeated · badge = highest instance tier`
   const section = {
     compact,
     minCol: compact ? 116 : 180,
@@ -259,7 +278,16 @@ export default function BossView({ onOpenMob }: { onOpenMob: (t: MobTarget) => v
 
       <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
         {byLoadout ? (
-          <LoadoutSections {...section} list={filtered} />
+          // THE SWITCH REACHES THE CARDS, NOT ONLY THE TARGETS (JOS-237). Sectioning by loadout
+          // splits a target into one card per tier run, so filtering the roster alone would leave
+          // a card describing kills that took no lockout this week sitting under "Defeated this
+          // week" — grey, chipped `open`, and drawn only because ANOTHER of the target's runs was
+          // cleared. The same predicate, applied at the same grain the cards are.
+          <LoadoutSections
+            {...section}
+            list={filtered}
+            keep={defeatedOnly ? defeated : undefined}
+          />
         ) : (
           byCategory.map(([category, list]) => (
             <CategorySection key={category} {...section} category={category} list={list} />

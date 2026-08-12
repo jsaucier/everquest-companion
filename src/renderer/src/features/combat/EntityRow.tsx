@@ -24,7 +24,9 @@ import { Tooltip } from '../../lib/Tooltip'
  * HERE rather than in combatShared.tsx because this is that file's only consumer and it sits at
  * the measured line ceiling: the rule is to split rather than ratchet.
  */
-const KIND_TAG: Partial<Record<string, string>> = { pet: 'pet', member: 'group' }
+// `ally` (JOS-250): somebody else's charm pet, credited to whoever charmed it. The row's NAME
+// already carries the charmer, so the chip only has to say which kind of thing the row is.
+const KIND_TAG: Partial<Record<string, string>> = { pet: 'pet', member: 'group', allyPet: 'ally' }
 
 function KindChip({ kind }: { kind: string }): React.JSX.Element | null {
   const tag = KIND_TAG[kind]

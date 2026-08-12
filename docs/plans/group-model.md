@@ -79,18 +79,31 @@ and is labeled unverified in a comment.
 Three, on the combat dashboard AND each damage/heal overlay:
 
 - **You** — you + your pets (today's drill default, unchanged)
-- **Group** (NEW DEFAULT when a roster exists) — you + roster members + pets
-  ATTRIBUTED BY THE EXISTING pet-ownership logic (petRows) to any of those.
-  Charm pets follow whatever attribution already decides; this plan changes
-  no attribution.
-- **Everyone** — every recorded source (today's behavior; "open it up to all
-  the people around you" is this one click)
+- **Group** — you + roster members + pets ATTRIBUTED BY THE EXISTING
+  pet-ownership logic (petRows) to any of those. Charm pets follow whatever
+  attribution already decides; this plan changes no attribution.
+- **Everyone** (THE DEFAULT, JOS-229) — every recorded source (today's
+  behavior; "open it up to all the people around you" is this one click)
 
 Defaulting: if the roster is EMPTY or the model has seen no signal this
 session, Group scope is not silently wrong — it falls back to rendering as
 Everyone with the scope chip showing `Group (no roster yet)`. Law 1: an empty
 roster means unknown, and unknown must not hide people. The moment a signal
 lands, the allowlist engages.
+
+**JOS-229 MOVED THE DEFAULT TO EVERYONE.** This plan shipped Group as the
+default (G2 below) on the strength of that fallback: an empty roster can hide
+nobody, so the narrow answer looked free. It is free only for the EMPTY
+roster, not the WRONG one — membership here is inferred from lines the game
+prints once, so a join the log never carried, a group formed before the app
+was open, or a break EQ never announced leaves a roster the model has "seen"
+and that is missing a real player. Group then hides that player's bars with no
+fallback to explain it, and the report the owner receives is that the damage
+meter is broken. So the opening answer is the one that filters nobody, and
+Group is a deliberate narrowing a user asks for. It is a FRESH-STATE default
+only: `eq.combat.meterScope` is written exclusively by the Preferences control,
+so a stored 'group' is a choice and is handed back untouched — no migration.
+The deeper fix (making membership detection less lossy) is separate work.
 
 "What you're battling" needs no new model — fights/targets are already
 segmented; scope only filters SOURCES, never targets.
@@ -102,8 +115,9 @@ segmented; scope only filters SOURCES, never targets.
   every overlay header, each persisting its own key; the owner retired that —
   a selector on every surface is clutter answering a question you set once,
   and three surfaces holding three answers was the common case rather than the
-  useful one. One key (`eq.combat.meterScope`, default Group), read by the
-  Combat tab, the Overview damage card and every floating meter.
+  useful one. One key (`eq.combat.meterScope`, default Everyone since
+  JOS-229), read by the Combat tab, the Overview damage card and every
+  floating meter.
 - Scope visibility: the surfaces keep the WORD, read-only — the Combat tab's
   lens line and, on the floating meters, the PANEL FLOOR (JOS-121). A meter
   that is filtering rows out has to be able to say so where the rows are
@@ -151,7 +165,8 @@ sources first, one wave at a time.
 - **G1 — the module**: shapes swept from corpus, roster module + deltas +
   tests (join/leave/confirm/instance/stale/epoch), no UI. Ships dark.
 - **G2 — scope filtering**: meters + overlays consume the snapshot; scope
-  chip + persistence; Group default with the no-roster fallback; e2e coverage
+  chip + persistence; Group default with the no-roster fallback (JOS-229 later
+  moved that default to Everyone — see §2); e2e coverage
   via the E2 fixture-append driver (write join lines into the tailed fixture,
   assert the allowlist engages live).
 - **G3 — roster popover + user edits** (provenance ladder, add/remove).

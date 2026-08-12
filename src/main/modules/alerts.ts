@@ -35,10 +35,26 @@
 // length and the number of groups; nothing downstream is trusted to do that for us.
 
 import type { EqModule } from './types'
+import {
+  EarlyWarnings,
+  breakEventIdentity,
+  earlyWarnSubject,
+  type BreakWatcher,
+  type EarlyWarnDue
+} from './alertsEarlyWarning'
+// The pure field readers, split out of this file so it stays under its factoring ceiling — the
+// `where` matcher's two (`fieldText`, `spellCandidateNames`) and the firing payload's one
+// (`firingSpell`). Their arguments live with them in alertsFields.ts.
+import { fieldText, firingSpell, spellCandidateNames } from './alertsFields'
 import { idKey } from '../log/parseCommon'
-import { S, validate, type FoldSchema } from '../foldCache/schema'
-import type { FoldCheckpointable } from '../foldCache/serialize'
 import { harvestCaptures } from '../../shared/alertCaptures'
+import type { BuffTimerRow } from '../../shared/buffTimers'
+import {
+  breakProbes,
+  breakTriggerKinds,
+  normalizeEarlyWarnSec,
+  type BreakTriggerKind
+} from '../../shared/earlyWarning'
 import type { LogEvent } from '../../shared/logEvents'
 import type {
   AlertDef,
@@ -109,68 +125,6 @@ function compileFieldMatch(spec: string): CompiledMatch {
   }
   const lower = spec.toLowerCase()
   return { test: (v) => v.toLowerCase() === lower }
-}
-
-/**
- * Stringify ONE event field for matching. A `where` key names an arbitrary field of an
- * arbitrary LogEvent, so the value is nearly always a string/number/boolean — but a few fields
- * hold arrays (`damage.modifiers`, the buff-landing `candidates` lists, one of which is an
- * array of OBJECTS).
- *
- * This reproduces JS's own `String()` coercion rather than improving on it, because the coerced
- * text is exactly what every existing alert def is matched against: an array joins its elements
- * with ',' (a nullish element contributing ''), and an object element renders as the literal
- * '[object Object]'. That last one IS what a def matching on the object-shaped `candidates` list
- * sees today — making it nicer would silently change which alerts fire. The final fallback also
- * absorbs bigint/symbol/function, which no LogEvent field holds.
- */
-function fieldText(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
-  if (value == null) return '' // only reachable as an array ELEMENT — join() renders nullish as ''
-  if (Array.isArray(value)) return (value as unknown[]).map(fieldText).join(',')
-  return '[object Object]'
-}
-
-/**
- * THE SPELL NAMES ONE EVENT CAN HONESTLY ANSWER TO (JOS-84) — `ev.spell` plus every name in the
- * event's `candidates` list, or an empty array when the event carries no candidates.
- *
- * WHY THIS EXISTS. `buffApply.spell` / `buffWearOff.spell` are documented as a BEST-EFFORT PICK:
- * EQ's landing and wears-off sentences are shared across a whole spell family (`<mob> slows
- * down.` is Forlorn Deeds / Languid Pace / Rejuvenation / Shiftless Deeds / Tepid Deeds; `<mob>
- * looks frail.` is Disempower / Incapacitate / Listless Power), so the parser cannot name the
- * spell from the line and puts the FIRST DB candidate in `spell` while `candidates` carries the
- * truth. The suggestion wizard authored `where:{spell:'<your spell>'}` against that first pick,
- * which is a coin flip the user always loses: an enchanter's Shiftless Deeds alert was compared
- * to the string "Forlorn Deeds" and could never fire. MEASURED against the reporter's own log
- * lines — that is the whole of JOS-84.
- *
- * So a `where.spell` matcher tests the WHOLE SET. It is the same reading shared/alertGroups.ts
- * already argues for the on-you slow ("both sentences are shared by a whole slow family and name
- * no spell, so this alert reports that a slow expired, never which one"), applied to the mob side
- * as well: when the game prints one sentence for five spells, an alert on any one of them is an
- * alert on the family, and firing is the honest answer. The alternative — silence — is the bug.
- *
- * SCOPE. Only the `spell` key widens, and only when the event actually carries `candidates`.
- * `where:{candidates:…}` is untouched (it still sees `fieldText`'s '[object Object]' join, which
- * is what today's defs are matched against), families with no candidate list (castBegin, resist,
- * buffFade, the derived buffExpired) are byte-for-byte unchanged, and an event that carries
- * candidates but no `spell` field at all (poisonProc names its `strike`) still fails the
- * pre-existing "field is absent ⇒ no match" test before this is ever consulted.
- */
-function spellCandidateNames(ev: LogEvent): string[] {
-  const cands = (ev as unknown as Record<string, unknown>).candidates
-  if (!Array.isArray(cands)) return []
-  const out: string[] = []
-  for (const c of cands as unknown[]) {
-    if (typeof c === 'string') out.push(c)
-    else if (typeof c === 'object' && c !== null) {
-      const name = (c as { name?: unknown }).name
-      if (typeof name === 'string') out.push(name)
-    }
-  }
-  return out
 }
 
 /** One compiled `where` entry: the event field it names and the matcher it compiled to. */
@@ -257,6 +211,13 @@ interface CompiledAlert {
   def: AlertDef
   composite: 'single' | 'any' | 'all'
   conditions: CompiledCondition[]
+  /**
+   * The ENDING kinds this def watches for, empty for every other def (JOS-235,
+   * shared/earlyWarning.ts `breakTriggerKinds`). Non-empty is what makes an `earlyWarnSec` arm
+   * from the timer row instead of from this def's own trigger — for a break def the trigger IS
+   * the end, and arming on it silenced the alert entirely.
+   */
+  breakKinds: BreakTriggerKind[]
 }
 
 /** Compile one PRIMITIVE trigger into a matcher condition. */
@@ -280,76 +241,6 @@ function compileCondition(t: AlertTriggerPrimitive): CompiledCondition {
   }
   // 'app' triggers are renderer-evaluated; compile to an empty condition (never matches here).
   return {}
-}
-
-// ---- spell context on the firing payload (docs/plans/voice-alerts.md §1) ----
-//
-// A spoken alert can say the spell that set it off ("Mesmerization", "Swift"), which means the
-// FIRING has to carry it: the renderer receives `FiredAlert`, and before this it carried only
-// the alert id, the timestamp and the matched raw line. Re-deriving the spell renderer-side
-// would mean a second parser for lines main has already parsed.
-//
-// WHICH FIELD NAMES THE SPELL, PER KIND — measured against shared/logEvents.ts, not assumed.
-// Most of the families spell it `spell`; three do not, and the exceptions are the whole reason
-// this is a table instead of a property read:
-//   * poisonProc  → `strike`  (the Strike's own name; a proc has no cast line at all)
-//   * poisonCoat  → `poison`  (and it is the literal string 'unknown' for the generic
-//                              third-person coat line, which is filtered below — 'unknown' is
-//                              a stated absence, not a spell name)
-//   * damage      → `skill`, but ONLY for dtype 'spell' | 'dot' (verified in log/parseCombat.ts:
-//                   the typed-nuke and DoT shapes put the spell name there). For 'melee' it is
-//                   a melee skill and for 'ds' it is the damage-shield element — neither is a
-//                   spell, so neither is claimed. Handled separately, below.
-//
-// FAMILIES THAT CARRY NO SPELL, and therefore fall back to the alert's name when a spell speech
-// mode fires on them: zone, loot, offer, trade, level, expGain, aaGain, aaSpend, aaActivate (an
-// AA name is not a spell), death, playerDeath, mitigation, miss, charm, uncharm, petClaim,
-// spellEmote (the emote text names no spell — that ambiguity is the point of the family),
-// illusionFade (27-way ambiguous by design), poisonDry, stanceChange, invocationChange, selfWho,
-// skillUp, itemActivate, itemMerge, itemMergeFailed, consider, epoch, sessionStart, campStart,
-// campAbort, offlineGap, unknown — plus EVERY 'raw' trigger that matched a spell-less line and
-// every renderer-evaluated 'app' signal (bossDefeat / questComplete, which arrive via appFired
-// and never see a LogEvent at all).
-//
-// `cc` and `heal` declare `spell?` — present on some shapes only (a CC application names no
-// spell; its worn-off keep-alive does). An absent field is simply an absent spell.
-
-/** Event kind → the field on that event whose value is the triggering spell's DISPLAY name. */
-const SPELL_FIELD_BY_KIND: Partial<Record<LogEvent['kind'], string>> = {
-  castBegin: 'spell',
-  castFizzle: 'spell',
-  castInterrupted: 'spell',
-  resist: 'spell',
-  cc: 'spell',
-  heal: 'spell',
-  buffApply: 'spell',
-  buffFade: 'spell',
-  buffWearOff: 'spell',
-  buffExpired: 'spell',
-  poisonProc: 'strike',
-  poisonCoat: 'poison'
-}
-
-/**
- * The spell that set this event off, DISPLAY form with the rank suffix INTACT — or undefined
- * when the family names none. Rank-stripping belongs to the speech resolver
- * (shared/speechText.ts), never to the producer: a consumer that wants "Mesmerization III"
- * must still be able to see the III.
- *
- * The one dynamic read mirrors `conditionMatches`'s own field access (the `where` matcher has
- * always indexed events by an arbitrary key), so this introduces no new escape hatch.
- */
-function firingSpell(ev: LogEvent): string | undefined {
-  if (ev.kind === 'damage') {
-    return ev.dtype === 'spell' || ev.dtype === 'dot' ? ev.skill.trim() || undefined : undefined
-  }
-  const field = SPELL_FIELD_BY_KIND[ev.kind]
-  if (field === undefined) return undefined
-  const value = (ev as unknown as Record<string, unknown>)[field]
-  if (typeof value !== 'string') return undefined
-  const name = value.trim()
-  // 'unknown' is what a poisonCoat says when the line deliberately hides which poison it was.
-  return name && name !== 'unknown' ? name : undefined
 }
 
 /**
@@ -407,41 +298,14 @@ function cooldownKey(def: AlertDef, ev: LogEvent): string {
 
 function compileAlert(def: AlertDef): CompiledAlert {
   const t: AlertTrigger = def.trigger
+  const breakKinds = breakTriggerKinds(t)
   if ('conditions' in t) {
-    return { def, composite: t.type, conditions: t.conditions.map(compileCondition) }
+    return { def, composite: t.type, conditions: t.conditions.map(compileCondition), breakKinds }
   }
-  return { def, composite: 'single', conditions: [compileCondition(t)] }
+  return { def, composite: 'single', conditions: [compileCondition(t)], breakKinds }
 }
 
-/**
- * THE CHECKPOINT DECLARATION (JOS-208 phase 2). This module folds two things on REPLAY and
- * everything else only when live, and the split is exactly what is stored:
- *
- *   IN — `spellLastCast` (rank-preserving cast recency) and `poisonSlowSeen`. Both are recorded
- *        for replayed events on purpose (their own field docs say why: the suggestion surface and
- *        the offer strip must be right at HYDRATION, not one proc later), so a cold replay of a
- *        prefix produces them and a checkpoint must too. `spellLastCast` is an entries ARRAY
- *        because its Map order is the LRU the SPELL_CAST_CAP eviction walks — a record would
- *        throw away the eviction order and start evicting the wrong names.
- *
- *   OUT — `compiled` (the user's alert DEFS, store-owned and re-injected by `setDefs` on every
- *        save), `lastFire` and `history` (a fire is a LIVE event; a replay never makes a sound,
- *        so a cold replay produces neither), and the two pending delta maps.
- */
-const ALERTS_FOLD_SCHEMA: FoldSchema = S.obj({
-  spellLastCast: S.arr(S.tuple(S.str, S.num)),
-  poisonSlowSeen: S.opt(S.obj({ lastAt: S.num, count: S.num, lastTarget: S.str })),
-  seq: S.num
-})
-
-/** The alerts module's complete event-derived state — the defs and the fire log excluded. */
-export interface AlertsFoldState {
-  spellLastCast: [string, number][]
-  poisonSlowSeen?: PoisonSlowRecency
-  seq: number
-}
-
-export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta>, FoldCheckpointable<AlertsFoldState> {
+export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
   readonly id = 'alerts'
   private compiled: CompiledAlert[] = []
   private seq = 0
@@ -491,10 +355,28 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta>, FoldChec
   private poisonSlowSeen: PoisonSlowRecency | null = null
   /** true when `poisonSlowSeen` advanced since the last flush (delta payload). */
   private poisonSlowDirty = false
+  /**
+   * THE ARMED EARLY WARNINGS (JOS-216) — the alerts whose fire has been MOVED to N seconds before a
+   * tracked debuff's estimated end. Its whole state machine, and why an arm resolves on the next
+   * tick rather than at the match, is in alertsEarlyWarning.ts.
+   */
+  private early = new EarlyWarnings()
 
   /** Replace the live alert set (called by main after load + every save/delete). */
   setDefs(defs: AlertDef[]): void {
     this.compiled = defs.map(compileAlert)
+  }
+
+  /**
+   * Where the early-warning offset reads its estimated ends from (JOS-216) — the PUBLIC timer
+   * projection, `buildTimerRows(buffs, buffTimers)`, injected by modules/wiring.ts.
+   *
+   * A seam rather than a direct dependency because this module is registered BEFORE the two it
+   * would have to reach for, and because the rows are the one output both timer overlays already
+   * draw: consuming them is what keeps this feature from growing a duration model of its own.
+   */
+  setTimerRows(rows: () => readonly BuffTimerRow[]): void {
+    this.early.setRowSource(rows)
   }
 
   /** The defs currently loaded (for snapshot()). */
@@ -514,6 +396,9 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta>, FoldChec
     this.castPending = new Map()
     this.poisonSlowSeen = null
     this.poisonSlowDirty = false
+    // A pending warning is about a debuff on a mob this character was fighting; the next character
+    // is not fighting it, and the replay that follows will re-arm nothing (a replay never fires).
+    this.early.reset()
   }
 
   /**
@@ -572,8 +457,6 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta>, FoldChec
       const match = this.matches(c, ev)
       if (match == null) continue
       const key = cooldownKey(c.def, ev)
-      if (this.onCooldown(key, c.def, ev.ts)) continue
-      this.noteFire(key, ev.ts)
       if (!spellResolved) {
         base = firingSpell(ev)
         spellResolved = true
@@ -587,9 +470,120 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta>, FoldChec
       // so the delta stays byte-identical for them. The values are already sanitized and capped
       // (shared/alertCaptures.ts `harvestCaptures`); nothing downstream re-derives them.
       if (match.captures) fired.captures = match.captures
+      if (this.earlyWarnTakesIt(c, ev, key, fired)) continue
+      if (this.onCooldown(key, c.def, ev.ts)) continue
+      this.noteFire(key, ev.ts)
       this.pending.push(fired)
       this.record(c.def.id, ev.ts, match.text)
     }
+  }
+
+  /**
+   * WHETHER THE EARLY-WARNING OFFSET CLAIMS THIS MATCH — true when nothing sounds right now.
+   *
+   * THE OFFSET MOVES THE ONE FIRE; IT DOES NOT ADD A SECOND ONE (JOS-216). An alert with an early
+   * warning says nothing when its trigger matches: the match ARMS a warning against the timer row
+   * this landing produces, and the firing the caller built is made later, N seconds before that
+   * row's estimated end. The cooldown is deliberately NOT spent here — the clock belongs to the
+   * sound, and no sound has been made yet.
+   *
+   * …UNLESS THIS DEF'S TRIGGER IS THE ENDING (JOS-235), in which case there is nothing left to arm
+   * against and arming was the bug that ate the alert whole. A break-family def arms from the ROW
+   * APPEARING instead (`breakWatchers`) and still FIRES on its own trigger — except for the one
+   * landing whose warning already spoke, which `breakSpoken` swallows. An early break never
+   * reached its warning, so nothing suppresses it: it fires, exactly as it always did.
+   */
+  private earlyWarnTakesIt(c: CompiledAlert, ev: LogEvent, key: string, fired: FiredAlert): boolean {
+    const sec = normalizeEarlyWarnSec(c.def.earlyWarnSec)
+    if (sec === undefined) return false
+    // The names this line could answer to — the event's own resolved pick (already on the firing)
+    // plus the JOS-84 candidate list, which is the truth when one sentence is a whole family.
+    const names = [...(fired.spell === undefined ? [] : [fired.spell]), ...spellCandidateNames(ev)]
+    if (c.breakKinds.length === 0) {
+      this.early.arm({ sec, cooldownKey: key, subject: earlyWarnSubject(ev, names), ts: ev.ts, fired })
+      return true
+    }
+    return this.early.breakSpoken(c.def.id, breakEventIdentity(ev, names))
+  }
+
+  /**
+   * The wall-clock heartbeat (~1×/sec while the LIVE tail runs, never during replay). It exists for
+   * ONE thing: the early-warning offset, whose whole subject is a deadline that arrives while the
+   * log is idle — which is exactly when a player is watching a mez run down.
+   */
+  onTick(nowMs: number): void {
+    for (const due of this.early.tick(nowMs, this.breakWatchers(nowMs))) this.fireWarning(due, nowMs)
+  }
+
+  /**
+   * The break-family defs that want to be told about live rows (JOS-235).
+   *
+   * Rebuilt each tick rather than cached with the compile, because "enabled" and the offset can
+   * change under it and the list is at most a handful of defs — a user has one charm-break alert,
+   * not four hundred. When it is empty (the overwhelmingly common case) the scheduler does not read
+   * the timer projection at all.
+   */
+  private breakWatchers(nowMs: number): BreakWatcher[] {
+    const out: BreakWatcher[] = []
+    for (const c of this.compiled) {
+      if (!c.def.enabled || c.breakKinds.length === 0) continue
+      const sec = normalizeEarlyWarnSec(c.def.earlyWarnSec)
+      if (sec === undefined) continue
+      out.push({ alertId: c.def.id, sec, probe: (row) => this.probeBreak(c, row, nowMs) })
+    }
+    return out
+  }
+
+  /**
+   * WOULD THIS DEF ANNOUNCE THE BREAK OF THIS ROW — asked of the def's OWN matcher, never of a
+   * second one written to guess at the same question (the seam, and the whole blast radius of the
+   * hypothetical event it is asked with, are documented on `breakProbes`).
+   *
+   * The firing it hands back is built exactly like an ordinary one: the same `matchedText` the
+   * matcher reports (here a projection sentence, because no line has been printed), the same
+   * captures its own named groups took from the fields it tested, and the same cooldown clock the
+   * REAL break event would have chosen — so `cooldownScope:'target'` still means one clock per mob,
+   * and the families whose break line names a `mob` rather than a `target` degrade to the
+   * alert-level clock here in exactly the way they already do there.
+   *
+   * The spoken spell is the probe's — the rank-less name the wear-off line prints — for the same
+   * reason `matchedSpellName` reports the candidate that satisfied the def rather than the event's
+   * best-effort pick: the name the alert matched on is the name it should say.
+   */
+  private probeBreak(
+    c: CompiledAlert,
+    row: BuffTimerRow,
+    nowMs: number
+  ): { fired: FiredAlert; cooldownKey: string } | null {
+    for (const kind of c.breakKinds) {
+      for (const p of breakProbes(kind, row, nowMs)) {
+        const match = this.matches(c, p.ev)
+        if (!match) continue
+        const fired: FiredAlert = { alertId: c.def.id, ts: nowMs, matchedText: match.text, spell: p.spell }
+        if (match.captures) fired.captures = match.captures
+        return { fired, cooldownKey: cooldownKey(c.def, p.ev) }
+      }
+    }
+    return null
+  }
+
+  /**
+   * Make an early warning's firing, if the alert behind it still wants it.
+   *
+   * The def is re-read rather than trusted: a warning can be armed for a minute, and an alert the
+   * user deleted or switched off in the meantime must not speak. The cooldown is spent HERE, on the
+   * clock the ARMING event chose (so `cooldownScope:'target'` still means one clock per mob), and
+   * `seq` is bumped by hand — a tick advances no log seq, and `useModule` would drop the delta as a
+   * duplicate (JOS-87; `appFired` bumps it for the same reason).
+   */
+  private fireWarning(due: EarlyWarnDue, nowMs: number): void {
+    const def = this.compiled.find((c) => c.def.id === due.fired.alertId)?.def
+    if (!def?.enabled) return
+    if (this.onCooldown(due.cooldownKey, def, nowMs)) return
+    this.noteFire(due.cooldownKey, nowMs)
+    this.seq += 1
+    this.pending.push({ ...due.fired, ts: nowMs })
+    this.record(def.id, nowMs, due.fired.matchedText)
   }
 
   /**
@@ -734,31 +728,5 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta>, FoldChec
     if (cast.length > 0) delta.cast = cast
     if (slow) delta.poisonSlow = { ...slow }
     return { seq: this.seq, delta }
-  }
-
-  // ---- the checkpoint seam (JOS-208) ---------------------------------------------------------
-
-  readonly foldSchema = ALERTS_FOLD_SCHEMA
-
-  serializeFold(): AlertsFoldState {
-    return {
-      spellLastCast: [...this.spellLastCast],
-      ...(this.poisonSlowSeen === null ? {} : { poisonSlowSeen: { ...this.poisonSlowSeen } }),
-      seq: this.seq
-    }
-  }
-
-  deserializeFold(state: unknown): boolean {
-    if (!validate(ALERTS_FOLD_SCHEMA, state).ok) return false
-    const s = state as AlertsFoldState
-    // Walked forwards, so the Map's iteration order — which IS the eviction order — comes back
-    // exactly as it went in.
-    this.spellLastCast = new Map(s.spellLastCast)
-    this.poisonSlowSeen = s.poisonSlowSeen ?? null
-    this.seq = s.seq
-    this.castPending = new Map()
-    this.pending = []
-    this.poisonSlowDirty = false
-    return true
   }
 }

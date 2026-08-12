@@ -1,12 +1,18 @@
 /**
  * ============================================================================
- * foldDeterminism.test.mts — AUDIT 1: THE FOLD DOES NOT READ THE CLOCK (JOS-208).
+ * foldDeterminism.test.mts — THE FOLD DOES NOT READ THE CLOCK.
  * ============================================================================
  *
- * A checkpoint is a memo of a PURE FUNCTION of (byte prefix, the fold). If any fold path reads the
- * wall clock, that is false: the same bytes produce a different answer on Tuesday than they did on
- * Monday, `restore(checkpoint(prefix)) + tail` cannot equal `fold(prefix + tail)`, and the
- * differential harness would be asserting a coincidence.
+ * A historical replay is a PURE FUNCTION of the bytes it folds. If any fold path reads the wall
+ * clock, that is false: the same log produces a different world on Tuesday than it did on Monday,
+ * and every fixture-backed golden in this suite is asserting a coincidence that happens to hold on
+ * the day it was recorded. This audit is what keeps that from being a hope.
+ *
+ * IT OUTLIVED THE CHECKPOINT IT WAS WRITTEN FOR (JOS-208, removed by JOS-230), and deliberately:
+ * the two real product defects that ticket turned up — the combat engine polling the wall clock
+ * mid-replay and splitting a finalized fight, and the message overlay stamping `updatedAt` from
+ * `new Date()` inside a published snapshot — are EXACTLY the class of bug it catches. The
+ * checkpoint was one consumer of the property; the property is the app's.
  *
  * SO THIS IS A DYNAMIC AUDIT, NOT A GREP. `Date.now` and `performance.now` are REPLACED for the
  * duration of a real fold of a real fixture, through the real parser, the real module registry, the
@@ -32,12 +38,79 @@
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { CombatEngine } from '../src/main/combat/engine'
+import { EpochDetector } from '../src/main/log/epochDetector'
+import { LogBus, type LogEventListener } from '../src/main/log/bus'
+import { ModuleRegistry } from '../src/main/modules/registry'
+import { MobLootIndex } from '../src/main/mobLookupParse'
 import { RespawnModule } from '../src/main/modules/respawn'
+import { SessionDetector } from '../src/main/log/sessionDetector'
+import { createModules } from '../src/main/modules/wiring'
+import { installCharacterName } from '../src/main/log/rulesets'
 import { scanLog } from '../src/main/log/scanHistory'
 import { createSlicer } from '../src/main/log/replaySlicer'
-import { buildFoldWorld } from './foldCheckpointHarness.mts'
+import baselineJson from '../src/main/data/messageOverlay.baseline.json'
+import type { MessageOverlay } from '../src/shared/types'
 
 const FIXTURE = join(import.meta.dirname, 'fixtures', 'e2e-combat.log')
+
+/** The committed baseline overlay, as a keyed seed (JOS-231) — `data/overlayPersistence.ts` needs
+ *  Electron and cannot load here. */
+const BASELINE = { key: 'baseline', counts: baselineJson as unknown as MessageOverlay }
+
+/** The character every fixture in this repo was cut from. */
+const CHARACTER = { name: 'Primitive', server: 'freeport', logPath: '' }
+
+/**
+ * THE FOLD'S CONSUMERS, WIRED AS THE APP WIRES THEM — `src/main/modules/wiring.ts` for the module
+ * set and its order, then the combat engine and the two derived-event producers, exactly as
+ * `pipeline.ts` subscribes them. Built here rather than imported so the audit owns its own world:
+ * the whole point is that this runs the REAL program, and a shared harness that drifts toward the
+ * needs of some other test is a way for the audit to quietly stop watching the app.
+ *
+ * `tests/bench/foldArm.mts` builds the same world for the attribution bench; the duplication is
+ * ~20 lines and buys each of them independence from the other's instrumentation.
+ */
+function buildFoldWorld(): { bus: LogBus } {
+  const bus = new LogBus()
+  const modules = createModules({
+    overlays: [BASELINE],
+    ownLoot: new MobLootIndex(),
+    emitDerived: (ev, live) => {
+      bus.emitDerived(ev, live)
+    }
+  })
+  const registry = new ModuleRegistry({ emitDelta: () => undefined })
+  for (const mod of modules.ordered) registry.register(mod)
+  registry.reset()
+  modules.character.setCharacter({ ...CHARACTER, logPath: `fixtures://${FIXTURE.split(/[\\/]/).pop()}` })
+  installCharacterName(CHARACTER.name)
+  registry.attach(bus)
+
+  const combat = new CombatEngine()
+  combat.setRoster(modules.roster)
+  combat.reset()
+  combat.setPlayerName(CHARACTER.name)
+  const epoch = new EpochDetector()
+  const sessions = new SessionDetector()
+  const ingest: LogEventListener = (ev, live) => {
+    combat.ingestEvent(ev, live)
+  }
+  const observeEpoch: LogEventListener = (ev, live) => {
+    if (ev.kind === 'epoch') return
+    const epochEv = epoch.observe(ev)
+    if (epochEv) bus.emitDerived(epochEv, live)
+  }
+  const observeSession: LogEventListener = (ev, live) => {
+    if (ev.kind === 'offlineGap') return
+    const gap = sessions.observe(ev)
+    if (gap) bus.emitDerived(gap, live)
+  }
+  bus.subscribe(ingest)
+  bus.subscribe(observeEpoch)
+  bus.subscribe(observeSession)
+  return { bus }
+}
 
 /**
  * A slicer whose clock is INJECTED and constant, so the scheduler cannot be the thing this audit
@@ -49,7 +122,7 @@ function pinnedSlicer(): ReturnType<typeof createSlicer> {
 }
 
 test('fold determinism: a historical replay reads no wall clock', async () => {
-  const world = buildFoldWorld(FIXTURE)
+  const world = buildFoldWorld()
   // The world is BUILT before the trap is set: construction and `reset()` are entitled to the
   // clock (see the header), and only the fold is under audit.
   const realDateNow = Date.now

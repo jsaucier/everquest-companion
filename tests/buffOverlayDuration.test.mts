@@ -14,6 +14,11 @@
 // window (not all-time) lets a removed focus age out. Source = 'db' when the floor held, 'observed'
 // when a logged cast beat it (the UI labels that "log").
 //
+// JOS-212 (owner ruling 2026-08-12) ADDED THE ONE WAY THE FLOOR CAN LOSE and the third source
+// label: a below-floor observation overrules the DB base when three clean cycles in the window
+// agree within 10%, reported as 'cluster'. The section headed by BELOW_FLOOR_POPULATION below is
+// that rule, driven on the twenty below-floor rows the owner's own log actually contains.
+//
 // These drive the REAL modules — parser-free, constructing the typed LogEvents the parser would
 // emit — because the whole point is the buffs model's sample minting + censoring + projection, not
 // the message grammar (pinned elsewhere). The pure estimator cases (Invisibility floor, the Swift
@@ -28,7 +33,15 @@ import { BuffsModule } from '../src/main/modules/buffs.ts'
 import { SpellStats } from '../src/main/modules/buffsStats.ts'
 import { PetEntities } from '../src/main/modules/buffsEntities.ts'
 import { buildActive } from '../src/main/modules/buffsView.ts'
-import { SELF_KEY, spellKey } from '../src/main/modules/buffsShapes.ts'
+import {
+  BELOW_FLOOR_MAX_SPREAD,
+  BELOW_FLOOR_MIN_SAMPLES,
+  corroboratedMax,
+  relativeSpread,
+  SELF_KEY,
+  spellKey,
+  unwitnessedTimeoutMs
+} from '../src/main/modules/buffsShapes.ts'
 // The learner is keyed on (spell LINE, CASTER) since JOS-140, so a test that drives SpellStats
 // directly has to say whose durations it is talking about. These cases are all about the player.
 import { SELF_CASTER } from '../src/shared/buffTrust.ts'
@@ -186,21 +199,28 @@ test('growth over the DB base is captured — [16m base, then 33m] ⇒ estimate 
 })
 
 // ---------------------------------------------------------------------------------------------
-// ACCEPTANCE — INVISIBILITY FLOOR. DB 20m, observed max only 4m (always broken early) ⇒ 20m, 'db'.
-// The estimate must NOT collapse to the broken-early observations.
+// ACCEPTANCE — INVISIBILITY FLOOR. DB 20m, observed max only 4m24 (always broken early) ⇒ 20m,
+// 'db'. The estimate must NOT collapse to the broken-early observations — and this is the case
+// JOS-212's below-floor overrule was required to leave standing, so it is now also the negative
+// half of that rule. The samples are the SHAPE the owner's own log measured for this spell
+// (4:24 / 2:13 / 1:41 across its top three of twenty clean cycles, 161% spread), with two shorter
+// cycles behind them; they used to be a hand-picked set that happened to sit at exactly 10%.
 // ---------------------------------------------------------------------------------------------
 
 test('a buff always broken early keeps its DB FLOOR — DB 20m, observed max 4m ⇒ 20m, source db', () => {
   const { stats, key } = statsWithDb('Invisibility', 1_200_000) // DB 20m
   stats.everFaded.add(key)
-  // all ≤4m24
-  ;[264_000, 180_000, 240_000, 264_000, 120_000].forEach((s, i) => {
+  // all ≤4m24, and SCATTERED — what "clicked off whenever you happened to need it" looks like
+  ;[264_000, 133_000, 101_000, 96_000, 75_000].forEach((s, i) => {
     stats.pushSample(key, SELF_CASTER, 'Invisibility', { ms: s, ts: (i + 1) * 60_000 })
   })
 
   const est = stats.estimateFor(key)
   assert.equal(est.ms, 1_200_000, 'the DB floor holds — a below-base observation is an early break, discarded')
   assert.equal(est.source, 'db', 'and it legitimately stays a db chip')
+  // Explicitly: the JOS-212 overrule looked and REFUSED. Five clean samples is more than enough of
+  // them; what it does not have is agreement.
+  assert.equal(corroboratedMax(stats.cleanWindowFor(key)), null, 'the top three scatter — no cluster')
 
   // The overlay agrees, via the projection.
   const active = buildActive({ spell: 'Invisibility', key, entityKey: SELF_KEY, startedTs: 1_000 }, stats, new PetEntities())
@@ -209,6 +229,206 @@ test('a buff always broken early keeps its DB FLOOR — DB 20m, observed max 4m 
   const row = buildTimerRows({ active: [active], stats: {} }, { holds: [], ends: [] })[0]
   assert.equal(row.mode, 'countdown')
   assert.equal(row.durationMs, 1_200_000)
+})
+
+// =============================================================================================
+// JOS-212 — THE BELOW-FLOOR OVERRULE (owner ruling 2026-08-12).
+//
+// The floor's assumption is that a beneficial buff is never SHORTER than its DB base. The
+// committed spells.json is a classic-era scrape and EverQuest Legends re-tiered spells, so for a
+// real population of rows the base is simply wrong and — the estimator being a max — unfalsifiable.
+// The ruling: a below-floor observation may overrule the base when at least
+// BELOW_FLOOR_MIN_SAMPLES clean cycles agree within BELOW_FLOOR_MAX_SPREAD. The estimate then
+// reports source 'cluster', which is a different claim from 'observed' and says so.
+//
+// Every number below is MEASURED — the owner's whole log, 1.59M lines, folded through this module
+// (JOS-212 characterization). What the cases drive is the recency WINDOW's contents, and the
+// measured triples are used as those contents because they are what the two populations were
+// separated on. On the live log the window is the last five CLEAN cycles rather than the all-time
+// top three, and for three of these spells that is a different question with a different answer —
+// see the Charm case below, which is where that distinction is argued and pinned.
+// =============================================================================================
+
+/** The measured below-floor population: [spell, DB floor ms, top-3 clean samples ms, flips?]. */
+const BELOW_FLOOR_POPULATION: readonly [string, number, [number, number, number], boolean][] = [
+  // CLUSTERED — a timer running out. These flip.
+  ['Celerity', 960_000, [901_000, 899_000, 898_000], true], //            0.3%
+  ['Feedback', 900_000, [891_000, 885_000, 880_000], true], //            1.3%
+  ['Alacrity', 660_000, [425_000, 418_000, 416_000], true], //            2.2%
+  ['Cajoling Whispers', 960_000, [883_000, 865_000, 863_000], true], //   2.3%
+  ['Beguile', 960_000, [593_000, 569_000, 552_000], true], //             7.4%
+  ['Charm', 960_000, [425_000, 409_000, 394_000], true], //               7.9%
+  ['Tashina', 660_000, [304_000, 283_000, 280_000], true], //             8.6%
+  // ── the empty middle the threshold sits in ──
+  // SCATTERED — a buff clicked off whenever it was needed. These keep the floor.
+  ['Quickness', 660_000, [414_000, 386_000, 369_000], false], //         12.2%
+  ['Languid Pace', 150_000, [77_000, 71_000, 68_000], false], //         13.2%
+  ['Improved Invisibility', 600_000, [400_000, 349_000, 309_000], false], // 29.4%
+  ['Invisibility', 1_200_000, [264_000, 133_000, 101_000], false], //   161.4%
+  ['Invisibility Vs Undead', 1_620_000, [542_000, 211_000, 199_000], false] // 172.4%
+]
+
+test('the measured below-floor population splits exactly as the owner ruled — seven flip, five keep the floor', () => {
+  for (const [spell, floorMs, top3, flips] of BELOW_FLOOR_POPULATION) {
+    const { stats, key } = statsWithDb(spell, floorMs)
+    stats.everFaded.add(key)
+    top3.forEach((ms, i) => {
+      stats.pushSample(key, SELF_CASTER, spell, { ms, ts: (i + 1) * 60_000 })
+    })
+    const est = stats.estimateFor(key)
+    if (flips) {
+      assert.equal(est.ms, Math.max(...top3), `${spell}: the cluster overrules the floor`)
+      assert.equal(est.source, 'cluster', `${spell}: and says so`)
+    } else {
+      assert.equal(est.ms, floorMs, `${spell}: scattered — the floor holds`)
+      assert.equal(est.source, 'db', `${spell}: and it stays a db chip`)
+    }
+    // The threshold really is what separates them, in both directions.
+    assert.equal(relativeSpread(top3) <= BELOW_FLOOR_MAX_SPREAD, flips, `${spell}: spread vs threshold`)
+  }
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// THE EVIDENCE POOL IS THE RECENCY WINDOW, NOT ALL TIME — and this is the case that decides it.
+//
+// The characterization measured the population above as the top three of ALL of a spell's clean
+// samples. Read that way, the CHARM family (Charm, Beguile, Cajoling Whispers) clusters and would
+// flip. Re-measured through this rule on the owner's log 2026-08-12 — 1.60M lines, both halves of
+// the buffs model — their RECENT five clean cycles scatter instead: Charm 7:05 / 1:14 / 0:31
+// (1271%), Beguile 89.6%, Cajoling Whispers 40.8%. Charm BREAKS; that is what charm does.
+//
+// Two reasons the window wins, and the second is the one that matters:
+//   • it is the estimator's existing law (RECENT_SAMPLE_WINDOW), and the property that law exists
+//     to protect — a genuine change in duration must be able to recover — applies to an overrule
+//     exactly as it applies to an extension.
+//   • an all-time top-three is an ORDER STATISTIC that gets tighter as n grows, for any
+//     distribution whatever. Charm's three luckiest holds out of 52 sit 7.9% apart for the same
+//     reason the three tallest people in a stadium are all about the same height. Windowing is
+//     what stops "cast it enough times" from being a way to defeat the floor.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+test('a spell whose ALL-TIME best three agree but whose recent cycles scatter keeps its floor — the Charm shape', () => {
+  const { stats, key } = statsWithDb('Charm', 960_000)
+  stats.everFaded.add(key)
+  // The three longest holds this log ever saw, 7:05 / 6:49 / 6:34 — 7.9% apart, all-time.
+  ;[425_000, 409_000, 394_000].forEach((ms, i) => {
+    stats.pushSample(key, SELF_CASTER, 'Charm', { ms, ts: (i + 1) * 60_000 })
+  })
+  assert.equal(stats.estimateFor(key).source, 'cluster', 'while they ARE the window, they overrule')
+
+  // …and then charm goes on being charm: five more cycles, broken all over the place.
+  ;[74_000, 31_000, 120_000, 18_000, 205_000].forEach((ms, i) => {
+    stats.pushSample(key, SELF_CASTER, 'Charm', { ms, ts: 600_000 + i * 60_000 })
+  })
+  assert.deepEqual(stats.estimateFor(key), { ms: 960_000, source: 'db' }, 'the floor is back, and rightly')
+})
+
+test('the third clean cycle is what flips it — Alacrity at n=2 still draws its 11:00 floor', () => {
+  const { stats, key } = statsWithDb('Alacrity', 660_000)
+  stats.everFaded.add(key)
+  stats.pushSample(key, SELF_CASTER, 'Alacrity', { ms: 425_000, ts: 60_000 })
+  stats.pushSample(key, SELF_CASTER, 'Alacrity', { ms: 418_000, ts: 120_000 })
+  assert.equal(BELOW_FLOOR_MIN_SAMPLES, 3, 'the ruling names three')
+  assert.deepEqual(stats.estimateFor(key), { ms: 660_000, source: 'db' }, 'two agreeing cycles are not enough')
+
+  stats.pushSample(key, SELF_CASTER, 'Alacrity', { ms: 416_000, ts: 180_000 })
+  assert.deepEqual(stats.estimateFor(key), { ms: 425_000, source: 'cluster' }, 'the third lands — it self-heals')
+})
+
+test('the overlay and the timer row carry the overruled number, and the chip says cluster', () => {
+  const { stats, key } = statsWithDb('Alacrity', 660_000)
+  stats.everFaded.add(key)
+  ;[425_000, 418_000, 416_000].forEach((ms, i) => {
+    stats.pushSample(key, SELF_CASTER, 'Alacrity', { ms, ts: (i + 1) * 60_000 })
+  })
+
+  const active = buildActive({ spell: 'Alacrity', key, entityKey: SELF_KEY, startedTs: 1_000 }, stats, new PetEntities())
+  assert.equal(active.overlayDurationMs, 425_000)
+  assert.equal(active.overlaySource, 'cluster')
+  assert.equal(active.estimatedMs, 425_000, 'the tab estimate agrees — one estimator, both surfaces')
+  assert.equal(active.durationSource, 'cluster')
+
+  const row = buildTimerRows({ active: [active], stats: {} }, { holds: [], ends: [] })[0]
+  assert.equal(row.mode, 'countdown')
+  assert.equal(row.durationMs, 425_000)
+
+  // A learned number, so the unwitnessed-expiry grace is the LEARNED one — 15 s, as for 'observed'.
+  assert.equal(unwitnessedTimeoutMs('cluster'), unwitnessedTimeoutMs('observed'))
+  assert.equal(unwitnessedTimeoutMs('cluster'), 15_000)
+})
+
+test('the threshold is inclusive, and one point past it keeps the floor', () => {
+  const at = statsWithDb('At Threshold', 900_000)
+  at.stats.everFaded.add(at.key)
+  ;[550_000, 525_000, 500_000].forEach((ms, i) => {
+    at.stats.pushSample(at.key, SELF_CASTER, 'At Threshold', { ms, ts: (i + 1) * 60_000 })
+  })
+  assert.equal(relativeSpread([550_000, 525_000, 500_000]), BELOW_FLOOR_MAX_SPREAD, 'exactly 10%')
+  assert.equal(at.stats.estimateFor(at.key).source, 'cluster', '"within 10 percent" includes 10 percent')
+
+  const past = statsWithDb('Past Threshold', 900_000)
+  past.stats.everFaded.add(past.key)
+  ;[551_000, 525_000, 500_000].forEach((ms, i) => {
+    past.stats.pushSample(past.key, SELF_CASTER, 'Past Threshold', { ms, ts: (i + 1) * 60_000 })
+  })
+  assert.deepEqual(past.stats.estimateFor(past.key), { ms: 900_000, source: 'db' }, 'one second wider ⇒ the floor')
+})
+
+test('a CENSORED cycle can neither corroborate a cluster nor break one — and is still a lower bound', () => {
+  const { stats, key } = statsWithDb('Cajoling Whispers', 960_000)
+  stats.everFaded.add(key)
+  // Two clean, one censored (the log NAMED a cause for that ending). Three samples, but only two
+  // measurements: the floor holds.
+  stats.pushSample(key, SELF_CASTER, 'Cajoling Whispers', { ms: 883_000, ts: 60_000 })
+  stats.pushSample(key, SELF_CASTER, 'Cajoling Whispers', { ms: 865_000, ts: 120_000 })
+  stats.pushSample(key, SELF_CASTER, 'Cajoling Whispers', { ms: 870_000, ts: 180_000, censored: true })
+  assert.deepEqual(stats.estimateFor(key), { ms: 960_000, source: 'db' }, 'a broken cycle is not a measurement')
+  assert.deepEqual(stats.cleanWindowFor(key), [865_000, 883_000], 'and it is not in the clean window at all')
+
+  // The third CLEAN cycle arrives and the cluster forms. The censored 870 s sits inside its range
+  // and changes nothing; a censored sample that is LONGER would (see below).
+  stats.pushSample(key, SELF_CASTER, 'Cajoling Whispers', { ms: 863_000, ts: 240_000 })
+  assert.deepEqual(stats.estimateFor(key), { ms: 883_000, source: 'cluster' })
+})
+
+test('an overrule is never drawn BELOW a proven lower bound — a longer censored cycle sets the number', () => {
+  const { stats, key } = statsWithDb('Beguile', 960_000)
+  stats.everFaded.add(key)
+  ;[593_000, 569_000, 552_000].forEach((ms, i) => {
+    stats.pushSample(key, SELF_CASTER, 'Beguile', { ms, ts: (i + 1) * 60_000 })
+  })
+  // A broken cycle that ran LONGER than every clean one: the log proves the spell was still holding
+  // at 620 s. The cluster is what removed the floor; the estimate errs long, as everything here does.
+  stats.pushSample(key, SELF_CASTER, 'Beguile', { ms: 620_000, ts: 300_000, censored: true })
+  assert.deepEqual(stats.estimateFor(key), { ms: 620_000, source: 'cluster' })
+})
+
+test('the overrule is NOT sticky — it ages out of the window exactly like an extension does', () => {
+  const { stats, key } = statsWithDb('Alacrity', 660_000)
+  stats.everFaded.add(key)
+  ;[425_000, 418_000, 416_000].forEach((ms, i) => {
+    stats.pushSample(key, SELF_CASTER, 'Alacrity', { ms, ts: (i + 1) * 60_000 })
+  })
+  assert.equal(stats.estimateFor(key).source, 'cluster')
+
+  // Five later cycles that SCATTER (the spell is now being clicked off, or a focus changed). The
+  // agreeing three leave the recency window and the floor comes back — the same property that lets
+  // a genuine decrease recover, running in the other direction.
+  ;[300_000, 120_000, 400_000, 90_000, 260_000].forEach((ms, i) => {
+    stats.pushSample(key, SELF_CASTER, 'Alacrity', { ms, ts: 600_000 + i * 60_000 })
+  })
+  assert.deepEqual(stats.estimateFor(key), { ms: 660_000, source: 'db' })
+})
+
+test('a spell with NO DB row is unaffected — there is no floor to overrule', () => {
+  const stats = new SpellStats()
+  const key = 'unrostered song'
+  stats.everFaded.add(key)
+  ;[120_000, 119_000, 118_000].forEach((ms, i) => {
+    stats.pushSample(key, SELF_CASTER, 'Unrostered Song', { ms, ts: (i + 1) * 60_000 })
+  })
+  assert.deepEqual(stats.estimateFor(key), { ms: 120_000, source: 'observed' }, 'the observed max stands alone')
+  assert.equal(corroboratedMax(stats.cleanWindowFor(key)), 120_000, 'the cluster test still answers, unused')
 })
 
 // ---------------------------------------------------------------------------------------------

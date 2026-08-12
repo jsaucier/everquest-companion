@@ -44,6 +44,7 @@ import { availableSlices, resolveSlice, resolveSliceId, sliceLabel, type SliceId
 import { toggleXpRow, XP_ROW_IDS, xpRowVisible, type XpRowId } from '@shared/xpOverlay'
 import { EMPTY_PROGRESSION, applyProgressionDelta } from '../features/leveling/progressionDelta'
 import { dataBounds } from '../features/leveling/zoneBands'
+import { ACTIVE_TIME_TITLE } from '../features/leveling/rangeStatsRows'
 import { OverlayHeader } from './OverlayHeader'
 import type { OverlaySelectRow } from './OverlaySelect'
 import { OverlayContent } from './overlayScale'
@@ -321,6 +322,9 @@ export default function XpOverlay(): JSX.Element {
         {view.rows.length > 0 && (
           <div
             data-testid="xp-span"
+            // ...and what that span IS, on hover (JOS-249). A native title is the only tooltip
+            // this window has ever had.
+            title={ACTIVE_TIME_TITLE}
             style={{ fontSize: 9, color: 'rgba(255,255,255,0.38)', padding: '3px 2px 0' }}
           >
             {slice.caption} · {view.span}

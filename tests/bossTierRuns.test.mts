@@ -27,7 +27,10 @@
 //      1211528..): one entry, two tier runs, each keeping its own timestamps.
 //   2. THE JOIN: d4 files under the Aug-01 interval, the open-world run under the Aug-03 one —
 //      and the OLD rule (join at the target's overall lastTs) is shown to produce the wrong
-//      answer on the same data, so a regression cannot pass quietly.
+//      answer on the same data, so a regression cannot pass quietly. The two intervals here state
+//      DIFFERENT trios, which is why they are two sections: since JOS-236 the sectioning merges
+//      intervals stating the SAME loadout, and that law has its own file
+//      (tests/loadoutSections.test.mts). Both build their intervals with comboFixtures.mts.
 //   3. NO VISUAL REGRESSION for the common case: a single-tier target yields exactly one card
 //      whose status is deep-equal to the unprojected one.
 //   4. THE DELTA CONTRACT: a changed mob REPLACES its entry wholesale, and a baseline written
@@ -55,8 +58,8 @@ import {
 } from '../src/shared/kills'
 import { allStatuses, statusFor, lowerKillMap } from '../src/renderer/src/features/bosses/bossStatus'
 import { loadoutGroups } from '../src/renderer/src/features/bosses/loadoutGroups'
-import type { ComboInterval } from '../src/shared/classCombo'
 import type { RaidTarget } from '../src/shared/types'
+import { IRE_TRIO, LATER_TRIO, interval } from './comboFixtures.mts'
 import { readFixture } from './harness.mts'
 
 const at = (stamp: string): number => parseEqTimestamp(stamp)
@@ -77,26 +80,6 @@ function replay(lines: string[]): KillsSnap {
     if (ev) mod.onEvent(ev)
   }
   return mod.snapshot().state
-}
-
-/** A combo interval with everything defaulted — these tests are about the JOIN, not the slots. */
-function interval(id: string, startTs: number, endTs: number | null): ComboInterval {
-  return {
-    id,
-    startTs,
-    endTs,
-    startLo: startTs,
-    startHi: startTs,
-    endLo: endTs,
-    endHi: endTs,
-    startReason: 'evidence',
-    expectedSlots: 3,
-    slots: [],
-    levelLo: null,
-    levelHi: null,
-    evidenceCount: 1,
-    userLocked: false
-  }
 }
 
 /** The roster row for the boss in question (the real bosses.json match name). */
@@ -196,11 +179,13 @@ test('golden window: d4 files under the loadout that killed it at d4, open world
   const statuses = allStatuses([LORD_OF_IRE], snap.mobs)
 
   // The real swap the diagnosis names: PAL/MNK/ENC until Sun Aug 02 01:57:42, ROG/PAL/BER after.
-  const before = interval('ci1', at('Fri Jul 31 00:00:00 2026'), SWAP)
-  const after = interval('ci2', SWAP, null)
+  const before = interval('ci1', at('Fri Jul 31 00:00:00 2026'), SWAP, { classes: IRE_TRIO })
+  const after = interval('ci2', SWAP, null, { classes: LATER_TRIO })
   const groups = loadoutGroups([before, after], statuses)
 
-  assert.equal(groups.length, 2, 'one target, two tier runs, two intervals — two sections')
+  // Two sections because the two intervals state DIFFERENT trios — JOS-236's merge only ever
+  // joins identical ones, and the loadout is what a section is.
+  assert.equal(groups.length, 2, 'one target, two tier runs, two loadouts — two sections')
 
   const [first, second] = groups
   assert.equal(first.interval?.id, 'ci1')
@@ -247,7 +232,7 @@ test('a single-tier target renders exactly as before: one card, status untouched
     match: ['Maestro of Rancor']
   }
   const [status] = allStatuses([target], kills)
-  const groups = loadoutGroups([interval('ci1', 0, null)], [status])
+  const groups = loadoutGroups([interval('ci1', 0, null, { classes: IRE_TRIO })], [status])
 
   assert.equal(groups.length, 1)
   assert.equal(groups[0].rows.length, 1, 'one tier, one card')
@@ -264,7 +249,10 @@ test('two runs of one target inside ONE interval stay one card', () => {
   recordKill(kills, { key: 'a mob', display: 'A mob', tier: 1, ts: OPEN_KILL - 60_000, credited: true })
   recordKill(kills, { key: 'a mob', display: 'A mob', tier: 3, ts: OPEN_KILL, credited: true })
   const target: RaidTarget = { name: 'A mob', category: 'Open World', match: ['A mob'] }
-  const groups = loadoutGroups([interval('ci1', 0, null)], allStatuses([target], kills))
+  const groups = loadoutGroups(
+    [interval('ci1', 0, null, { classes: IRE_TRIO })],
+    allStatuses([target], kills)
+  )
 
   assert.equal(groups.length, 1)
   assert.equal(groups[0].rows.length, 1, 'merged back into one card')
@@ -274,7 +262,10 @@ test('two runs of one target inside ONE interval stay one card', () => {
 
 test('undefeated targets are not grouped — they carry no timestamp to join on', () => {
   const target: RaidTarget = { name: 'Innoruuk', category: 'Plane of Hate', match: ['Innoruuk'] }
-  assert.deepEqual(loadoutGroups([interval('ci1', 0, null)], allStatuses([target], {})), [])
+  assert.deepEqual(
+    loadoutGroups([interval('ci1', 0, null, { classes: IRE_TRIO })], allStatuses([target], {})),
+    []
+  )
 })
 
 test('a target folds its tier runs across every one of its roster match names', () => {

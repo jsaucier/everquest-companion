@@ -64,6 +64,16 @@ export interface OutputKindLineProps {
   kind: OutputKindId
   /** Override the registry's clause when a surface has something truer to say. Rarely needed. */
   why?: string
+  /**
+   * When this app last READ the dump (JOS-253) — passed THROUGH rather than read from the
+   * registry, and that is the whole design decision here. The registry answers questions about
+   * the FILE (`outputStatus` is one readdir + one stat), and "did we load it" is not one of them:
+   * it is a fact about the consumer's own state, which for inventory is
+   * `ProgressState.inventorySource.readAt` and for the next kind will be something else. A
+   * registry field would have to be invented per consumer and could not be true for two surfaces
+   * at once. `null` ⇒ this surface reads the dump and has none; omitted ⇒ it does not read it.
+   */
+  loadedAt?: number | null
   testId?: string
 }
 
@@ -71,7 +81,12 @@ export interface OutputKindLineProps {
  * The line for one `/outputfile` kind. Renders nothing until the first read settles, so a surface
  * never flashes "not yet run" at somebody who ran the command an hour ago.
  */
-export default function OutputKindLine({ kind, why, testId }: OutputKindLineProps): JSX.Element | null {
+export default function OutputKindLine({
+  kind,
+  why,
+  loadedAt,
+  testId
+}: OutputKindLineProps): JSX.Element | null {
   const { status, ready } = useOutputStatus(kind)
   if (!ready || status === null) return null
   return (
@@ -80,6 +95,7 @@ export default function OutputKindLine({ kind, why, testId }: OutputKindLineProp
       why={why ?? status.why}
       updatedAt={status.updatedAt ?? undefined}
       steps={status.steps}
+      {...(loadedAt === undefined ? {} : { loadedAt })}
       testId={testId}
     />
   )

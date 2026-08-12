@@ -435,12 +435,33 @@ export interface UncharmEvent extends LogEventBase {
  * instance is engaged-and-alive by definition. `spell` is present on the worn-off
  * shape; the application shape carries only the mob.
  */
+/** The four crowd-control APPLICATION verbs `classifyCcApply` claims, verbatim from the log. */
+export type CcVerb = 'mesmerized' | 'enthralled' | 'entranced' | 'ensnared'
+
 export interface CcEvent extends LogEventBase {
   kind: 'cc'
   mob: string
   spell?: string
   /** True when derived from a "spell has worn off" line (keep-alive), not a fresh application. */
   refresh?: boolean
+  /**
+   * THE WORD THE GAME USED (JOS-228) — present only on the APPLICATION shape, and reported rather
+   * than interpreted (world-model law 1: messages over inference).
+   *
+   * WHY A CONSUMER WANTS IT. Three of these four sentences describe a hold that ANY damage breaks
+   * — a mesmerized mob cannot be hit without waking up — and the fourth (`ensnared`) is a snare,
+   * which does nothing to stop you killing the mob it is on. That difference decides whether a
+   * `<mob> died.` line arriving while the hold still stands can be ABOUT that hold, and it is the
+   * whole of JOS-228: killing one mob of a name was closing a landing on the mezzed mob standing
+   * beside it, so the bar vanished at the moment it mattered most.
+   *
+   * IT IS THE VERB AND NOT A CLASSIFICATION on purpose. The alternative was a hand-authored roster
+   * of mez spell NAMES, which is exactly the substitution JOS-200 caught and reversed — spells.json
+   * has no effect column, the game reuses one landing sentence for two effects, and "a message
+   * family is not an effect family". These four words are what the log itself prints; the ruling
+   * about which of them a corpse can explain belongs to the model (modules/buffTimers.ts).
+   */
+  verb?: CcVerb
   /**
    * EVERY spell whose `msg_cast_on_other` produced this APPLICATION sentence (JOS-89), from the
    * same DB suffix table `buffApply` reads — present only on the application shape, only when a
@@ -532,6 +553,46 @@ export interface PetClaimEvent extends LogEventBase {
   /** WHICH line said so. Never a behavioural switch — it is what the engine's debug line, an
    *  alert author and a test read to tell an ordered pet from an interrogated one. */
   via: 'tell' | 'leader'
+}
+
+/**
+ * `<PetName> says, 'My leader is <SomeoneElse>.'` — the SAME `/pet who leader` sentence as
+ * `PetClaimEvent{via:'leader'}`, spoken by a pet that belongs to somebody who is not you (JOS-250).
+ *
+ * A SEPARATE KIND ON PURPOSE, and this is the exception that proves law 4's rule. The tell and the
+ * self-leader say are one FACT ("this entity is my pet") and so are one kind; this line states the
+ * opposite fact ("this entity is somebody ELSE's pet") and every consumer of `petClaim` — the
+ * combat world model's `claim()`, the JOS-54 single-pet succession, `modules/buffs.ts`'s
+ * buff-entity succession, the progression pet ledger, the roster — would bind it to YOU if it
+ * arrived wearing that kind. Reusing `petClaim` with an `owner` field would make all five of them
+ * responsible for reading a field they have never read; a distinct kind makes the one consumer
+ * that wants it (combat's ally-charm model) opt in and leaves the other five untouched.
+ *
+ * IT IS THE STRONGEST ALLY BIND THERE IS, because it names both ends out loud, and it is the only
+ * one that also covers a SUMMONED pet of someone else's (a charm broadcast covers only charms).
+ *
+ * THE GUARD IS THE SAME ONE `classifyPetLeader` uses, inverted and then re-tightened: the leader
+ * must NOT be the tailed character (that line is a `petClaim` and is claimed first), the leader
+ * must be PLAYER-SHAPED, and the tailed character's name must be installed at all — with no
+ * character installed the self rule cannot run, so this rule would silently claim the user's own
+ * pet line. Same forgeability caveat as the self form, with the same bounded cost (one row in a
+ * meter, attributed to a stranger rather than to you).
+ *
+ * MEASURED (owner's whole log, 1,608,483 lines, 2026-08-12): the family has exactly ONE occurrence
+ * and it is the SELF form (`Jaber says, 'My leader is Primitive.'`). There is no third-party
+ * instance in this corpus, so this rule is STRUCTURALLY covered — the sentence shape is proven by
+ * a real line, the third-party variant is that same line with a different name in one capture, and
+ * it is unit-tested against a constructed sentence. It is stated rather than implied because the
+ * awaiting-sample law asks which half of "verified" a claim is standing on. The scrub keeps
+ * dropping it (AGENTS.md: the pet-leader carve-out is SELF-GATED, a stranger's pet naming a
+ * stranger falls to the quoted-speech rule), so no fixture can ever carry one either.
+ */
+export interface AllyPetLeaderEvent extends LogEventBase {
+  kind: 'allyPetLeader'
+  /** The speaking pet, spelled as the log spelled it (world-model law 2). */
+  pet: string
+  /** The player it named as its leader. Never the tailed character — that line is a `petClaim`. */
+  owner: string
 }
 
 /** Which of the six pet responses was spoken (shared/logScrub.ts `PET_SAY_LINES`). */
@@ -1373,6 +1434,10 @@ export type LogEvent =
   // cover "my mez ended" from the `cc {refresh:true}` side.
   | CcWakeEvent
   | PetClaimEvent
+  // The same `/pet who leader` sentence spoken about SOMEBODY ELSE (JOS-250). A separate kind
+  // rather than a field on PetClaimEvent, for the reason its own doc comment gives: five models
+  // bind `petClaim` to YOU and none of them should have to learn a new field to keep doing it.
+  | AllyPetLeaderEvent
   | PetSayEvent
   | CastBeginEvent
   | OtherCastBeginEvent

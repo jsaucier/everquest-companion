@@ -100,6 +100,44 @@
 // claim a later instant anyway, and keeping it lets the REST of that instant's lines (an AoE's
 // other targets, a tap's heal side) still join after a mid-burst resist line.
 
+// ── A PROC WHOSE ONLY LINE IS A LANDING SENTENCE (JOS-246, report 01KZSZC882Y2T1PQEDQXFM9VDB) ──
+//
+// Everything above reads the two lines a proc can print about its EFFECT — a damage line or a
+// heal line — and `Blessing of the Theurgist` prints NEITHER. Its entire footprint in the
+// reporter's log is one sentence about the character it landed on:
+//
+//   [Tue Aug 11 22:47:12 2026] The power of your god fills you.
+//
+// The parser already understands that line. `msgCastOnYou` in the shipped DB matches the string
+// EXACTLY once across all 1,926 rows (measured 2026-08-12), so it arrives at the engine as
+// `buffApply { target: 'self', candidates: ['Blessing of the Theurgist'] }` with a candidate list
+// of length one. The miss was entirely DOWNSTREAM: combat ingest routes a `buffApply` to the
+// dispel ledger, to the pet binder and to PROC_BUFF_CATALOG's span tracker, and not one of the
+// three counts a firing. So the whole detector above never saw the event, and the reported
+// symptom is exact — the proc is not "counted wrong", it is absent.
+//
+// THE EVIDENCE THAT IT IS A PROC, from the attached slice (read-only, single lines quoted):
+//   - SIX firings inside 8m23s of one continuous grind (22:47:12, 22:47:38, 22:50:02, 22:53:10,
+//     22:53:13, 22:55:35), each of them between the reporter's own `You crush` / `You punch`
+//     swings — a melee-paced rate, not a cast cadence;
+//   - NOT ONE `You begin casting` line for it anywhere in the slice, and the DB row says
+//     `This spell is cast by NPCs only.`, so a player seeing it holds it from gear or an aura;
+//   - `Instant`, `Self`, `Beneficial`, and no damage or heal line at any of the six instants.
+//
+// AND IT NAMES NO SOURCE, which is law 6 rather than a gap to fill later: no item line precedes
+// it consistently (22:47:12 follows a `Black Alloy Medallion (Exaltation)` line, 22:53:10 follows
+// a `Bone-Clasped Girdle` one, 22:47:38 follows neither). The lane therefore counts firings and
+// reports its source window UNKNOWN — the same answer procViews already gives every item proc.
+//
+// THE REGISTRY IS CURATED, at PROC_BUFF_CATALOG's bar and for its reason. The shipped DB holds
+// 53 Self/Instant/Beneficial rows carrying a `msgCastOnYou`, 14 of them flagged NPC-only (Bone
+// Shatter, Boneshear, Cleanse, Distraction, Envenomed Heal ×2, Harvest Leaves, Invigorate,
+// Knight's Blessing, Mana Conversion, Mistwalker, Modulation, Neutralize Magic, and this one).
+// That is a POPULATION, not a roster of procs — most are ordinary spells somebody casts, and
+// promoting the SHAPE to a rule would file every buff a mob lands on you as a proc of yours. A
+// row is earned when a real log shows its sentence firing cast-less inside combat, and when the
+// sentence is unique in the DB so the count can be attributed to one name. One log has, once.
+
 import { spellCanonKey } from '../log/parseCommon'
 import type { DamageType } from '../../shared/combat'
 
@@ -271,6 +309,50 @@ export function procEligibleDamage(dtype: DamageType): boolean {
 }
 
 /**
+ * One proc whose entire printed footprint is a landing sentence about YOU (JOS-246). See the
+ * file header for the entry bar and for the population this deliberately does not sweep up.
+ *
+ * Every field is copied VERBATIM from `src/main/data/spells.json`; nothing here is invented, and
+ * `tests/procDetect.test.mts` re-reads the DB to prove it.
+ */
+export interface SelfLandingProcDef {
+  /** DB spell name, display casing — the lane this firing is counted under. */
+  name: string
+  /** DB `classes` string, for provenance. */
+  classes: string
+  /** DB `msg_cast_on_you`. Verified UNIQUE in the DB — that uniqueness IS the entry condition. */
+  applyMsg: string
+}
+
+/**
+ * v1 is ONE entry, which is the state of the evidence and not a stub — the same honest position
+ * PROC_BUFF_CATALOG takes one file over.
+ */
+export const SELF_LANDING_PROCS: SelfLandingProcDef[] = [
+  {
+    name: 'Blessing of the Theurgist',
+    classes: 'This spell is cast by NPCs only.',
+    applyMsg: 'The power of your god fills you.'
+  }
+]
+
+/**
+ * The registry entry a landing's candidate list names, or undefined.
+ *
+ * UNAMBIGUOUS OR NOTHING, and that is deliberately stricter than `procBuffInCandidates`, which
+ * takes the first catalog name it finds in the list. That gate opens a SPAN, where a wrong pick
+ * mislabels a co-occurrence; this one adds a COUNT to a NAMED LANE, where a wrong pick invents
+ * firings under somebody else's spell. Every entry's message is unique in the shipped DB, so a
+ * one-element list is exactly what production hands us — and if a learned message overlay ever
+ * widens one, refusing to count is the honest answer, never picking a candidate (law 3).
+ */
+export function selfLandingProcIn(candidates: readonly string[]): SelfLandingProcDef | undefined {
+  if (candidates.length !== 1) return undefined
+  const key = spellCanonKey(candidates[0])
+  return SELF_LANDING_PROCS.find((p) => spellCanonKey(p.name) === key)
+}
+
+/**
  * How long after `You activate Quick Buff.` a landing still belongs to that burst.
  *
  * FIVE SECONDS, and the number is not this file's invention: it is the SAME window the buffs
@@ -336,6 +418,13 @@ export interface LaneSides {
   damage: number
   /** Firings that printed a HEAL line. */
   heal: number
+  /**
+   * Firings whose ONLY line was a landing sentence about you (JOS-246) — a THIRD side rather
+   * than a zero-amount damage firing, because the two are different observations and `max` has
+   * to be able to tell them apart. A Theurgist landing is not "a hit for 0"; it is a firing with
+   * nothing measured. See `LandingProcFold`.
+   */
+  landing: number
 }
 
 /** One accumulated proc lane of `origin: 'spell'`: exact counts and the damage/healing those
@@ -360,9 +449,9 @@ export interface SpellProcLane {
   byState: Map<string, LaneSides>
 }
 
-/** Firings on a side pair: `max`, never the sum — see LaneSides. */
+/** Firings across the sides: `max`, never the sum — see LaneSides. */
 export function sidesCount(s: LaneSides | undefined): number {
-  return s ? Math.max(s.damage, s.heal) : 0
+  return s ? Math.max(s.damage, s.heal, s.landing) : 0
 }
 
 /** One lane's firings, the number every rate and every link is built from. */
@@ -370,41 +459,65 @@ export function laneCount(l: SpellProcLane): number {
   return sidesCount(l.hits)
 }
 
-/** Everything one detected proc contributes. An args object: five positional parameters would
- *  blow `max-params`, and the active set is not optional — a firing with no state open folds an
- *  EMPTY set, which is a real observation ("nothing was on"), not a missing argument. */
-export interface SpellProcFold {
+/** Which line carried one firing — the `LaneSides` key it bumps. */
+export type ProcSide = keyof LaneSides
+
+/** What every fold carries, whichever side it arrived on. The active set is not optional — a
+ *  firing with no state open folds an EMPTY set, which is a real observation ("nothing was on"),
+ *  not a missing argument. */
+interface ProcFoldBase {
   spell: string
-  amount: number
-  isHeal: boolean
   /** `<kind>:<key>` of every state open at the firing instant (StateTimeline.active). */
   active: ReadonlySet<string>
 }
 
-/** Fold one detected proc into a lane map. `amount` lands in `damage` or `heal` per `isHeal`;
- *  a proc that carries neither (none exist today) still counts, because the COUNT is the
- *  measurement and the amount is the annotation. */
+/** A firing whose line CARRIED a number: `amount` lands in the lane's `damage` or `heal` total. */
+export interface MeasuredProcFold extends ProcFoldBase {
+  side: 'damage' | 'heal'
+  amount: number
+}
+
+/**
+ * A firing whose only line was a landing sentence (JOS-246), and it has NO `amount` FIELD AT ALL.
+ *
+ * That absence is the `healUnstated` discipline (AGENTS.md) applied to this ledger: an
+ * `amount: 0` would enter the lane's damage total as a measurement reading "it did nothing",
+ * when the truth is that nothing was measured. The COUNT is the whole observation, which is
+ * exactly what `addSpellProc` has always claimed — the case simply had no member until now.
+ */
+export interface LandingProcFold extends ProcFoldBase {
+  side: 'landing'
+}
+
+/** Everything one detected proc contributes. An args object: five positional parameters would
+ *  blow `max-params`. */
+export type SpellProcFold = MeasuredProcFold | LandingProcFold
+
+/** Fold one detected proc into a lane map. Every fold bumps its own side of the count; only a
+ *  MEASURED one moves an amount, and no fold on any side ever moves a damage total the meter
+ *  already owns (law 8). */
 export function addSpellProc(lanes: Map<string, SpellProcLane>, f: SpellProcFold): void {
   const key = spellCanonKey(f.spell)
   const lane = lanes.get(key) ?? {
     name: f.spell,
-    hits: { damage: 0, heal: 0 },
+    hits: emptySides(),
     damage: 0,
     heal: 0,
     byState: new Map<string, LaneSides>()
   }
-  bumpSide(lane.hits, f.isHeal)
-  if (f.isHeal) lane.heal += f.amount
-  else lane.damage += f.amount
+  lane.hits[f.side]++
+  if (f.side !== 'landing') {
+    if (f.side === 'damage') lane.damage += f.amount
+    else lane.heal += f.amount
+  }
   for (const stateKey of f.active) {
-    const sides = lane.byState.get(stateKey) ?? { damage: 0, heal: 0 }
-    bumpSide(sides, f.isHeal)
+    const sides = lane.byState.get(stateKey) ?? emptySides()
+    sides[f.side]++
     lane.byState.set(stateKey, sides)
   }
   lanes.set(key, lane)
 }
 
-function bumpSide(s: LaneSides, isHeal: boolean): void {
-  if (isHeal) s.heal++
-  else s.damage++
+function emptySides(): LaneSides {
+  return { damage: 0, heal: 0, landing: 0 }
 }

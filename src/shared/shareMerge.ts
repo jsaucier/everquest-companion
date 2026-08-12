@@ -262,6 +262,16 @@ function pushAlertPrefRows(out: ScalarChange[], body: SettingsBundleBody, ctx: S
     incoming: body.alertPrefs.muted,
     merge: 'replace'
   })
+  // JOS-222. Absent on both sides means OFF on both sides, and pushScalar's String(x ?? '')
+  // makes absent and false the same reading — so a bundle written before this preference existed
+  // offers no row here, which is exactly right: it has no opinion to import.
+  pushScalar(out, {
+    id: 'alertPrefs.alwaysPlayAll',
+    label: 'Always play all alerts',
+    current: ctx.alertPrefs.alwaysPlayAll ?? false,
+    incoming: body.alertPrefs.alwaysPlayAll ?? false,
+    merge: 'replace'
+  })
 }
 
 function pushOverlayRows(out: ScalarChange[], body: SettingsBundleBody, ctx: ScalarContext): void {

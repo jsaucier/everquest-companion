@@ -30,8 +30,10 @@ import {
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 import type { AlertDef, SoundPack } from '@shared/types'
 import { captureNamesIn } from '@shared/alertCaptures'
+import { MAX_EARLY_WARN_SEC, breakTriggerKinds } from '@shared/earlyWarning'
 import { blankCondition, type CombineMode, type ConditionDraft } from './conditionDraft'
 import {
   type AlertForm,
@@ -212,11 +214,66 @@ function VolumeCooldownSection({ f }: { f: AlertForm }): JSX.Element {
   )
 }
 
+/**
+ * "Warn N seconds early" (JOS-216) — the offset, in the plainest words the feature has.
+ *
+ * DELIBERATELY SMALL, and the owner's ruling says why: this is one option add, not a lecture. The
+ * caveat that belongs to it — the timing leans on a duration the app is still learning — is the
+ * MOUSEOVER, two short sentences, because it is a thing to know once rather than a thing to read on
+ * every visit. The one caption below it states what the number changes and nothing else.
+ */
+/**
+ * True when this alert's trigger is an ENDING rather than a landing (JOS-235) — asked of the SAME
+ * classifier main schedules by, over the trigger the form would save right now.
+ *
+ * It changes one caption, and the caption was a lie for exactly these defs: a mez-break alert with
+ * an offset does not fire "instead of when it lands" (it never fired on a landing), and the thing
+ * a user needs told is the half that is new — an early break still speaks at the break.
+ */
+function isBreakForm(f: AlertForm): boolean {
+  return breakTriggerKinds(triggerFromForm(f.mode, f.conditions)).length > 0
+}
+
+function EarlyWarnSection({ f }: { f: AlertForm }): JSX.Element {
+  return (
+    <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+      <TextField
+        size="small"
+        type="number"
+        label="Warn early (sec)"
+        data-testid="alert-early-warn"
+        value={f.earlyWarnSec || ''}
+        placeholder="0"
+        onChange={(e) => f.setEarlyWarnSec(Math.max(0, Number(e.target.value) || 0))}
+        slotProps={{ htmlInput: { min: 0, max: MAX_EARLY_WARN_SEC } }}
+        sx={{ width: 150 }}
+      />
+      {/* A NATIVE title, not a popper (JOS-143): this dialog renders Selects, and the rule is that
+          no file mounting a dropdown may also mount a hover card that could open over its option
+          list. Same spelling the Remove-condition button above already uses. */}
+      <span
+        title="Timing uses the duration the app has learned for that spell, so it can be off at first. It gets accurate once your logs have been running a while."
+        data-testid="alert-early-warn-help"
+      >
+        <InfoOutlinedIcon fontSize="small" color="disabled" />
+      </span>
+      {f.earlyWarnSec > 0 && (
+        <Typography variant="caption" color="text.secondary" sx={{ flexBasis: '100%' }}>
+          {isBreakForm(f)
+            ? `Fires ${String(f.earlyWarnSec)}s before it is due to end. If it ends sooner than that, you still hear the alert then.`
+            : `Fires ${String(f.earlyWarnSec)}s before it is due to wear off, instead of when it lands.`}
+        </Typography>
+      )}
+    </Stack>
+  )
+}
+
 export default function AlertDialog({
   open,
   initial,
   packs,
   voiceSetup,
+  allAlwaysPlay = false,
   onClose,
   onSave
 }: {
@@ -225,6 +282,13 @@ export default function AlertDialog({
   packs: SoundPack[]
   /** Whether there is a voice to speak with, and how to go set one up (VoiceSetupLink.tsx). */
   voiceSetup: VoiceSetupNotice
+  /**
+   * `AlertPrefs.alwaysPlayAll` (JOS-222) — passed straight through to the Speech block, which is
+   * the only thing in this dialog the global preference has an opinion about. Optional and false
+   * by default for the same reason `onOpenVoicePrefs` is on the view: a caller without the prefs
+   * must still compile, and the safe rendering is the editable one.
+   */
+  allAlwaysPlay?: boolean
   onClose: () => void
   onSave: (def: AlertDef) => void
 }): JSX.Element {
@@ -266,6 +330,7 @@ export default function AlertDialog({
           </Box>
 
           <VolumeCooldownSection f={f} />
+          <EarlyWarnSection f={f} />
 
           <Divider />
           {/* Recomputed from the LIVE form, not from `initial`: the user can add `(?<player>…)`
@@ -276,6 +341,7 @@ export default function AlertDialog({
             form={f.speech}
             voiceSetup={voiceSetup}
             captureNames={captureNamesIn(triggerFromForm(f.mode, f.conditions))}
+            allAlwaysPlay={allAlwaysPlay}
           />
         </Stack>
       </DialogContent>

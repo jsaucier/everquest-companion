@@ -6,9 +6,10 @@
 // is a rule somebody will want to read on its own:
 //
 //   1. A NAMED ANCHOR wins. `You begin casting <S>.` names the spell AND the rank, so a candidate
-//      with one of those inside the window resolves outright — and the row can then print the RANK
-//      the landing line never carries (`Mesmerization VII`, not `Mesmerization`, which is also the
-//      one field JOS-126 found the alerts tracker missing).
+//      with one of those inside the window resolves outright — to THAT CANDIDATE'S DB NAME
+//      (JOS-238). The rank the landing line never carries is kept beside it as
+//      `AdmittedLanding.castName`, which is where the JOS-126 reading of that field now lives;
+//      what it is no longer allowed to be is the spell's identity.
 //   2. SEVERAL of your own casts sharing one sentence resolve to the MOST RECENT. Not a coin flip
 //      between you and a stranger — every candidate here is yours — and the same recency rule
 //      Task #34 shipped.
@@ -36,11 +37,31 @@ export interface Candidate {
 
 /** What the gate admitted, in the shape `BuffInstances.applyMessageBuff` takes. */
 export interface AdmittedLanding {
-  /** The display name: the ranked cast name, the candidate's own name, or the joined family. */
+  /**
+   * THE RESOLVED IDENTITY — the DB CANDIDATE's own name, or the joined family (JOS-238).
+   *
+   * It used to be the RANKED text off the cast line (`Swift Like the Wind IV`) whenever an anchor
+   * resolved the landing, which made the identity a fact about how the log spelled one line rather
+   * than about which spell it is. That string then travelled the whole way down — the instance's
+   * display name, the learner's display, and (the reported defect) the derived `buffExpired` — so
+   * a suggested `wearsOff` alert, which pins the bare DB display name the catalog states, could
+   * never match a spell cast at rank II or above. The whole haste family shares both its landing
+   * and its wear-off sentence, so every one of them was affected.
+   *
+   * The RANK is not lost: it is {@link castName}, beside this, for any surface that wants to show
+   * what was cast. What it no longer does is stand in for the spell's name.
+   */
   spell: string
   durationMs: number | null
   illusion: boolean
   caster: string
+  /**
+   * The RANKED display name exactly as the cast line spelled it (`Swift Like the Wind IV`), when
+   * a NAMED anchor resolved this landing and it says something the DB name does not. Absent when
+   * the anchor named no spell (a Quick Buff burst), when the landing stayed a family, and when the
+   * cast line already spelled the DB name — an equal string is not a second fact.
+   */
+  castName?: string
   /** The LINE this instance is identified by, when it differs from the display name. */
   lineKey?: string
   /** Present only for a family row — every spell the sentence could be (drives the ~ chip). */
@@ -55,16 +76,25 @@ export interface LandingContext {
   hasActiveSpell: (lineKey: string) => boolean
 }
 
-/** One candidate resolved outright, with the display name the caller should print. */
-function resolved(cand: Candidate, display: string, caster: string): AdmittedLanding {
-  // The RANKED display name from the cast line, keyed on the rank-STRIPPED line — so the row reads
-  // `Mesmerization VII` while the learner, the DB lookup and the instance identity all stay on the
-  // one line the DB actually has a row for (ruling 4's pooling).
+/**
+ * One candidate resolved outright. THE IDENTITY IS THE CANDIDATE'S OWN DB NAME (JOS-238); `cast`
+ * is the ranked text the cast line spelled, carried alongside for display and never as the name.
+ *
+ * The anchor and the candidate were matched under `spellKey` — rank-stripped and case-folded — so
+ * the two strings are the same spell by construction and differ only in how the log wrote it down.
+ * That is exactly why the DB name is the one to keep: it is the string every OTHER surface states
+ * (the catalog, `where.spell`, the wears-off sentence's own candidate list), and the ranked one is
+ * the string only this single cast line ever carried.
+ */
+function resolved(cand: Candidate, caster: string, cast?: string): AdmittedLanding {
   return {
-    spell: display,
+    spell: cand.name,
     durationMs: cand.durationMs,
     illusion: cand.illusion,
     caster,
+    // Only when it says something the name does not — an anchor that spelled the DB name exactly
+    // adds no fact, and an absent field is how every optional on this model states "nothing extra".
+    ...(cast != null && cast !== cand.name ? { castName: cast } : {}),
     lineKey: spellKey(cand.name)
   }
 }
@@ -78,7 +108,7 @@ function namedLanding(cands: readonly Candidate[], ts: number, ctx: LandingConte
     if (at == null) continue
     const t = ctx.anchors.lastCastTs(c.name) ?? -1
     if (t <= bestTs) continue
-    best = resolved(c, at.display ?? c.name, at.caster)
+    best = resolved(c, at.caster, at.display)
     bestTs = t
   }
   return best
@@ -94,13 +124,13 @@ function everCastLanding(cands: readonly Candidate[], caster: string, ctx: Landi
     best = c
     bestTs = t
   }
-  return best ? resolved(best, best.name, caster) : null
+  return best ? resolved(best, caster) : null
 }
 
 /** Burst narrowing (b): the candidate you already have up (EQ stacking keeps one per family). */
 function activeLanding(cands: readonly Candidate[], caster: string, ctx: LandingContext): AdmittedLanding | null {
   for (const c of cands) {
-    if (ctx.hasActiveSpell(spellKey(c.name))) return resolved(c, c.name, caster)
+    if (ctx.hasActiveSpell(spellKey(c.name))) return resolved(c, caster)
   }
   return null
 }
@@ -148,7 +178,7 @@ export function admitLanding(cands: Candidate[], ts: number, ctx: LandingContext
   // so asking with the first one is asking about the burst.
   const burst = ctx.anchors.attribute(cands[0].name, ts)
   if (burst?.unnamed !== true) return null
-  if (cands.length === 1) return resolved(cands[0], cands[0].name, burst.caster)
+  if (cands.length === 1) return resolved(cands[0], burst.caster)
   return (
     everCastLanding(cands, burst.caster, ctx) ??
     activeLanding(cands, burst.caster, ctx) ??

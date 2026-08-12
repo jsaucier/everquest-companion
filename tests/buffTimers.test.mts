@@ -170,7 +170,12 @@ const ALL_FIXTURES = [
   'w44-poison-slow-per-mob.log',
   'g2-buff-fanout.log',
   'w13-charm-break-recharm.log',
-  'w5-charm-zone.log'
+  'w5-charm-zone.log',
+  // JOS-213's two calm-line windows: the first beneficial-typed spells this suite has ever seen
+  // standing on a hostile, so every invariant below (the honesty law, unique ids, the surface
+  // partition, "never routed by group") now covers the row kind that made the ticket.
+  'w64-pacify-mob.log',
+  'w65-pacify-mob-death.log'
 ]
 
 test('AN UNKNOWN DURATION NEVER COUNTS DOWN — over every row of every fixture', () => {
@@ -428,12 +433,21 @@ test('a beneficial spell goes to the BUFFS window even when it is on somebody el
   // g2-buff-fanout.log is the fixture that has one buff up on several entities. `group` is not the
   // discriminator: a buff you put on your pet is `group: 'target'` and is still a BUFF, so routing
   // by target would file your own group buffs under "debuffs".
+  //
+  // AND IT IS THE COUNTER-CASE JOS-213 HAD TO SURVIVE. The model has no word for "another
+  // player": the Center/Breeze/Reckless Strength the owner fans out onto his group-mate `Dranix`
+  // carry `disposition: 'hostile'`, exactly like a Pacify on a giant does. That is why the calm
+  // line is routed by the SPELL and never by the target — see tests/calmLineTimers.test.mts.
   const { rows } = replayBuffTimers(readFixture('g2-buff-fanout.log'))
   const onOthers = rows.filter((r) => r.kind === 'buff' && r.group === 'target')
   assert.ok(onOthers.length > 0, 'the fan-out fixture should leave a buff standing on somebody else')
   for (const r of onOthers) {
     assert.equal(timerRowSurface(r), 'buffs', `${r.name} on ${r.target ?? '?'} was filed as a debuff`)
   }
+  assert.ok(
+    onOthers.some((r) => r.target === 'Dranix'),
+    'the fan-out fixture no longer reaches the group-mate — the counter-case is vacuous'
+  )
   assert.ok(
     rowsForSurface(rows, 'buffs').some((r) => r.group === 'target'),
     'the buffs window must carry the buffs you put on other people'
@@ -466,10 +480,16 @@ test('a slow you put on a mob is a DEBUFF row on the debuffs window, not a buff'
   const debuffs = rows.filter((r) => r.kind === 'debuff')
   assert.ok(debuffs.length > 0, 'the Cazic pull should leave debuff rows standing')
   assert.ok(
-    // The RANK is on the row since JOS-140 — the cast line says `Shiftless Deeds IV` and the
-    // wear-off says `Shiftless Deeds`, and the row now shows the one you actually cast.
-    debuffs.some((r) => r.name === 'Shiftless Deeds IV'),
+    // The row is NAMED for the spell since JOS-238 — the DB's `Shiftless Deeds`, which is also
+    // what the wear-off sentence says — while the rank the cast line spelled rides beside it in
+    // `castName`. JOS-140 put the rank IN the name; that made the name a fact about one log line.
+    debuffs.some((r) => r.name === 'Shiftless Deeds'),
     `the slow itself should be one of them: ${debuffs.map((r) => r.name).join(', ')}`
+  )
+  assert.equal(
+    debuffs.find((r) => r.name === 'Shiftless Deeds')?.castName,
+    'Shiftless Deeds IV',
+    'and the rank the owner actually cast is still on the row'
   )
   for (const r of debuffs) assert.equal(timerRowSurface(r), 'debuffs', `${r.name} was filed as a buff`)
   // …and they arrive on the debuffs window under the enemy they are on, not under a self heading.
@@ -483,13 +503,17 @@ test('a slow you put on a mob is a DEBUFF row on the debuffs window, not a buff'
 // The CC half's DEATH path (JOS-156 — it closes the right hold and mints nothing) lives in
 // tests/deathClearsDebuffs.test.mts beside the buffs half's, so the ticket's evidence is in one
 // place and this file stays under the 400-code-line ceiling.
-test('a debuff row is never routed by GROUP — the row kind is the whole discriminator', () => {
-  // The regression this guards: routing by `group` would send every buff you put on your pet or
-  // your group to the debuffs window, and would send a debuff standing on YOU to the buffs one.
+test('a row is never routed by the TARGET — the spell decides, kind first and then the calm line', () => {
+  // The regression this guards: routing by `group`/`target`/`disposition` would send every buff you
+  // put on your pet or your group to the debuffs window, and would send a debuff standing on YOU to
+  // the buffs one. Since JOS-213 the rule has exactly one exception and it is a SPELL fact the row
+  // carries (`calmsTarget`), so the assertion is the law rather than the old `kind` shorthand — and
+  // nothing about who the row is on appears in it.
   for (const name of ALL_FIXTURES) {
     const { rows } = replayBuffTimers(readFixture(name))
     for (const r of rows) {
-      assert.equal(timerRowSurface(r), r.kind === 'buff' ? 'buffs' : 'debuffs', `${name}: ${r.id}`)
+      const expected = r.kind === 'buff' && r.calmsTarget !== true ? 'buffs' : 'debuffs'
+      assert.equal(timerRowSurface(r), expected, `${name}: ${r.id}`)
     }
   }
-})
+})

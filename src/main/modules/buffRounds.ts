@@ -36,7 +36,6 @@
 // exactly two of fifty-eight cycles (43 s and 44 s), which is the correct yield for a fifteen
 // minute AE-mez grind: they are the two rounds whose mob name happened to be unique.
 
-import { S, type FoldSchema } from '../foldCache/schema'
 
 /** One landing: a mob of this name we believe is still held, and whether it is still measurable. */
 export interface Hold {
@@ -217,53 +216,4 @@ export class HoldGroup {
     if (changed) this.holds.sort((a, b) => a.startedTs - b.startedTs)
     return changed
   }
-
-  // ---- the checkpoint seam (JOS-208 phase 2) --------------------------------------------------
-  //
-  // THE ROUND CURSOR TRAVELS WITH THE LANDINGS, and it has to. `roundTs`/`roundUsed`/
-  // `roundStartCount` are what makes the min(N, M) rule work ACROSS a bus delivery: an AE mez
-  // landing on five mobs is five separate events sharing one log second, so a checkpoint taken
-  // between the second and the third of them and restored with a fresh cursor would re-open the
-  // round — appending where it should refresh, and turning a count of five into a count of eight.
-  // A split point inside a same-second round is not exotic; the mid-hold and fuzz axes of the
-  // differential matrix land on one routinely.
-  //
-  // `singleton` is NOT stored: it is an IDENTITY fact the OWNER decides when it builds the group
-  // (an entity it tracks vs a name the world can duplicate), and the owner rebuilds the group
-  // with the same argument on the way in. Storing it would be a second answer to a question the
-  // owner already answers.
-
-  static readonly FOLD_SCHEMA: FoldSchema = S.obj({
-    holds: S.arr(S.obj({ startedTs: S.num, clean: S.bool })),
-    roundTs: S.num,
-    roundUsed: S.num,
-    roundStartCount: S.num
-  })
-
-  serializeFold(): HoldGroupFoldState {
-    return {
-      holds: this.holds.map((h) => ({ ...h })),
-      roundTs: this.roundTs,
-      roundUsed: this.roundUsed,
-      roundStartCount: this.roundStartCount
-    }
-  }
-
-  /** Rebuild a group with `singleton` from its owner and the landings from a blob. */
-  static from(singleton: boolean, state: HoldGroupFoldState): HoldGroup {
-    const g = new HoldGroup(singleton)
-    for (const h of state.holds) g.holds.push({ ...h })
-    g.roundTs = state.roundTs
-    g.roundUsed = state.roundUsed
-    g.roundStartCount = state.roundStartCount
-    return g
-  }
-}
-
-/** One `HoldGroup` as plain data — the landings plus the round cursor. */
-export interface HoldGroupFoldState {
-  holds: Hold[]
-  roundTs: number
-  roundUsed: number
-  roundStartCount: number
 }

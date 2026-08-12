@@ -16,6 +16,14 @@
 // Lethargy never reaches the debuff window (01KZP5B8F9GJ0J0BNCP29DH59J) — which is the sentence
 // JOS-174 named and REFUSED, so it is the first entry that takes a line off another classifier.
 //
+// JOS-245 ADDED A FOURTH REPORT and the first row whose evidence log is not the owner's: a druid
+// whose Vengeance of the Wild never reaches the debuff window (01KZSR4HQVWJKDG0NCDGZ01928). The
+// owner's 1,608,490 lines hold NO trace of that spell — not the landing, not the wear-off, not the
+// name — so the count comes from the reporter's slice instead (`hits: 0` says exactly that), and
+// the acceptance below carries the extra half those two facts imply: the whole CYCLE, because what
+// the correction really restores is the landing the learner needs before any observed duration can
+// exist at all.
+//
 // FIVE THINGS ARE PINNED HERE:
 //
 //   1. THE SHAPE. Every entry restores a SUBJECT and changes nothing else. Strip the leading
@@ -304,7 +312,8 @@ test('THE REPORTED DEFECT: an Odium VI cast plus the live landing opens a DEBUFF
   )
   const row = r.rows.find((x) => x.target === 'a rock golem')
   assert.ok(row, `no Odium row: ${r.rows.map((x) => `${x.name}@${x.target ?? 'self'}`).join(', ') || '(none)'}`)
-  assert.equal(row.name, 'Odium VI', 'the ranked cast line names the row — the rank was never the defect')
+  assert.equal(row.name, 'Odium', 'the DB name is the row identity (JOS-238); the rank was never the defect')
+  assert.equal(row.castName, 'Odium VI', 'and the rank the cast line spelled is kept beside it')
   assert.equal(row.kind, 'debuff')
   assert.equal(row.mode, 'countdown', 'a bar with a duration, which is the whole report')
   assert.equal(row.durationMs, 30_000, 'the committed DB states 30 seconds for the line')
@@ -312,7 +321,7 @@ test('THE REPORTED DEFECT: an Odium VI cast plus the live landing opens a DEBUFF
   // The instance under the row: before the correction the landing parsed to nothing at all, so
   // there was no held instance and no projection could have invented one.
   assert.ok(
-    r.active.some((a) => a.spell === 'Odium VI' && a.target === 'a rock golem'),
+    r.active.some((a) => a.spell === 'Odium' && a.target === 'a rock golem'),
     `no held instance: ${r.active.map((a) => `${a.spell}@${a.target ?? 'self'}`).join(', ') || '(none)'}`
   )
 })
@@ -374,7 +383,7 @@ test('JOS-189: each chant of the chain gets its OWN row, and the resisted one ge
   const names = r.rows.map((x) => x.name).sort()
   assert.deepEqual(
     names,
-    ["Tuyen's Chant of Disease VI", "Tuyen's Chant of Flame V", "Tuyen's Chant of Poison V"],
+    ["Tuyen's Chant of Disease", "Tuyen's Chant of Flame", "Tuyen's Chant of Poison"],
     'the three that landed, each under its own name — and no frost row at all'
   )
   for (const row of r.rows) {
@@ -395,7 +404,7 @@ test('…and with the wiki`s own two rows the same chain shows frost and loses t
     const r = replay(CHAIN, 10, bare)
     assert.deepEqual(
       r.rows.map((x) => x.name).sort(),
-      ["Tuyen's Chant of Flame V", "Tuyen's Chant of Frost V"],
+      ["Tuyen's Chant of Flame", "Tuyen's Chant of Frost"],
       'a frost bar for a frost that was resisted, and nothing for the poison or the disease'
     )
   } finally {
@@ -448,6 +457,87 @@ test('…and without the correction the same landing is a nameless emote, which 
   } finally {
     installSpellDb(loadSpellDb())
   }
+})
+
+// ---------------------------------------------------------------------------------------------
+// 5 — JOS-245: the druid DoT whose landing sentence the owner's log has never printed
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * THE REPORT (01KZSR4HQVWJKDG0NCDGZ01928, v0.21.0, a druid): Vengeance of the Wild does not appear
+ * in debuff tracking. Same shape as Odium — the wiki writes `Target has been consumed in the flames
+ * of the wild.`, which keys nothing.
+ *
+ * WHERE THE BYTES COME FROM, and this one is ALL injected, which no other case here is. The owner's
+ * log holds no line of this spell in any form (measured 2026-08-12, 1,608,490 lines: 0 landings, 0
+ * casts, 0 wear-offs, 0 mentions), so both sentences are quoted verbatim from the report and the
+ * MOB is swapped for one of the owner's — `Lady Vox` in the reporter's slice, `a fire giant warrior`
+ * here. No reporter-slice bytes enter the tree; the AGENTS.md rule is the same one the Odium cast
+ * line already travels.
+ */
+const DRUID_DOT: [number, string][] = [
+  [0, 'You begin casting Vengeance of the Wild VI.'],
+  [2, 'a fire giant warrior has been consumed in the flames of the wild.']
+]
+
+test('JOS-245: a Vengeance of the Wild cast plus its landing opens the DoT`s debuff bar', () => {
+  const r = replay(DRUID_DOT, 10)
+  const row = r.rows.find((x) => x.target === 'a fire giant warrior')
+  assert.ok(row, `no dot row: ${r.rows.map((x) => `${x.name}@${x.target ?? 'self'}`).join(', ') || '(none)'}`)
+  assert.equal(row.name, 'Vengeance of the Wild', 'the DB name is the row identity')
+  assert.equal(row.castName, 'Vengeance of the Wild VI', 'and the rank the reporter`s cast line spelled')
+  assert.equal(row.kind, 'debuff')
+  assert.equal(row.mode, 'countdown')
+  assert.equal(row.durationMs, 30_000, 'the committed DB states 5 ticks, which is the FLOOR (see below)')
+  assert.ok(rowsForSurface(r.rows, 'debuffs').includes(row), 'the DEBUFFS window, which is where it was missing')
+  assert.ok(
+    r.active.some((a) => a.spell === 'Vengeance of the Wild' && a.target === 'a fire giant warrior'),
+    `no held instance: ${r.active.map((a) => `${a.spell}@${a.target ?? 'self'}`).join(', ') || '(none)'}`
+  )
+})
+
+test('…and without the correction the same landing names no spell, which is the whole report', () => {
+  const bare = buildSpellDb(applySpellCorrections(RAW, HAND_DERIVED).spells)
+  try {
+    const r = replay(DRUID_DOT, 10, bare)
+    assert.deepEqual(r.rows, [], 'no row at all: the landing sentence was in no table under any key')
+    assert.equal(
+      castOnOtherSuffix(bare.byKey.get('vengeance of the wild')?.msgCastOnOther ?? ''),
+      null,
+      'because the scrape wrote `Target` where the table keys on `Someone`'
+    )
+    assert.equal(
+      matchCastOnOtherSuffix('a fire giant warrior has been consumed in the flames of the wild.', bare),
+      null,
+      'and the live sentence therefore resolved to nothing'
+    )
+  } finally {
+    installSpellDb(loadSpellDb())
+  }
+})
+
+test('JOS-245: the restored landing is what lets the bar LEARN the rank`s real duration', () => {
+  // THE HONEST-DURATION HALF. The DB states 5 ticks / 30 s for a spell the reporter casts at rank
+  // VI, and his slice's one complete cycle runs 47 s from landing to wear-off — eight damage ticks,
+  // not five. That is the scaling-duration defect `spellCorrectionsList.ts` records under WRONG
+  // NUMBER, and the answer to it is `SpellStats.estimateFor`: the DB figure is a FLOOR and a clean
+  // observed cycle raises it. What was missing was the CYCLE — with no landing there was no
+  // instance, so the wear-off closed nothing and no span could ever be minted. It can now.
+  const cycle: [number, string][] = [
+    ...DRUID_DOT,
+    // The wear-off the slice prints, mob swapped: `Your <X> spell has worn off of <mob>.` is a
+    // `buffFade` the fade path already understood — it just never had an instance to close.
+    [49, 'Your Vengeance of the Wild spell has worn off of a fire giant warrior.'],
+    [57, 'You begin casting Vengeance of the Wild VI.'],
+    [59, 'a fire giant warrior has been consumed in the flames of the wild.']
+  ]
+  const r = replay(cycle, 65)
+  const row = r.rows.find((x) => x.target === 'a fire giant warrior')
+  assert.ok(row, 'the second cast opens its own row')
+  assert.equal(row.durationMs, 47_000, 'the observed span of the first cycle, not the wiki`s 30 s')
+  const held = r.active.find((a) => a.spell === 'Vengeance of the Wild')
+  assert.equal(held?.durationSource, 'observed', 'and the bar says which number it is showing')
+  assert.equal(held?.n, 1, 'one clean cycle, which is exactly what the correction made observable')
 })
 
 test('JOS-103`s type-less line has a typed event now: Spirit of the Puma', () => {

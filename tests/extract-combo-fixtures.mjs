@@ -118,3 +118,31 @@ slice(1019360, 1040292, 'cw4-stray-cast.log')
 // MNK sustained BEFORE the ding, and the shift at Aug 04 23:38 needs BER/ROG sustained before
 // IT — thinning either side would manufacture a silence the real session never had.
 slice(1232428, 1434122, 'cw5-wizard-swap-aug6.log')
+
+// CW6 THE WHOLE ARC — Tue Aug 04 00:00:00 → the end of Sun Aug 09. CW5's span with the SWAP BACK
+// on it, and the reason it exists is that CW5's right edge is the blind spot that let JOS-79's
+// guard die silently (JOS-239).
+//
+// CW5 stops inside the wizard evening. `reinstatedDrops` asks whether a class DEPARTED across the
+// absorbed ding, and its window runs to the end of the observations — so inside CW5 the monk is
+// gone and the guard fires, while on the LIVE log the owner swapped back and MNK/ENC return, so
+// nothing departs, the Aug 06 19:31 cut is never reinstated, and one 4.5-day interval swallowed
+// two swaps. The fixture passed the whole time. A regression guard whose window ends before the
+// evidence that breaks it is not a guard.
+//
+// What the span carries, in order:
+//   * Aug 04 20:57:35 `Welcome to level 50!` — the previous ding, which is where the Aug 06
+//     drop's window opens (46.6 h wide).
+//   * Aug 04 23:38:01 the silent swap into PAL/MNK/ENC (all three capped, so no ding).
+//   * Aug 05 20:48:20 `You have slain Lord Nagafen!` at Solo 4 — the kill the ticket is about.
+//     Not in the fixture (this extractor keeps class evidence only); the test states its
+//     timestamp and joins a recorded kill to the intervals, which is what the surface does.
+//   * Aug 06 19:31:23 the NON-INCREASING ding into the level-11 wizard, and the evening that
+//     follows it (level 25 by 22:27:32).
+//   * Aug 08 the swap BACK to PAL/MNK/ENC, which dings for nothing — going back up to 50 is not
+//     a level GAIN — so only the evidence dates it.
+//   * Aug 09 10:41:31 `[50 PAL/MNK/ENC] Primitive` — the game stating the loadout on the far
+//     side, the anchor the whole arc is measured against.
+// It cannot be trimmed at either end: cut the tail and the swap-back disappears (which is CW5),
+// cut the head and the ding that opens the absorbed window is gone.
+slice(1232428, 1557569, 'cw6-swap-back-aug9.log')

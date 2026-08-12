@@ -23,6 +23,7 @@ import { idKey } from '../log/parser'
 import { SEC_RINGS, type EngineFoldProbe } from './foldProbe'
 import { StateTimeline } from './stateTimeline'
 import { CharmModel } from './charmModel'
+import { AllyCharms } from './allyCharms'
 import { SpecialAttacks } from './specialAttacks'
 import { RecentCasts } from './procDetect'
 import { EMPTY_ROSTER, EMPTY_ROSTER_VIEW, type RosterSnap, type RosterView } from '../../shared/roster'
@@ -57,6 +58,19 @@ export class EngineState {
    * this model says the broadcast resolved one of the OWNER's own casts.
    */
   charm = new CharmModel()
+  /**
+   * OWNERSHIP FOR SOMEBODY ELSE'S CHARM PET (JOS-250, allyCharms.ts). The other half of the same
+   * caster-less broadcast: when `charm` above says "not yours", this model asks whether a NAMED
+   * third party's cast explains it, and — if so — books that pet's mob-vs-mob damage to that
+   * person under its own source kind.
+   *
+   * IT IS STRICTLY DISJOINT FROM YOUR ROWS. Nothing here ever enters `petNames`, `everPet`,
+   * `knownPlayers` or the world model's pet set; an ally pet opens no encounter, engages no
+   * hostile and refreshes no presence. That disjointness is what makes the whole feature
+   * law-8-safe: every damage total that existed before this model existed is byte-identical
+   * after it (tests/combatCharmOwnership.test.mts W44/W45 pin both halves).
+   */
+  ally = new AllyCharms()
   /**
    * Canonical name keys of entities known to be PLAYERS — never hostiles, never a pet's
    * target, never enemy healers. TWO sources, both narrow on purpose:
@@ -240,6 +254,7 @@ export class EngineState {
     this.everStruck.clear()
     this.world.reset()
     this.charm.reset()
+    this.ally.reset()
     this.knownPlayers.clear()
     this.playerKey = undefined
     this.playerKeyInjected = false
@@ -523,6 +538,56 @@ export class EngineState {
       this.petNames.delete(d.nameKey)
       this.log(now, 'charm', 'dropped', `✕ ${d.display}: charm bind never corroborated - unbound`)
     }
+  }
+
+  /**
+   * MAY `nameKey` BE A THIRD-PARTY CHARMER? (JOS-250.) The behavioural half of the caster gate —
+   * shared/playerShape.ts answers the shape half, and the ally model asks both.
+   *
+   * The three refusals are the SAME absolute guards `notePlayer` wears, and they are here for the
+   * same reason: a name YOU have landed damage on is a mob, a name any charm broadcast has ever
+   * named is a mob, and a name that is or was your pet is a pet. A single-word proper-named mob is
+   * exactly what the shape test cannot refuse, and these are what catch it.
+   */
+  allyCasterAllowed(nameKey: string): boolean {
+    if (nameKey === '' || nameKey === 'you' || nameKey === this.playerKey) return false
+    if (this.petNames.has(nameKey) || this.everPet.has(nameKey)) return false
+    if (this.everStruck.has(nameKey) || this.charm.everCharmed(nameKey)) return false
+    return true
+  }
+
+  /**
+   * IS `nameKey` ON THE FRIENDLY SIDE OF AN ALLY CHARM? (JOS-250.) A bound ally pet swinging at
+   * one of these is the SOFT-HOSTILE PROOF that its charm broke — see allyCharms.ts.
+   *
+   * Five sources, widest first: you, your own live pets, the group roster, anyone the heal stream
+   * proved a player, and the ally model's own caster/charmer set. The last is the one that does
+   * the work in practice, because the measured breaks are pets turning on the STRANGER who
+   * charmed them, and a stranger is invisible to the other four.
+   */
+  allyFriendly(nameKey: string): boolean {
+    if (nameKey === '' || nameKey === 'you') return true
+    if (this.petNames.has(nameKey)) return true
+    if (this.isKnownPlayer(nameKey) || this.isMember(nameKey)) return true
+    return this.ally.isFriendly(nameKey)
+  }
+
+  /**
+   * END the ally binds whose charm can no longer be running (allyCharms.sweep). Driven by the LOG
+   * clock from the same two places `sweepCharm` is — once per ingested event and once per
+   * snapshot(now) — so a replay and a live tail expire at identical instants.
+   */
+  sweepAlly(now: number): void {
+    if (this.ally.idle) return
+    for (const e of this.ally.sweep(now)) {
+      this.log(now, 'charm', 'dropped', `✕ ${e.display}: ${e.charmer}'s charm has run its full duration - unbound`)
+    }
+  }
+
+  /** Display names of the live ALLY pets — somebody else's charm pets, never yours. Deliberately
+   *  separate from `petDisplayNames()`: nothing here is in the attribution set. */
+  allyPetNames(): string[] {
+    return this.ally.boundNames()
   }
 
   /**

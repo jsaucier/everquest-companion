@@ -327,6 +327,7 @@ export default function AlertsView({
         initial={edit.target}
         packs={sortedPacks}
         voiceSetup={voiceSetup}
+        allAlwaysPlay={prefs.alwaysPlayAll === true}
         onClose={edit.close}
         onSave={(def) => {
           void persistAlerts(def)

@@ -28,6 +28,23 @@
 // rather than re-attempting a failing spawn per alert. `{ok:false}` is the fallback seam W2
 // already handles: the alert is spoken by the system voice, and the user hears their alert.
 //
+// …AND IT SAYS WHICH KIND OF DEAD (JOS-247). Every failure here used to answer
+// `reason:'engine-not-installed'`, which for a user whose download had FINISHED was simply
+// untrue — the reporter had 115 MB of verified model on disk and was told, in as much as
+// anything told them at all, that it was not downloaded. The reason is now the state:
+// 'engine-not-installed' only from the install check, 'engine-unloadable' when the thread died
+// with ERR_DLOPEN_FAILED (the native module cannot be loaded on this machine at all), and
+// 'engine-failed' for everything else. The renderer renders those as different sentences.
+//
+// MEASURED, for the ERR_DLOPEN_FAILED case (2026-08-12, PE import tables of the shipped
+// binaries): `onnxruntime_binding.node` imports VCRUNTIME140.dll, VCRUNTIME140_1.dll and
+// MSVCP140.dll, and `onnxruntime.dll` imports those plus MSVCP140_1.dll. Electron ships none
+// of them (there is no vcruntime140*.dll anywhere in electron/dist), so the app is relying on
+// the machine having the Microsoft Visual C++ x64 redistributable — and a machine that has the
+// 2015 redist but not the 2019+ one has VCRUNTIME140.dll and NOT VCRUNTIME140_1.dll, which
+// fails exactly this way. That is why the log line below names it: the code alone made the
+// first report a guessing game.
+//
 // ELECTRON-FREE ON PURPOSE. `userData` and the worker path are injected, so this module can
 // be constructed in a test (and so that ipc/speech.ts stays the only place that knows about
 // `app`). The same rule imageCache.ts follows.
@@ -71,6 +88,15 @@ export interface SpeechEngineOptions {
   readonly workerPath: string
   readonly onError?: (message: string, err: unknown) => void
   readonly onInfo?: (message: string) => void
+  /**
+   * Is the tier's model on disk? Defaults to the real `isKokoroInstalled`, and is overridden
+   * ONLY by tests/speechEngine.test.mts — the same test seam, for the same reason, as
+   * `ProvisionOptions.assets` next door. The real check demands two files at their exact pinned
+   * byte lengths (92 MB and 28 MB), which a unit test cannot produce; without this seam the two
+   * reasons JOS-247 exists to tell apart could never be tested apart, because every test would
+   * stop at the install check.
+   */
+  readonly isInstalled?: () => boolean
 }
 
 export interface SpeechEngine {
@@ -98,9 +124,15 @@ export function createSpeechEngine(opts: SpeechEngineOptions): SpeechEngine {
   const onError = opts.onError ?? ((): void => undefined)
   const onInfo = opts.onInfo ?? ((): void => undefined)
 
+  const installed = opts.isInstalled ?? ((): boolean => isKokoroInstalled(opts.userData))
+
   let worker: Worker | null = null
-  /** Set once when the thread proves it cannot run here — see the header. */
-  let workerBroken = false
+  /**
+   * Set once when the thread proves it cannot run here — see the header. It is the FAULT, not a
+   * boolean, because it is also the answer `speech:say` gives from then on: this machine will
+   * keep failing the same way until something about the machine changes.
+   */
+  let fault: 'engine-failed' | 'engine-unloadable' | null = null
   let nextJobId = 1
   const pending = new Map<number, (reply: SpeechWorkerReply) => void>()
   /** hash → the in-flight synthesis for it. */
@@ -112,8 +144,21 @@ export function createSpeechEngine(opts: SpeechEngineOptions): SpeechEngine {
     pending.clear()
   }
 
+  /**
+   * Did this thread die because the native module could not be LOADED?
+   *
+   * `ERR_DLOPEN_FAILED` is Node's code for a failed `process.dlopen`, and it is the code the
+   * first field report carried (0.20.0, 2026-08-11) alongside `node:internal/modules/cjs`
+   * frames — i.e. the throw happened while the worker was still requiring its imports, before
+   * a single job could be handled. Anything else (a bad voice pack, an unexpected throw mid-run)
+   * is a plain failure and says so.
+   */
+  function isUnloadable(err: unknown): boolean {
+    return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'ERR_DLOPEN_FAILED'
+  }
+
   function ensureWorker(): Worker | null {
-    if (workerBroken) return null
+    if (fault) return null
     if (worker) return worker
     const init: SpeechWorkerInit = {
       modelPath: join(kokoroDir(opts.userData), KOKORO_ASSETS[0].name),
@@ -124,7 +169,7 @@ export function createSpeechEngine(opts: SpeechEngineOptions): SpeechEngine {
       mkdirSync(cacheDir, { recursive: true })
       worker = new Worker(opts.workerPath, { workerData: init })
     } catch (err) {
-      workerBroken = true
+      fault = 'engine-failed'
       onError('speech: the synthesis worker could not be started; using the system voice', err)
       return null
     }
@@ -134,10 +179,20 @@ export function createSpeechEngine(opts: SpeechEngineOptions): SpeechEngine {
     })
     worker.on('error', (err) => {
       // A thread-level error (module load failure, an uncaught throw) kills the thread. Do
-      // not respawn in a loop: record it and let every later call answer immediately.
-      workerBroken = true
+      // not respawn in a loop: record it and let every later call answer immediately. A retry
+      // would be worse than useless for the case that actually happens — a dlopen that failed
+      // once fails identically every time, and retrying would file the same report per alert.
+      const unloadable = isUnloadable(err)
+      fault = unloadable ? 'engine-unloadable' : 'engine-failed'
       worker = null
-      onError('speech: the synthesis worker failed; using the system voice', err)
+      onError(
+        unloadable
+          ? 'speech: the synthesis engine could not be loaded on this PC (ERR_DLOPEN_FAILED - its ' +
+            'binaries need the Microsoft Visual C++ x64 runtime, which Electron does not ship); ' +
+            'using the system voice'
+          : 'speech: the synthesis worker failed; using the system voice',
+        err
+      )
       failAllPending('worker error')
     })
     worker.on('exit', () => {
@@ -170,7 +225,9 @@ export function createSpeechEngine(opts: SpeechEngineOptions): SpeechEngine {
     // Trust the FILE, not the reply: the url we hand back is a promise that the protocol
     // handler will find bytes there, and only the filesystem can keep that promise.
     if (!ok || !existsSync(speechCachePath(opts.userData, hash))) {
-      return { ok: false, reason: 'engine-not-installed' }
+      // The model IS installed (say() checked before we got here), so this is never
+      // 'engine-not-installed'. `fault` when the thread told us what kind of dead it is.
+      return { ok: false, reason: fault ?? 'engine-failed' }
     }
     return { ok: true, url: eqSpeechUrl(hash) }
   }
@@ -185,7 +242,7 @@ export function createSpeechEngine(opts: SpeechEngineOptions): SpeechEngine {
       }
       // 2. Nothing to synthesize WITH. Checked after the cache so that an already-spoken
       //    phrase keeps working even if the user deleted the model behind our back.
-      if (!isKokoroInstalled(opts.userData)) return { ok: false, reason: 'engine-not-installed' }
+      if (!installed()) return { ok: false, reason: 'engine-not-installed' }
       // 3. Someone is already synthesizing exactly this. Join them.
       const existing = inFlight.get(hash)
       if (existing) return existing

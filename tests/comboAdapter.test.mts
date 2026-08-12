@@ -37,6 +37,8 @@ import {
   overruledText,
   slotKind,
   slotLabel,
+  spanText,
+  spansText,
   startFuzzMs,
   startFuzzText
 } from '../src/renderer/src/features/profiles/ClassComboLabels'
@@ -173,6 +175,27 @@ test('an exact boundary has no ~ annotation; a fuzzy one states its window', () 
   assert.match(text, /34h 0m/) // the window is stated as a DURATION, not implied
   assert.match(text, /level dropped/)
   assert.match(text, /classes showing up in the log changed/)
+})
+
+test('a merged span states its bracket AND that it took more than one range (JOS-236)', () => {
+  // The raid roster draws ONE section per loadout, so a header can cover stretches with holes
+  // between them. Earliest start → latest end is the only true bracket; alone it would claim the
+  // hours in between, so the number of ranges is part of the sentence.
+  const early = interval({ id: 'ci1', startTs: T0, endTs: T0 + HOUR })
+  const late = interval({ id: 'ci3', startTs: T0 + 5 * HOUR, endTs: T0 + 6 * HOUR })
+
+  assert.equal(spansText([]), '', 'nothing to bracket, so no bracket is invented')
+  assert.equal(spansText([early]), spanText(early), 'one range prints exactly what it always did')
+
+  const merged = spansText([early, late])
+  assert.match(merged, /2 ranges/)
+  assert.ok(merged.startsWith(spanText(early).split(' →')[0]), 'it opens at the EARLIEST start')
+  assert.ok(merged.includes(spanText(late).split('→ ')[1]), 'and closes at the LATEST end')
+  // Order of the members must not change the answer.
+  assert.equal(spansText([late, early]), merged)
+
+  // One open member makes the union open: it is still running now.
+  assert.match(spansText([early, interval({ id: 'ci3', startTs: T0 + 5 * HOUR })]), /→ now · 2 ranges/)
 })
 
 test('every boundary reason has prose — no raw enum reaches the UI', () => {

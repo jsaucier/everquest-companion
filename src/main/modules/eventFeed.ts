@@ -30,8 +30,6 @@
 // no reward carries no `reward`, so the UI has no item hover to show — never a fabricated one.
 
 import type { EqModule } from './types'
-import { S, validate, type FoldSchema } from '../foldCache/schema'
-import type { FoldCheckpointable } from '../foldCache/serialize'
 import type { ConsiderFaction, LogEvent } from '../../shared/logEvents'
 import type { FeedDelta, FeedEvent, FeedReport, FeedSnap, ItemKnowledge } from '../../shared/types'
 import { isNotableKnowledge } from '../../shared/itemKnowledge'
@@ -69,29 +67,7 @@ export interface EventFeedDeps {
   lookupItem?: (name: string) => Promise<ItemKnowledge>
 }
 
-/**
- * THE CHECKPOINT DECLARATION (JOS-208 phase 2) — ONE FIELD, and the reason is this module's whole
- * contract rather than an oversight.
- *
- * THE RING IS LIVE-ONLY BY CONSTRUCTION. `onEvent` returns immediately when `live` is false (the
- * hydration rule in the header: the startup replay must never spam the feed with hours-old
- * events), and the other three sources — alert fires, quest reports, resolved loot lookups — are
- * live-only upstream. So a COLD replay of any prefix leaves the ring, the probe set and the
- * consider-dedupe map exactly as `reset()` left them, and a checkpoint that carried the previous
- * session's LIVE rows would restore a feed a cold start would never show. Empty is the honest
- * restore, and it is what a cold start produces.
- *
- * `seq` is stored because it is the only thing a historical fold moves here, and the renderer
- * dedupes deltas against it.
- */
-const EVENT_FEED_FOLD_SCHEMA: FoldSchema = S.obj({ seq: S.num })
-
-/** The event feed's complete event-derived state — see the declaration for why it is one field. */
-export interface EventFeedFoldState {
-  seq: number
-}
-
-export class EventFeedModule implements EqModule<FeedSnap, FeedDelta>, FoldCheckpointable<EventFeedFoldState> {
+export class EventFeedModule implements EqModule<FeedSnap, FeedDelta> {
   readonly id = 'eventFeed'
   private ring: FeedEvent[] = []
   private pending: FeedEvent[] = []
@@ -241,19 +217,5 @@ export class EventFeedModule implements EqModule<FeedSnap, FeedDelta>, FoldCheck
     const appended = this.pending
     this.pending = []
     return { seq: this.seq, delta: { appended } }
-  }
-
-  // ---- the checkpoint seam (JOS-208) ---------------------------------------------------------
-
-  readonly foldSchema = EVENT_FEED_FOLD_SCHEMA
-
-  serializeFold(): EventFeedFoldState {
-    return { seq: this.seq }
-  }
-
-  deserializeFold(state: unknown): boolean {
-    if (!validate(EVENT_FEED_FOLD_SCHEMA, state).ok) return false
-    this.seq = (state as EventFeedFoldState).seq
-    return true
   }
 }

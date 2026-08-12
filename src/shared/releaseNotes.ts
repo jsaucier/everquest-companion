@@ -125,6 +125,145 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '0.24.0',
+    date: '2026-08-12',
+    entries: [
+      {
+        kind: 'new',
+        text: "A group-mate's charm pet now shows on the meter as its own row - Pet (Name) with the charmer's name - credited from the moment the charm lands to the moment the log proves it broke, and never a second longer. The instant an ex-pet swings at anyone friendly, even a miss, it stops counting. Your own rows are untouched by any of it.",
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: "Every charm in the game now binds, counts down, and speaks when it breaks - the druid and shaman animal charms (Befriend Animal, Call of Karana, Tunare's Request) were silent before, and Tunare's Request runs almost three hours. Solon's Song of the Sirens breaks as the charm it is, not a mez.",
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Vengeance of the Wild opens a debuff row like any other dot - the wiki wrote its landing line in a shape the catalog missed.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Blessing of the Theurgist counts in the Procs list - a proc whose only trace is its own sentence, with no damage or heal line, is now a kind of proc the meter understands.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A dot with an initial hit no longer splits into two meter bars - one spell, one bar, with the landing and tick components one click down.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Hover any "active time" or per-hour label and it tells you exactly what the clock counts: gaps over five minutes with no experience, kill, or loot line pause it - not an AFK check, not combat time.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'When a downloaded natural voice cannot load, the app now says so - in the voice picker and on the alert - instead of silently speaking in the default system voice. The usual fix (the Microsoft Visual C++ runtime) is named right there.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The window remembers its size, position, and maximized state across restarts - and a launch with a monitor unplugged fits the screen you have without forgetting the layout you chose.',
+        fromReport: true
+      }
+    ]
+  },
+  {
+    version: '0.23.0',
+    date: '2026-08-12',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'Killing a mob that shares a name with your mezzed mob no longer wipes the mez timer. A mezzed mob can never be the corpse, so the bar and its count survive the adds dying around it.'
+      },
+      {
+        kind: 'fixed',
+        text: "Largo's binding songs no longer trip the mez-break alert - they announce as the slows they are, and every real mez break and charm break still speaks.",
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Alerts can warn you early: set Warn early (sec) on an alert and it speaks before the tracked debuff drops - on wear-off alerts too, where it arms when the debuff lands and counts back from the bar on screen. A debuff that breaks before the warning still speaks at the break.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'An Always play switch in the Alerts toolbar lets every alert skip the audio throttle - each alert\'s own setting greys out while the global one is in charge.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: "Alerts made from the catalog now fire when you cast a ranked spell - Swift Like the Wind IV counts as Swift Like The Wind, with the rank shown as a small chip beside the buff's name."
+      },
+      {
+        kind: 'fixed',
+        text: 'When three clean casts agree your buff runs shorter than the wiki says, the app now believes its own stopwatch - Alacrity, Tashina and friends stop promising minutes they never deliver.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Permanent self-buffs - Yaulp, the shielding lines, blade coats, Lich and the wolf forms - can now appear in the buff window behind a new show-permanent switch, off by default. The forms also stopped quietly vanishing from the list after 90 minutes.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Pacify and the calm line now time on the debuff overlay with the other mob timers, instead of posing as one of your own buffs.',
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: 'The damage meter now opens on Everyone. Group tracking from the log is imperfect and the meter should just show numbers - a Group choice you made on purpose is kept.',
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: 'Your combat drilldown survives switching fights - drill into a source on one fight, flip to another and back, and you are still where you left off. Only changing direction starts you over.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Raid targets stopped double-listing a class trio you swapped away from and back to - one loadout, one section, however many stretches it took - and Defeated only now follows the This week view instead of always answering for all time.'
+      },
+      {
+        kind: 'fixed',
+        text: 'The raid board no longer invents a class trio you never played: a swap the log dates is honored, and a stretch the app cannot untangle says Mixed loadouts instead of guessing.'
+      },
+      {
+        kind: 'changed',
+        text: 'The fast-start switch from 0.22.0 is retired. Fleet numbers showed machines read the log quickly without it, and it taxed every future improvement - startup reads your history in full again.'
+      },
+      {
+        kind: 'fixed',
+        text: 'The spell-message counts in the log no longer double on every launch, and a failed update check now explains itself instead of showing a raw parse error.',
+        fromReport: true
+      }
+    ]
+  },
+  {
+    version: '0.22.0',
+    date: '2026-08-11',
+    entries: [
+      {
+        kind: 'new',
+        text: 'A new Performance switch in Preferences: Start faster by remembering your log. Turned on, the app checkpoints what it has already read, so a morning start resumes in about a second instead of re-reading your whole history - and it continuously proves the remembered state matches a full read, falling back to one at the first hint of doubt. Off by default while it earns its keep.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A fight can no longer be split in two by startup timing. Reading your history could close an open fight against the wrong clock if the meter was glanced at mid-read - so two launches could disagree about your fight list. Fixed for every launch, switch on or off.'
+      },
+      {
+        kind: 'fixed',
+        text: 'In the exaltations planner, the item you narrowed to now survives switching between proc, worn, focus and click.'
+      },
+      {
+        kind: 'new',
+        text: 'The planner can start from the item side now: search any worn item and browse just the effects compatible with it.'
+      }
+    ]
+  },
+  {
     version: '0.21.0',
     date: '2026-08-11',
     entries: [

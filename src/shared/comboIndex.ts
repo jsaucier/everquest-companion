@@ -20,6 +20,34 @@
 import type { ComboInterval } from './classCombo'
 
 /**
+ * THE CONFIDENCE GATE (JOS-239): may this interval's loadout be read as FACT, or has the model
+ * already said it cannot explain the span?
+ *
+ * THE DEFECT IT EXISTS FOR. The roster showed Lord Nagafen defeated at D4 under a crisp
+ * `ENC / WIZ / MNK` header — a trio the owner never ran, over a 4.5-day interval that swallowed two
+ * loadout swaps. Every fact needed to refuse that sentence was ALREADY on the interval: it carried
+ * `overDetermined` (five classes clearing the sustained-exclusive bar against three slots) and a
+ * level range of 11-50 that no single loadout can produce. The surfaces printed the trio anyway.
+ * The boundary fix (modules/comboIntervals.ts) is what stops that span existing; this is what stops
+ * the NEXT one being stated as fact, and it is cheap enough to be worth having on its own.
+ *
+ * TWO CONDITIONS, both already modeled:
+ *   * `overDetermined` — more classes cleared the sustained-exclusive bar than the loadout has
+ *     slots, so at least one resolved slot is the ranking's opinion rather than the log's word.
+ *   * `levelRegressed` — the displayed level went BACKWARDS inside the span, which under
+ *     min-of-loadout only a swap does.
+ *
+ * AND IT APPLIES ONLY TO INFERENCE. A `/who` row is the game naming the loadout outright and a user
+ * correction is the owner naming it; neither is a guess that surplus evidence can undermine, and
+ * gating them would answer "the game said PAL/MNK/ENC" with "we are not sure". Provenance is per
+ * slot, so the test is "no slot was ever stated" — a mixed-provenance interval keeps its statement.
+ */
+export function loadoutUncertain(interval: ComboInterval): boolean {
+  if (interval.slots.some((s) => s.provenance !== 'inferred')) return false
+  return interval.startAlso?.includes('overDetermined') === true || interval.levelRegressed === true
+}
+
+/**
  * The interval whose ESTIMATE covers `ts`, or null.
  *
  * Deliberately keyed on `[startTs, endTs)` — the estimate — and not on the uncertainty window:

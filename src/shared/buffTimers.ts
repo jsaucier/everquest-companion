@@ -31,6 +31,12 @@
 // never an inflated land→fade span. `estimatedMs`/`durationSource` are the tab's own copies of the
 // same numbers; this surface reads `overlayDurationMs`/`overlaySource`.
 //
+// JOS-212 RELAXED THE FLOOR IN EXACTLY ONE PLACE, and this surface inherits it: a below-floor
+// observation overrules the DB base when the log corroborates it (three clean cycles in the window
+// whose top three agree within 10% — buffsStats.ts `estimateFor`). The bar then counts down from
+// what the player's own casts measured and `source` reads 'cluster'. Invisibility, the floor's own
+// counterexample, scatters and keeps its 20m.
+//
 // JOS-118 EXTENDS THAT RULE IN TWO PLACES, both for the same reason — only OUR OWN cast under OUR
 // OWN modifiers is a duration we are entitled to learn from. (1) An instance now opens only from a
 // LANDING line, so a cast that was resisted (or simply never confirmed) mints nothing, where the
@@ -51,10 +57,10 @@
 // estimator, keyed on (spell line, caster) — which is what took a reporter's Mesmerization VII bar
 // from the base rank's 24 s to the 44 s their own log proves.
 
-import type { ActiveBuff, BuffsSnap } from './buffTypes'
+import type { ActiveBuff, BuffsSnap, EstimatorSource } from './buffTypes'
 // Type-only: `shared/types.ts` is a value module (OVERLAY_KINDS) and this one is imported by the
 // node tests as a pure module, so the reference is erased at compile time and nothing follows it.
-import type { OverlayKind } from './types'
+import type { OverlayConfig, OverlayKind } from './types'
 
 // ----- the two TIMER SURFACES (JOS-119) -----
 
@@ -89,6 +95,32 @@ export type TimerGrouping = 'none' | 'target'
 /** A stored/patched grouping, or null when it is absent and the surface's own default applies. */
 export function normalizeTimerGrouping(raw: unknown): TimerGrouping | null {
   return raw === 'none' || raw === 'target' ? raw : null
+}
+
+/**
+ * THE KNOBS ONLY THE TWO TIMER WINDOWS CARRY, rebuilt in place on the way into the store — the row
+ * arrangement (JOS-140) and the permanent-buff switch (JOS-215).
+ *
+ * It lives HERE rather than in `main/store.ts` for the same reason `isTimerOverlayKind` does: which
+ * kinds carry a timer knob is a fact about this surface, not about persistence, and store.ts's own
+ * rule is that each knob is validated by the module that owns its meaning. (store.ts is also at its
+ * complexity and line ceilings, which is what made the question worth asking.)
+ *
+ * BOTH ARE REBUILT RATHER THAN TRUSTED — the argument store.ts makes about the drill: a renderer
+ * patch must not be able to widen what is persisted. And for both, an ABSENT value is a real
+ * answer: "the window's own default" for the arrangement (which differs between buffs and debuffs
+ * — see {@link TimerGrouping}), and "hidden" for the permanent rows (which does not).
+ *
+ * The permanent switch is stored ONLY when TRUE, so an absent key and a stored `false` are not two
+ * spellings of one answer. `=== true` rather than a cast, so a hand-edited `"true"` or `1` is off.
+ */
+export function applyTimerOverlayKnobs(kind: OverlayKind, cfg: OverlayConfig): void {
+  const timer = isTimerOverlayKind(kind)
+  const grouping = normalizeTimerGrouping(cfg.grouping)
+  if (grouping && timer) cfg.grouping = grouping
+  else delete cfg.grouping
+  if (cfg.showPermanent === true && timer) cfg.showPermanent = true
+  else delete cfg.showPermanent
 }
 
 // ----- the CC half's state (owned by main/modules/buffTimers.ts, rendered by the overlay) -----
@@ -130,8 +162,8 @@ export interface CcHold {
    * under. `source` says which won.
    */
   durationMs: number | null
-  /** Where `durationMs` came from: 'db' (the floor held) | 'observed' (a logged cycle beat it). */
-  source?: 'db' | 'observed'
+  /** Where `durationMs` came from — see {@link EstimatorSource}. */
+  source?: EstimatorSource
   /**
    * HOW MANY MOBS OF THAT NAME are holding this spell (ruling 7). Absent for the ordinary one.
    * EQ prints no instance identifier and stamps to the second, so an AE round landing on five
@@ -176,8 +208,22 @@ export interface BuffTimerRow {
   /** Stable across ticks so React keys and e2e selectors do not churn. */
   id: string
   kind: 'buff' | 'debuff' | 'cc'
-  /** The resolved spell name, or the candidate names joined when the sentence is shared. */
+  /**
+   * The resolved spell name, or the candidate names joined when the sentence is shared.
+   *
+   * For a buff/debuff row this is `ActiveBuff.spell` — the DB's own name since JOS-238, where it
+   * used to be whatever the cast line spelled. A CC hold's is still the ranked name off its cast
+   * line, and the difference is deliberate rather than an oversight: nothing downstream of a hold
+   * matches on the string (it emits no `buffExpired`), and JOS-126 asked for the rank to be
+   * visible on exactly those rows.
+   */
   name: string
+  /**
+   * DISPLAY ONLY: the ranked text the cast line spelled, when a buff row's identity came from a
+   * cast anchor and the two differ (JOS-238, `ActiveBuff.castName`). Never an identity — `name`
+   * is, and `id` is built from `name` alone.
+   */
+  castName?: string
   /** Present only when the row is a FAMILY: every spell the line could be (JOS-84). */
   candidates?: string[]
   /** True when `name` is a family rather than a spell — drives the `~` chip. */
@@ -197,6 +243,15 @@ export interface BuffTimerRow {
    * compares them to each other rather than to `Date.now()` would be comparing two of them.
    */
   startedTs: number
+  /**
+   * True when the spell CALMS its target — the calm/lull line (JOS-213). Carried straight from
+   * `ActiveBuff.calmsTarget`, which main fills from the DB roster, and it is the ONE reason a
+   * `kind: 'buff'` row belongs to the debuffs window. See `timerRowSurface`.
+   *
+   * Present only on the rows projected from an `ActiveBuff`. A CC hold needs none — a hold is
+   * already a mob-state timer and routes by kind alone.
+   */
+  calmsTarget?: true
   mode: TimerMode
   /** ONLY on 'countdown', and ONLY a number the shared estimator stated (JOS-117/JOS-140). */
   durationMs?: number
@@ -214,7 +269,7 @@ export interface BuffTimerRow {
  *
  * The owner asked for two windows he can enable and place separately, NOT for two models: one
  * source (`buildTimerRows` above) is folded once and each surface keeps the rows that are its
- * subject. The discriminator is the row's own `kind`, which the model already carries:
+ * subject. The first discriminator is the row's own `kind`, which the model already carries:
  *
  *   'buff'            → the BUFFS window. A beneficial spell you have running. `group` is NOT the
  *                       discriminator here: a Symbol on your pet and a Valor on the cleric you
@@ -225,15 +280,61 @@ export interface BuffTimerRow {
  *                       a mez hold. The owner rules mez and slow ARE debuffs, so the CC holds live
  *                       here beside them rather than in a third place.
  *
+ * …AND A BENEFICIAL SPELL WHOSE EFFECT IS ON AN ENEMY IS A MOB TIMER (JOS-213, report
+ * 01KZSDPV3NV8NWK2GF01MCQMK3: `You begin casting Pacify IV.` / `an icy terror looks less
+ * aggressive.`). The calm line — Pacify, Soothe, Calm, Lull and the rest of the family — is
+ * `Beneficial` in the committed spells.json, so `cls` is 'buff' and `kind` is 'buff', and the
+ * aggro clock the player is watching landed in the window that shows their own Clarity. Every
+ * other mob-state timer lives on the debuffs surface, which is where a player looks to see how
+ * long that giant stays calm. `calmsTarget` is the one exception to the kind, and it is a fact
+ * about the SPELL: main fills it from a roster spells.json's landing messages DERIVE
+ * (`data/spellDb.ts spellCalmsTarget`, which carries the family and the audit).
+ *
+ * IT IS NOT A TARGET TEST, AND THAT IS THE WHOLE LESSON OF THE FIRST CUT. "Route it when the
+ * target is a mob" is the obvious reading of the report and it is the mistake JOS-136/JOS-140
+ * ruling 8 already outlawed one level down: an ally is a named target and so is a mob, the game
+ * does not distinguish them in a landing sentence, and `disposition: 'hostile'` means only "not
+ * you and not a pet I am currently holding". Two committed goldens went red under a disposition
+ * test and both are real users' shapes — a `Resist Disease` from a Quick Buff burst on a spider
+ * the model was not holding as a pet, and the owner's own `Valor` on a charmed fire giant warrior
+ * whose charm line falls outside the window. A friendly buff on somebody the model has lost track
+ * of must never become a debuff. Nothing here reads `group`, `target` or `disposition`.
+ *
  * Exhaustive over `BuffTimerRow['kind']` by construction — a new row kind has to choose a window.
  */
 export function timerRowSurface(row: BuffTimerRow): TimerOverlayKind {
-  return row.kind === 'buff' ? 'buffs' : 'debuffs'
+  return row.kind === 'buff' && row.calmsTarget !== true ? 'buffs' : 'debuffs'
 }
 
 /** The rows one timer surface shows. Order is `buildTimerRows`' order, filtered — never re-sorted. */
 export function rowsForSurface(rows: readonly BuffTimerRow[], kind: TimerOverlayKind): BuffTimerRow[] {
   return rows.filter((r) => timerRowSurface(r) === kind)
+}
+
+/**
+ * THE PERMANENT ROWS, HIDDEN BY DEFAULT (JOS-215, owner ruling) — a DISPLAY filter, and the only
+ * thing in this file that removes a row for a reason the model does not believe.
+ *
+ * WHY IT IS HIDDEN. A permanent buff has no clock (`timerModeOf` gives it `mode: 'permanent'` and
+ * no duration at all), so it can never be the thing a timer window is watched for, and
+ * `compareRows` already ranks it last for exactly that reason. Admitting 62 spells' worth of them
+ * — a cleric's Yaulp and Divine Purpose and Instrument of Nife all at once — would push the
+ * countdowns that matter off the top of a small floating window. So the window opens on the timers
+ * and the roster is one press away.
+ *
+ * WHY IT IS IN THE RENDERER AND NOT THE MODEL, which is the half a future reader is most likely to
+ * be tempted by. The model has to keep these rows whatever the window draws: the hygiene sweep
+ * exempts them, a wears-off line clears them, a death strips them, and `BuffsSnap.active` is what
+ * the Buffs TAB, the alerts module and any later surface read. A preference that reached into
+ * `buffs.active` would be a window's opinion deleting evidence from everybody else's model — the
+ * mistake JOS-203 states at length about dismissals. Same rule here: there is no channel for the
+ * model to hear about it.
+ *
+ * It is applied BEFORE ordering and dismissal so everything downstream — the header count, the
+ * groups, the drop flash — is talking about what is actually on screen.
+ */
+export function filterPermanentRows(rows: readonly BuffTimerRow[], showPermanent: boolean): BuffTimerRow[] {
+  return showPermanent ? [...rows] : rows.filter((r) => r.mode !== 'permanent')
 }
 
 /** One "… dropped" notice: the row that left, and the words the overlay says about it. */
@@ -254,7 +355,7 @@ export function timerDropLabel(row: BuffTimerRow): string {
 }
 
 /**
- * The `kind:'buff'` rows that were there a moment ago and are not there now.
+ * The BUFFS-WINDOW rows that were there a moment ago and are not there now.
  *
  * The claim is deliberately the weakest one available: a drop is a removal the MODEL already
  * believed (a wears-off message, a death, a zone), so this can never announce a drop the log did
@@ -269,6 +370,12 @@ export function timerDropLabel(row: BuffTimerRow): string {
  * up in the middle of the log and had worn off by its end. Announcing those would be the window
  * shouting about spells that dropped months ago, the first time the user ever sees it. A rebuild
  * adopts the new set as the baseline and says nothing; the very next real removal still flashes.
+ *
+ * THE SUBJECT IS THE BUFFS SURFACE, NOT THE 'buff' KIND (JOS-213). The two were the same set until
+ * a Pacify became a `kind: 'buff'` row on the DEBUFFS window. Reading the kind would hand the
+ * debuffs window a "positive spell dropped" flash it has never had and nobody asked for — the ask
+ * this answers was always "flash when a positive spell drops", a buffs-window feature — so it
+ * routes through `timerRowSurface` instead, which is a no-op for every row that existed before.
  */
 export function timerDrops(
   prev: readonly BuffTimerRow[] | null,
@@ -276,10 +383,9 @@ export function timerDrops(
   opts: { rebuilt: boolean }
 ): TimerDrop[] {
   if (prev === null || opts.rebuilt) return []
-  const live = new Set(current.filter((r) => r.kind === 'buff').map((r) => r.id))
-  return prev
-    .filter((r) => r.kind === 'buff' && !live.has(r.id))
-    .map((r) => ({ id: r.id, name: timerDropLabel(r) }))
+  const onBuffs = (r: BuffTimerRow): boolean => timerRowSurface(r) === 'buffs'
+  const live = new Set(current.filter(onBuffs).map((r) => r.id))
+  return prev.filter((r) => onBuffs(r) && !live.has(r.id)).map((r) => ({ id: r.id, name: timerDropLabel(r) }))
 }
 
 // ----- DISMISSAL: a display verdict, and structurally nothing else (JOS-203) -----
@@ -391,8 +497,49 @@ export function timerReading(row: BuffTimerRow, nowMs: number): TimerReading {
 /** Rank tail (mirrors parser.spellCanonKey — kept local so `shared/` never reaches into main;
  *  the same trick `data/spellDb.ts canonKey` already uses for the same reason). */
 const RANK_TAIL_RE = / (?:I|II|III|IV|V|VI|VII|VIII|IX|X)$/i
-function nameKey(name: string): string {
-  return name.trim().replace(RANK_TAIL_RE, '').trim().toLowerCase()
+
+/**
+ * A row's spell name folded to its FAMILY: rank suffix stripped, case-folded.
+ *
+ * EXPORTED for `shared/earlyWarning.ts` (JOS-216), which has to compare a row's name against the
+ * names an arming log line could have been — and those two come from different lines of the log
+ * (the row's from the ranked CAST line, the event's from a landing sentence that carries no rank),
+ * so the comparison is only meaningful under this fold. It is the same key this file's own row ids
+ * are built from, which is the point of sharing it rather than writing a third copy.
+ */
+export function timerNameKey(name: string): string {
+  return timerNameBase(name).toLowerCase()
+}
+
+/**
+ * The same fold WITHOUT the case-fold — a row's spell name as the WEAR-OFF LINE will print it.
+ *
+ * EXPORTED for `shared/earlyWarning.ts` (JOS-235), which builds the break sentence a def would
+ * match against out of a row that is still running. A row's name comes from the ranked CAST line
+ * (`Mesmerization VII`) and every `Your <X> spell has worn off of <mob>.` line is rank-LESS —
+ * measured over the owner's whole log for JOS-200, 3,382 of 3,383 — so the name to compare a
+ * break-family def against is this one, and it has to keep its display casing because the firing
+ * SPEAKS it.
+ */
+export function timerNameBase(name: string): string {
+  return name.trim().replace(RANK_TAIL_RE, '').trim()
+}
+
+/**
+ * THE RANK A ROW MAY PRINT — the numeral off the cast line, or nothing (JOS-238).
+ *
+ * `castName` is the ranked text one cast line spelled and `name` is the spell's identity, so the
+ * only honest thing to show beside the name is the DIFFERENCE between them: the rank tail. Two
+ * refusals are deliberate. The two strings must fold to the SAME line under `timerNameKey`, or the
+ * chip would be a rank belonging to some other spell; and a `castName` with no rank tail yields
+ * nothing, because "the cast line spelled it differently" is not by itself a rank.
+ *
+ * Pure and shared so the floating window and the Buffs tab cannot disagree about what a row says.
+ */
+export function rowRankLabel(name: string, castName: string | undefined): string | undefined {
+  if (castName == null || timerNameKey(castName) !== timerNameKey(name)) return undefined
+  const m = RANK_TAIL_RE.exec(castName.trim())
+  return m ? m[0].trim().toUpperCase() : undefined
 }
 
 /** Canonical entity key (mirrors parseCommon.idKey for the same reason as above). */
@@ -422,7 +569,7 @@ function ccRow(h: CcHold): BuffTimerRow {
   const spell = h.spell
   const family = h.candidates.length > 0 ? h.candidates.join(' / ') : 'Crowd control'
   return {
-    id: `cc|${h.key}|${spell != null ? nameKey(spell) : h.candidates.map(nameKey).join('+')}`,
+    id: `cc|${h.key}|${spell != null ? timerNameKey(spell) : h.candidates.map(timerNameKey).join('+')}`,
     kind: 'cc',
     name: spell ?? family,
     group: 'target',
@@ -462,6 +609,8 @@ function timerModeOf(b: ActiveBuff): { mode: TimerMode; durationMs?: number } {
  */
 function buffRowExtras(b: ActiveBuff): Partial<BuffTimerRow> {
   return {
+    ...(b.castName != null && b.castName !== b.spell ? { castName: b.castName } : {}),
+    ...(b.calmsTarget === true ? { calmsTarget: true as const } : {}),
     ...(b.inferredTarget === true ? { inferredTarget: true as const } : {}),
     ...(b.count != null && b.count > 1 ? { count: b.count } : {}),
     ...(b.caster != null ? { caster: b.caster } : {}),
@@ -473,7 +622,7 @@ function buffRowExtras(b: ActiveBuff): Partial<BuffTimerRow> {
 function buffRow(b: ActiveBuff): BuffTimerRow {
   const targetKey = b.self ? undefined : b.target != null ? entityKeyOf(b.target) : 'unknown'
   return {
-    id: `${b.self ? 'self' : 'target'}|${targetKey ?? 'self'}|${nameKey(b.spell)}`,
+    id: `${b.self ? 'self' : 'target'}|${targetKey ?? 'self'}|${timerNameKey(b.spell)}`,
     kind: b.cls,
     name: b.spell,
     group: b.self ? 'self' : 'target',
@@ -496,8 +645,8 @@ function buffRow(b: ActiveBuff): BuffTimerRow {
 function endedByCc(b: ActiveBuff, ends: readonly CcEnd[]): boolean {
   if (b.self || b.target == null) return false
   const key = entityKeyOf(b.target)
-  const spell = nameKey(b.spell)
-  return ends.some((e) => e.key === key && e.ts >= b.startedTs && (e.spell == null || nameKey(e.spell) === spell))
+  const spell = timerNameKey(b.spell)
+  return ends.some((e) => e.key === key && e.ts >= b.startedTs && (e.spell == null || timerNameKey(e.spell) === spell))
 }
 
 /**
@@ -536,13 +685,13 @@ export function buildTimerRows(buffs: BuffsSnap, timers: BuffTimersSnap): BuffTi
   // `<mob> has been …` siblings become holds. Where both exist for one (mob, spell), the HOLD
   // wins — it is the half that knows about break lines.
   const heldBySpell = new Set(
-    timers.holds.filter((h) => h.spell != null).map((h) => `${h.key}|${nameKey(h.spell ?? '')}`)
+    timers.holds.filter((h) => h.spell != null).map((h) => `${h.key}|${timerNameKey(h.spell ?? '')}`)
   )
   const rows: BuffTimerRow[] = []
   for (const b of buffs.active) {
     if (endedByCc(b, timers.ends)) continue
     const row = buffRow(b)
-    if (row.group === 'target' && heldBySpell.has(`${row.targetKey ?? ''}|${nameKey(row.name)}`)) continue
+    if (row.group === 'target' && heldBySpell.has(`${row.targetKey ?? ''}|${timerNameKey(row.name)}`)) continue
     rows.push(row)
   }
   for (const h of timers.holds) rows.push(ccRow(h))

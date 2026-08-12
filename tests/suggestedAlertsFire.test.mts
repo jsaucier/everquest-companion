@@ -518,12 +518,24 @@ test('JOS-161 B5: `breaks` is offered for the crowd-control roster and nobody el
   // The template flag is a CLAIM the alert can fire (shared/alertGroups.ts's law). A spell the
   // parser's `ccSpell` roster does not match parses its wear-off to `buffFade`, where this
   // trigger never sees it — so an offer there would be a guessed trigger that never fires.
-  for (const key of ['mesmerization', 'ensnare', "largo's assonant binding", "kelin's lucid lullaby"]) {
+  for (const key of ['mesmerization', 'ensnare', "kelin's lucid lullaby", "sionachie's dreams"]) {
     assert.ok(entryFor(key).templates.breaks, `${key} is crowd control`)
   }
   // `allure` stays on this list — it is a CHARM, so `breaks` (a `cc` trigger) still cannot fire for
   // it. What changed in JOS-200 is that it now gets `charmBreaks` instead of nothing (B2b).
-  for (const key of ['clarity', 'shiftless deeds', 'allure', 'drifting death']) {
+  //
+  // BOTH LARGO'S SONGS MOVED HERE IN JOS-225, from the list above. They are movement debuffs, not
+  // holds (the evidence is in src/main/log/rulesets.ts and tests/charmCcRoster.test.mts's
+  // NOT_A_HOLD), so their wear-offs are `buffFade` now and a `breaks` offer for either would be
+  // the exact thing this test exists to forbid: a suggestion the user can create and never hear.
+  for (const key of [
+    'clarity',
+    'shiftless deeds',
+    'allure',
+    'drifting death',
+    "largo's melodic binding",
+    "largo's assonant binding"
+  ]) {
     assert.equal(entryFor(key).templates.breaks, false, `${key} is not a mez or a root`)
   }
 })

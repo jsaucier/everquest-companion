@@ -66,6 +66,10 @@ export function findInventoryFile(characterName?: string, server?: string): stri
  * drive without one. Omit it and it falls back to mtime, which is the same answer a log with no
  * receipt gives.
  *
+ * AND THE READ INSTANT (JOS-253) is stamped here too, because this is the one place a dump becomes
+ * the model. `now` is injected for the same reason `writtenAt` is — a test that pins the record
+ * should not have to pin a clock — and defaults to `Date.now`.
+ *
  * IT IS A RECORD, NOT A RESET (JOS-141). The instant used to be the point the held-count model
  * reset to and accumulated from; the owner reverted that on 2026-08-09, because a dump only
  * covers what was open when it was written and the reset was eating banked Sky items. Nothing in
@@ -76,7 +80,8 @@ export function findInventoryFile(characterName?: string, server?: string): stri
 export function loadInventory(
   characterName?: string,
   server?: string,
-  writtenAt: (file: string) => number | null = () => null
+  writtenAt: (file: string) => number | null = () => null,
+  now: () => number = Date.now
 ): InventoryLoadResult | null {
   const loaded = loadInventoryDump(characterName, server)
   if (!loaded) return null
@@ -84,6 +89,11 @@ export function loadInventory(
   const source: InventorySource = {
     path: loaded.path,
     loadedAt: loaded.loadedAt,
+    // WHEN WE READ IT (JOS-253), beside when the player wrote it. This is the only instant in the
+    // record that is ours rather than the file's, and it is stamped HERE — the one place a dump
+    // becomes the model — so every load path (startup, the watcher, the manual button) reports it
+    // the same way and none of them can forget to.
+    readAt: now(),
     ...(baseline ? { generatedAt: baseline.ts, generatedFrom: baseline.source } : {}),
     // A dump is an instant AND a scope: which storages it actually spoke about (JOS-128, on the
     // JOS-132 spike's finding that some are written only conditionally — which is the evidence

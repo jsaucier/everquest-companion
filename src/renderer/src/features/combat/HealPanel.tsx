@@ -211,9 +211,16 @@ function HealCrumb({ name, setDrill }: { name: string; setDrill: (d: Drill | nul
  * The Healing dimension's whole body — crumb + bars — for one segment.
  *
  * The drill token is the panel's ORDINARY `{ kind: 'entity', entityId }`: a healer id is just an
- * id, so the tab's existing drill state machine (and its Esc handler, and its per-selection
+ * id, so the tab's existing drill state machine (and its Esc handler, and its per-direction
  * reset) covers this dimension with no new state. A drill id from the damage dimension simply
  * resolves to nothing here and renders level 1 — the same stale-id rule everywhere else.
+ *
+ * The token carries the healer's NAME too (JOS-240), for the record rather than for a rescue: a
+ * healer id is 'you' or `heal:<healerKey>`, both derived from the name and both identical in
+ * every fight, so this dimension's drill already crossed a fight change on the id alone. The
+ * name-fallback resolution that the damage meter needs (`petRows.resolveSubject`, for the
+ * instance-minted `pet:<id>` and mob ids) has nothing to fix here, so `healPanel` still matches
+ * on the id and only the id.
  */
 export function HealBody({
   healing,
@@ -257,7 +264,12 @@ export function HealBody({
         <QuietNote>No healing in this segment.</QuietNote>
       ) : (
         panel.healers.map((h, i) => (
-          <HealerBar key={h.id} h={h} rank={i + 1} onDrill={() => setDrill({ kind: 'entity', entityId: h.id })} />
+          <HealerBar
+            key={h.id}
+            h={h}
+            rank={i + 1}
+            onDrill={() => setDrill({ kind: 'entity', entityId: h.id, name: h.name })}
+          />
         ))
       )}
       <AbsorbCounts mit={panel.mitigation} />

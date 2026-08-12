@@ -373,6 +373,7 @@ export class RoundAccum {
   isEmpty(): boolean {
     return this.lanes.size === 0 && this.pending.size === 0
   }
+
 }
 
 function cloneLane(l: RoundLaneTally): RoundLaneTally {

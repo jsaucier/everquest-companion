@@ -462,6 +462,65 @@ export function spellNature(spellType: string | undefined): SpellNature {
 }
 
 /**
+ * THE CALM LINE — a BENEFICIAL nature whose effect is on an ENEMY (JOS-213), as the three landing
+ * sentences spells.json groups it by.
+ *
+ * THE REPORT (01KZSDPV3NV8NWK2GF01MCQMK3): `You begin casting Pacify IV.` /
+ * `an icy terror looks less aggressive.` — and the timer appears in the player's BUFF overlay,
+ * beside their own Clarity, because Pacify is `spellType: Beneficial` and `spellNature` therefore
+ * says 'beneficial' and `classOf` says 'buff'. All of that is CORRECT and none of it changes: a
+ * calm is not a debuff, it is a beneficial spell you cast AT something you are afraid of. What the
+ * model was missing is a separate fact — the effect lands on a MOB's state, so the timer belongs
+ * beside the other mob-state timers.
+ *
+ * WHY THIS IS A SPELL FACT AND NOT A TARGET TEST, WHICH IS WHERE THE FIRST CUT OF JOS-213 WENT.
+ * "Route it when the target is a mob" is the obvious reading of the report and it is the exact
+ * mistake JOS-136/JOS-140 ruling 8 already outlawed one level down: an ally is a named target and
+ * so is a mob, the game does not distinguish them in a landing sentence, and the model's
+ * `disposition: 'hostile'` means only "not you and not a pet I am currently holding". Two
+ * committed goldens are the proof and both went red under a disposition test: `Resist Disease` in
+ * a Quick Buff burst on a spider the model was not holding as a pet (tests/buffUnifiedModel), and
+ * the owner's own `Valor` on a charmed fire giant warrior whose charm line is outside the window
+ * (tests/fixtures/e2e-overlay.log). A friendly buff on somebody the model has lost track of must
+ * never become a debuff, and the SPELL always knew.
+ *
+ * THE ROSTER IS DERIVED, NOT TYPED. Same oracle as `ccSpell`/`charmSpell` (JOS-84) and the slow
+ * group (JOS-69): spells.json groups spells by LANDING MESSAGE, so the family is enumerable from
+ * the DB and a re-scrape that adds a rank joins it automatically. The three sentences and every
+ * member they claim, measured over the committed DB:
+ *
+ *   'Someone looks less aggressive.'  Calm, Calm Animal, Lull, Pacify, Soothe,
+ *                                     Wake of Tranquility   ← the six that can open a row
+ *   'Someone calms down.'             Atone (Cleric 32)
+ *   'Someone looks friendly.'         Alliance, Benevolence, Collaboration (the Enchanter ladder)
+ *
+ * Nothing else in the DB prints any of the three, so unlike the mez family this one does not need
+ * a `FAMILY_EXCEPTIONS` table — but the JOS-200/JOS-225 law still applies and the audit test
+ * re-derives the membership every run, so a scrape that widens a sentence fails the suite instead
+ * of quietly re-routing somebody's buff.
+ *
+ * AN HONEST GAP, STATED. The last two sentences claim four spells that state NO duration, so they
+ * can never open an instance at all (`buffsInstances.applyMessageBuff` refuses a landing with no
+ * duration and no illusion flag) and today only the six matter. And the DB lost the cast-on-other
+ * message for `Lull Animal` and `Harmony` — the druid/ranger half of the same line — so the
+ * parser cannot emit a landing for them either way; a re-scrape that fills those fields in gets
+ * them for free, which is the point of deriving rather than typing.
+ */
+const CALM_LANDING_MESSAGES: ReadonlySet<string> = new Set([
+  'Someone looks less aggressive.',
+  'Someone calms down.',
+  'Someone looks friendly.'
+])
+
+/** True when this DB row is a member of the calm line — see {@link CALM_LANDING_MESSAGES}. */
+export function spellCalmsTarget(entry: SpellEntry | undefined): boolean {
+  return entry?.msgCastOnOther != null && CALM_LANDING_MESSAGES.has(entry.msgCastOnOther)
+}
+
+/** The sentences the roster is derived from, exported for the audit test that re-derives it. */
+export { CALM_LANDING_MESSAGES }
+
+/**
  * Which one-click suggestion templates a spell can offer (see SpellCatalogEntry.templates).
  *
  * EVERY FLAG IS A CLAIM THAT THE ALERT CAN ACTUALLY FIRE — the law shared/alertGroups.ts states
@@ -608,10 +667,16 @@ export interface DurationReport {
  * derives it used to live inside `scripts/scrape-spells.ts` — so it only ever ran when somebody
  * re-scraped, and every duration string it could not read became a PERMANENT null in the committed
  * catalog. That null is fatal rather than cosmetic: `BuffInstances.applyMessageBuff` returns early
- * for a landing with no duration and no illusion flag, so those spells could never open an
- * instance, never draw a bar and never reach the Buffs tab, however correct their three messages
- * were. Spirit of the Puma — whose wiki duration is the three characters `60s` — is the reported
- * case, and 87 rows of the committed scrape were in that state.
+ * for a landing that states no duration, no illusion flag and no permanence, so those spells could
+ * never open an instance, never draw a bar and never reach the Buffs tab, however correct their
+ * three messages were. Spirit of the Puma — whose wiki duration is the three characters `60s` — is
+ * the reported case, and 87 rows of the committed scrape were in that state.
+ *
+ * THE `Permanent` ROWS ARE NOT AMONG THEM, and JOS-215 is why the distinction is worth a sentence
+ * here: their null is CORRECT — the wiki states a word, not a number — so this pass leaves all 62
+ * of them exactly as they are and the model admits them on `durationText` instead
+ * (`SpellStats.isPermanent`). A reader tempted to "fix" the remaining nulls should check which kind
+ * they are looking at first.
  *
  * IT RE-DERIVES RATHER THAN MERELY FILLING, and the reason is a row a fill would have missed:
  * `Sicken` states `1 min 24s`, and the old reader summed only the component it could see, so the

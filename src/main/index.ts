@@ -48,13 +48,14 @@ import { DATA_READY_MS, bus, buffsModule, epoch, sendWorldRebuilt, sessionDetect
 import { markStartupPhase, startPerfSampler, stopPerf } from './perf'
 import { initPresenceEffects, stopPresenceEffects } from './presenceEffects'
 import { provisionDefaultPacks } from './provisionPacks'
-import { getActiveCharacter, markTailPosition, saveFoldCheckpoint, startTailing, stopSession } from './session'
+import { getActiveCharacter, markTailPosition, startTailing, stopSession } from './session'
 import { runSmokeFeedback } from './smokeFeedback'
 import { STORE_READY_MS, getOverlayConfig, getPerfHudPrefs } from './store'
 import { initUpdater } from './updater'
 import {
   createMainWindow,
   createOverlayWindow,
+  flushMainWindowState,
   getMainWindow,
   hardenSession,
   hardenWebContents,
@@ -385,14 +386,11 @@ app.on('before-quit', () => {
   // is exactly the launch a startup measurement most wants to see. Writing it on both events is
   // one store key written twice, and the later write is the better answer.
   teardownStep('main:logTailMark', markTailPosition)
-  // …AND THE FOLD CHECKPOINT, on exactly the argument the line above makes (JOS-208). `app.quit()`
-  // does not emit `window-all-closed`, so an auto-updater's `quitAndInstall` would leave no
-  // checkpoint — and the launch right after an update is a launch that may WELL still be able to
-  // use one: invalidation is per-shape and per-semantics now, so a release that moved neither keeps
-  // every user's cache warm. Idempotent for the same reason `markTailPosition` is: it is one file
-  // written twice by a temp+rename, from a process that is no longer folding, so both writes
-  // describe the same byte and the later one wins.
-  teardownStep('main:foldCheckpoint', () => void saveFoldCheckpoint())
+  // …and the window's own size and position (JOS-248), for EXACTLY that reason: the debounced save
+  // is flushed by the window's `close`, and `app.quit()` — an auto-updater's `quitAndInstall`, an
+  // OS logoff — is not a close. Without this the launch right after an update is the one that comes
+  // up at a stale size, which is the launch a user is most likely to be watching.
+  teardownStep('main:saveWindowState', flushMainWindowState)
 })
 
 /**
@@ -413,13 +411,6 @@ function teardownStep(label: string, fn: () => void): void {
 }
 
 app.on('window-all-closed', () => {
-  // THE FOLD CHECKPOINT (JOS-208), and it goes FIRST — before `stopSession` stops the tailer,
-  // because the offset it writes is the tailer's own (`Tailer.checkpointOffset()`). A no-op unless
-  // the flag is on, and a `teardownStep` like everything else here: a checkpoint that throws must
-  // not be able to veto a quit, and the answer to a failed write is the cold start the app does
-  // today. THIS IS THE CLEAN-SHUTDOWN HALF of "write at clean shutdown + occasional quiet moments"
-  // — a crash leaves the previous checkpoint, which is still valid for the bytes it describes.
-  teardownStep('main:foldCheckpoint', () => void saveFoldCheckpoint())
   teardownStep('main:stopSession', stopSession)
   // Stop the presence watcher thread + the cursor stream. Both already unref, but an unref'd
   // worker is still a running thread: nothing else would end it.
@@ -439,7 +430,7 @@ app.on('window-all-closed', () => {
   teardownStep('main:stopPerf', stopPerf)
   // Flush the learned message overlay one last time so the final session's observations
   // aren't lost between debounced saves (Task #36).
-  teardownStep('main:saveOverlay', () => saveUserOverlay(buffsModule.overlaySnapshot()))
+  teardownStep('main:saveOverlay', () => saveUserOverlay(buffsModule.overlayRegister()))
   // Dev only, and null in every other build: a live DSQL socket is not a timer and would hold
   // the process open long past the last window.
   teardownStep('main:triage', () => {

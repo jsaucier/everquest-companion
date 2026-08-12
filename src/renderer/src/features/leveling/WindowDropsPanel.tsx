@@ -27,7 +27,7 @@ import { windowItemRows, type WindowItemRow } from '@shared/lootRates'
 import { formatDropRate } from '../../lib/formatRate'
 import { EQ_ITEM_COLORS } from '../../lib/ItemWindow'
 import { useLootHistory } from '../loot/useLootHistory'
-import { NONE, activeSpanText } from './rangeStatsRows'
+import { ACTIVE_TIME_TITLE, NONE, activeSpanText } from './rangeStatsRows'
 import type { ScopedStats } from './windowScope'
 
 export interface WindowDropsPanelProps {
@@ -126,7 +126,15 @@ export function WindowDropsPanel({ scope, onOpenItem }: WindowDropsPanelProps): 
       data-testid="leveling-drops"
     >
       <Typography variant="subtitle2">Dropping in this window</Typography>
-      <Typography variant="caption" color="text.secondary" gutterBottom display="block">
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        gutterBottom
+        display="block"
+        // The span every drops/hr on this panel divides by, so it hovers what that span IS
+        // (JOS-249). Native title, no popper.
+        title={rows.length > 0 ? ACTIVE_TIME_TITLE : undefined}
+      >
         {/* ONE span for the whole panel — every rate below divides by it, stated once rather
             than repeated on every row. Nothing is said when there is nothing to measure. */}
         {rows.length > 0 ? activeSpanText(activeMs) : null}

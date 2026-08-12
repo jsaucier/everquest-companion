@@ -87,6 +87,21 @@ export interface InventorySource {
   /** The file's mtime, ISO. What the freshness line renders. */
   loadedAt: string
   /**
+   * WHEN THIS APP LAST READ THE DUMP, epoch ms (JOS-253). Absent on a store written before it.
+   *
+   * `loadedAt` is a misnomer this field exists to make harmless: it is the FILE's mtime — when the
+   * PLAYER dumped — and every surface that rendered it was answering "how old is the file", never
+   * "is what I am showing you that file". Those are two different questions the moment a dump is
+   * rewritten while the app is not looking, which is exactly the case the reporter of JOS-253 was
+   * in, and a single timestamp cannot answer both. So the pair is carried: the file's mtime says
+   * when the game wrote it, this says when we read it, and a gap between them IS the staleness.
+   *
+   * It is a READ instant rather than a generation instant, so it is `Date.now()` at the point the
+   * parse succeeded and never comes from the file — a dump copied off another machine is still
+   * something this app loaded at the moment it loaded it.
+   */
+  readAt?: number
+  /**
    * Epoch ms the dump was GENERATED, floored to the second. Absent on a pre-JOS-128 store.
    * RECORDED ONLY (JOS-141): no fold is narrowed by it.
    */

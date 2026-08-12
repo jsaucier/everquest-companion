@@ -100,13 +100,15 @@ function effectiveVolume(def: AlertDef): number {
  * CROSS-ALERT COALESCING is applied here and only here, AFTER the sound/speech plan and only
  * when something would actually have been audible: a muted app (or a plan that resolved to
  * nothing) must not consume the window and silence the next alert for 1.5s. The firing itself
- * is already recorded upstream — this drops noise, never history.
+ * is already recorded upstream — this drops noise, never history. The global "always play"
+ * preference (JOS-222) rides the SAME call: it is an argument to the pure decision, read off the
+ * prefs copy this module already keeps live, so nothing here branches on it.
  */
 export function playAlertNow(def: AlertDef, firing?: Pick<FiredAlert, 'spell'>): void {
   const voice = currentVoicePrefs()
   const plan = speechPlan(def, firing ?? null, prefs.muted)
   if (!plan.sound && !plan.speak) return
-  const gate = coalesceAudio(def, Date.now(), lastAudioMs)
+  const gate = coalesceAudio(def, Date.now(), lastAudioMs, prefs.alwaysPlayAll === true)
   lastAudioMs = gate.lastAudioMs
   if (!gate.play) return
   const gain = effectiveVolume(def)

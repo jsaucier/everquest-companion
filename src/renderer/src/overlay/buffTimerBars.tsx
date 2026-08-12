@@ -13,7 +13,7 @@
 // module that pulls no MUI in behind it.
 
 import { type JSX, useEffect, useState } from 'react'
-import { type BuffTimerRow, timerReading } from '@shared/buffTimers'
+import { type BuffTimerRow, rowRankLabel, timerReading } from '@shared/buffTimers'
 import { fmtDuration } from '../features/buffs/format'
 
 const GOLD = '#d9b25f'
@@ -133,6 +133,7 @@ function DismissControl({
  * dismiss control (JOS-203) joined it. Nothing about what it draws changed with the split.
  */
 function RowName({ row, showTarget }: { row: BuffTimerRow; showTarget: boolean }): JSX.Element {
+  const rank = rowRankLabel(row.name, row.castName)
   return (
     <span
       data-testid="buff-timer-name"
@@ -148,6 +149,16 @@ function RowName({ row, showTarget }: { row: BuffTimerRow; showTarget: boolean }
       }}
     >
       {row.name}
+      {/* THE RANK CHIP (JOS-238). The row is NAMED for the spell — the DB's own display name, the
+          string the alerts, the learner and the wear-off sentence all speak — and the rank the
+          cast line spelled rides beside it instead of inside it. Before this the two were one
+          string, and `Swift Like the Wind IV` as an identity is what kept a suggested wears-off
+          alert from ever firing. Absent for every row whose cast line named no rank. */}
+      {rank != null && (
+        <span data-testid="buff-timer-rank" style={{ color: 'rgba(255,255,255,0.5)', marginLeft: 4 }}>
+          {rank}
+        </span>
+      )}
       {/* The ~ chip is this repo's existing spelling of "ambiguous" (AGENTS.md UI
           conventions). It appears when the landing sentence is shared by several spells and
           nothing the player cast narrowed it — JOS-84's law, on screen. */}

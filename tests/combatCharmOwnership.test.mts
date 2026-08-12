@@ -42,6 +42,13 @@ const AUG4 = (clock: string): number => Date.parse(`Tue Aug 04 ${clock} 2026`)
  *  snapshot(Date.now()) while the tailer is still catching up (the tick race). */
 function replay(lines: string[], pollLagMs = 0): { eng: CombatEngine; lastTs: number } {
   const eng = new CombatEngine()
+  // LIVE FROM THE START, because that is the only state anybody ever LOOKS at a meter in, and
+  // since JOS-208 phase 4 it is also the only state the wall-clock closure sweep runs in: a
+  // replay is not a moment in time, so `snapshot(now)` no longer finalizes a fight while the
+  // historical fold is still reading (engine.ts). Every window below asks what the meter shows
+  // after its span, which is a live question; the poll-lag arms model the live tick race and
+  // still exercise it.
+  eng.setLive()
   eng.setPlayerName('Primitive')
   let seq = 0
   let lastTs = 0
@@ -78,45 +85,108 @@ const fights = (eng: CombatEngine, lastTs: number): SegmentSummary[] =>
 //   enemy healing        1,840  ← Scooba's four self-heals, 17:00:10–17:00:33
 //   fights               2, the first being "a Champion of Innoruuk +3", 214s, 47,853
 //                        — the Scooba brawl and TWO of the owner's pulls in one segment.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// THE LAW CHANGED HERE, AND THIS BLOCK IS WHERE IT IS WRITTEN DOWN (JOS-250).
+//
+// Task #65's answer was "a stranger's charm binds NOTHING", and that was the right answer to the
+// question it could answer. JOS-250 answers a bigger one: `Scooba begins casting Allure VII.` is
+// in this very fixture, one second before each broadcast, and it NAMES THE CHARMER. So the pet is
+// attributable — to SCOOBA. What must never happen is the thing this window originally caught,
+// and the assertions below now state it as a positive rather than as an absence: not one point of
+// it reaches YOUR row, your fights, your engaged set or your closure clock.
+//
+// MEASURED POST-JOS-250 on this exact fixture, and the split is exact:
+//   you                   64,102 over 876 hits — BYTE-IDENTICAL to the Task #65 engine.
+//   a Knight of Innoruuk  bound 16:59:27, UNBOUND 16:59:29 by
+//                         `A Knight of Innoruuk tries to punch Scooba, but misses!` — two
+//                         seconds, zero damage credited. Its pre-fix 1,446 points are still
+//                         gone, now for a reason the log states rather than by refusing to look.
+//   an elite dragoon      bound 16:59:43 and never turns on anybody friendly, so all 8,570
+//                         points over 72 hits (and 47 misses) go to `Pet (an elite dragoon) -
+//                         Scooba`. That is the WHOLE of the pre-fix dragoon figure: the honest
+//                         part of the 10,016 was always real damage by a real pet with a real
+//                         owner; only the owner was wrong.
+//   zone outTotal         72,672 = 64,102 + 8,570.
+//   fights                unchanged in every respect (see the segmentation test below).
 // ============================================================================
 
 for (const lag of [0, 6_000]) {
   const label = lag === 0 ? 'plain replay' : 'with a 6s snapshot-poll lag'
 
-  test(`W44 (${label}): a stranger's charm binds NOTHING`, { skip: W44.length === 0 && 'fixture not present' }, () => {
+  test(`W44 (${label}): a stranger's charm binds nothing OF YOURS`, { skip: W44.length === 0 && 'fixture not present' }, () => {
     const { eng } = replay(W44, lag)
-    assert.deepEqual(eng.petDisplayNames(), [], 'no pet was ever bound in this window')
-    assert.deepEqual(eng.charmedPetNames(), [], 'and the charm roster is empty')
+    assert.deepEqual(eng.petDisplayNames(), [], 'no pet of YOURS was ever bound in this window')
+    assert.deepEqual(eng.charmedPetNames(), [], 'and your charm roster is empty')
+    // …while the ALLY roster holds the one bind that survived its own soft-hostile proof. The
+    // Knight is absent from it because the Knight turned on Scooba two seconds in.
+    assert.deepEqual(eng.allyPetNames(), ['an elite dragoon'], "Scooba's pet, bound to Scooba")
   })
 
-  test(`W44 (${label}): the foreign pet's damage is off the owner's meter entirely`, { skip: W44.length === 0 && 'fixture not present' }, () => {
+  test(`W44 (${label}): the ally pet's damage is Scooba's, and YOUR row is byte-identical`, { skip: W44.length === 0 && 'fixture not present' }, () => {
     const { eng, lastTs } = replay(W44, lag)
     const sel = eng.snapshot(lastTs + 120_000, { selectedId: 'zone' }).selected!
-    assert.equal(sel.entities.filter((e) => e.kind === 'pet').length, 0, 'no pet source row exists')
-    // The zone aggregate is exactly the owner's own swings — 10,016 points and 91 hits less
-    // than the pre-fix 74,118, which is precisely the misattributed foreign pet damage.
+    // THE ORIGINAL ASSERTION, UNCHANGED AND STILL THE POINT: none of this is yours. `kind: 'pet'`
+    // is the attribution set the meter nests inside your breakdown, and a stranger's pet is not
+    // in it — not before JOS-250 and not after.
+    assert.equal(sel.entities.filter((e) => e.kind === 'pet').length, 0, 'no pet source row of yours exists')
     const you = sel.entities.find((e) => e.id === 'you')!
-    assert.equal(sel.outTotal, 64_102)
-    assert.equal(you.total, 64_102)
+    assert.equal(you.total, 64_102, "the pre-JOS-250 figure, to the point — your row cannot move")
     assert.equal(you.hits, 876)
-    // Law 8 tripwire: the category partition still re-sums exactly.
+
+    const ally = sel.entities.filter((e) => e.kind === 'allyPet')
+    assert.equal(ally.length, 1, 'one ally pet survived its own break test')
+    assert.equal(ally[0].id, 'allypet:scooba:an elite dragoon', 'keyed by CHARMER then pet')
+    assert.equal(ally[0].name, 'Pet (an elite dragoon) - Scooba')
+    assert.equal(ally[0].total, 8_570)
+    assert.equal(ally[0].hits, 72)
+    assert.equal(ally[0].misses, 47)
+    assert.equal(sel.outTotal, 72_672, 'you + the ally pet, and nothing else')
+
+    // THE KNIGHT IS THE SOFT-HOSTILE PROOF, and its whole contribution is the assertion: it was
+    // bound for two seconds and landed nothing in them.
+    assert.ok(!ally.some((e) => /knight/i.test(e.name)), 'the Knight turned on its charmer and stopped counting')
+
+    // Law 8 tripwire: the category partition still re-sums exactly, on every row including the
+    // new kind.
     for (const e of [...sel.entities, ...sel.incoming]) {
       assert.equal(e.categories.reduce((n, c) => n + c.total, 0), e.total, `${e.name}: category sum == total`)
     }
   })
 
-  test(`W44 (${label}): the PLAYER Scooba appears nowhere — not as a target, not as a healer`, { skip: W44.length === 0 && 'fixture not present' }, () => {
+  test(`W44 (${label}): the PLAYER Scooba is still not a combatant, a hostile or a healer`, { skip: W44.length === 0 && 'fixture not present' }, () => {
     const { eng, lastTs } = replay(W44, lag)
     const ids = [...fights(eng, lastTs).map((f) => f.id), 'zone']
     for (const id of ids) {
       const snap = eng.snapshot(lastTs + 120_000, { selectedId: id, timeline: true })
       const sel = snap.selected!
-      const names = [...sel.entities, ...sel.incoming].map((e) => e.name)
-      assert.ok(!names.some((n) => /scooba/i.test(n)), `${id}: Scooba is not a combat source`)
+      // THE ORIGINAL ASSERTION, RE-EXPRESSED RATHER THAN WEAKENED. Scooba's NAME now appears, on
+      // purpose, inside the label of the row his pet earned — that is the whole feature. What must
+      // still be impossible is Scooba being a SOURCE: a `you`/`pet`/`member` row, a mob in the
+      // incoming list, a target of anybody's swing, or an enemy healer.
+      for (const e of [...sel.entities, ...sel.incoming]) {
+        const isAllyLabel = e.kind === 'allyPet'
+        assert.ok(!/scooba/i.test(e.name) || isAllyLabel, `${id}: Scooba is not a combat source (${e.kind} ${e.name})`)
+        assert.ok(!/^scooba$/i.test(e.id), `${id}: Scooba has no row of his own`)
+      }
       assert.equal(sel.enemyHealTotal, 0, `${id}: a player's self-heals are not enemy healing`)
       for (const ev of snap.timeline?.events ?? []) {
         assert.ok(!/scooba/i.test(ev.target ?? ''), `${id}: no instant is aimed at a player`)
       }
+    }
+  })
+
+  test(`W44 (${label}): the ally pet never opens, joins or extends one of YOUR fights`, { skip: W44.length === 0 && 'fixture not present' }, () => {
+    // The 214-second merged pull, re-asserted under the new law. Every point the ally pet earned
+    // in this window lands before the owner's first swing, so it belongs to the zone lane and to
+    // nothing else — which is exactly the miss/resist rule (world-model law 8) applied to a
+    // fifth source kind. If an ally pet could open an encounter, this sum would move.
+    const { eng, lastTs } = replay(W44, lag)
+    const fs = fights(eng, lastTs)
+    assert.equal(fs.reduce((n, f) => n + f.total, 0), 64_102, 'the fights hold only the owner')
+    for (const f of fs) {
+      const sel = eng.snapshot(lastTs + 120_000, { selectedId: f.id }).selected!
+      assert.equal(sel.entities.filter((e) => e.kind === 'allyPet').length, 0, `${f.name}: no ally row`)
     }
   })
 

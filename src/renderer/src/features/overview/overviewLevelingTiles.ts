@@ -20,6 +20,7 @@ import type { RangeStats } from '@shared/progressionStats'
 import type { ProgressionSnap } from '@shared/types'
 import { zoneColor } from '../leveling/zoneBands'
 import { fmtDuration } from '../leveling/levelChartGeometry'
+import { withActiveTime } from '../leveling/rangeStatsRows'
 import type { LevelEta, LevelingWindow } from './overviewLevelingData'
 
 /**
@@ -213,7 +214,9 @@ export function levelingTiles(input: LevelingTileInput): LevelingTile[] {
       value,
       unit: unit || 'lvl/hr',
       label: 'last hour',
-      title: 'Levels of progress per hour of active time.'
+      // The one tile on this card whose denominator is active time, so it says what that is
+      // (JOS-249) — the Leveling tab's own sentence, not a second wording.
+      title: withActiveTime('Levels of progress per hour of active time.')
     },
     {
       id: 'aa',

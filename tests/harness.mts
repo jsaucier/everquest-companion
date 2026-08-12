@@ -16,12 +16,13 @@ import { dirname, join } from 'node:path'
 import { parseEvent } from '../src/main/log/parser'
 import { installSpellDb } from '../src/main/log/rulesets'
 import { loadSpellDb } from '../src/main/data/spellDb'
+import { AlertsModule } from '../src/main/modules/alerts'
 import { BuffsModule } from '../src/main/modules/buffs'
 import { BuffTimersModule } from '../src/main/modules/buffTimers'
 import type { SpellStats } from '../src/main/modules/buffsStats'
 import { buildTimerRows } from '../src/shared/buffTimers'
 import type { BuffTimerRow, BuffTimersSnap } from '../src/shared/buffTimers'
-import type { BuffsSnap } from '../src/shared/types'
+import type { AlertDef, BuffsSnap, FiredAlert } from '../src/shared/types'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const FIXTURES = join(HERE, 'fixtures')
@@ -159,6 +160,73 @@ export function replayBuffTimers(
   const b = buffs.snapshot().state
   const t = timers.snapshot().state
   return { buffs: b, timers: t, rows: buildTimerRows(b, t), spellStats: buffs.spellStats() }
+}
+
+/**
+ * REPLAY LINES THROUGH THE ALERTS MODULE IN PRODUCTION ORDER, with a 1-second heartbeat, and
+ * collect everything it fired. `to` bounds the window the way the buff-timer goldens do.
+ *
+ * THE REGISTRATION ORDER IS LOAD-BEARING, not incidental (modules/wiring.ts: alerts, then buffs,
+ * then buffTimers). The alerts module folds a landing BEFORE the two modules that build the timer
+ * row for it, which is the whole reason an early-warning arm is resolved on the next heartbeat
+ * instead of at the match; a harness that folded them in a friendlier order would prove the
+ * feature works in a program nobody ships.
+ *
+ * Lives here rather than in one test file because two suites drive it — the JOS-216 landing golden
+ * (tests/earlyWarning.test.mts) and the JOS-235 break matrix (tests/earlyWarningBreaks.test.mts).
+ */
+export function replayAlertLines(
+  lines: readonly string[],
+  defs: AlertDef[],
+  to: number
+): FiredAlert[] {
+  const db = loadSpellDb()
+  installSpellDb(db)
+  const alerts = new AlertsModule()
+  const buffs = new BuffsModule(db)
+  const timers = new BuffTimersModule(buffs.castAnchors(), buffs.spellStats())
+  alerts.setDefs(defs)
+  // The ONE seam the early warning reads its estimated ends through — the same projection both
+  // timer overlays draw (modules/wiring.ts hands over exactly this closure).
+  alerts.setTimerRows(() => buildTimerRows(buffs.snapshot().state, timers.snapshot().state))
+  alerts.reset()
+  buffs.reset()
+  timers.reset()
+
+  const fired: FiredAlert[] = []
+  const drain = (): void => {
+    const out = alerts.flushDelta()
+    if (out) fired.push(...out.delta.fired)
+  }
+  // registry.tick advances every module in registration order, then flushes.
+  const tick = (at: number): void => {
+    alerts.onTick(at)
+    buffs.onTick(at)
+    timers.onTick(at)
+    drain()
+  }
+
+  let seq = 0
+  let nextTick = 0
+  for (const raw of lines) {
+    const ev = parseEvent(raw, seq++)
+    if (!ev) continue
+    if (ev.ts > to) break
+    if (nextTick === 0) nextTick = ev.ts
+    while (nextTick <= ev.ts) {
+      tick(nextTick)
+      nextTick += 1_000
+    }
+    alerts.onEvent(ev, true)
+    buffs.onEvent(ev, true)
+    timers.onEvent(ev)
+    drain()
+  }
+  while (nextTick > 0 && nextTick <= to) {
+    tick(nextTick)
+    nextTick += 1_000
+  }
+  return fired
 }
 
 /** Parse an EQ timestamp out of a raw fixture line (ms epoch), or 0. */

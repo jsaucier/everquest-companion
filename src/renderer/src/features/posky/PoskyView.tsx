@@ -458,6 +458,7 @@ export default function PoskyView({
     reloadInventory,
     recordTurnIn,
     undoTurnIn,
+    inventoryInfo,
     sharedItems,
     ambiguousQuestNames
   } = useProgress({ onQuestComplete })
@@ -516,12 +517,25 @@ export default function PoskyView({
             onCountSource={setCountSource}
             onReload={onReload}
           />
-          {/* Only when the dump actually feeds the numbers: counting from the looted log alone
-              means this tab does not read the export at all, and a freshness line about a file
-              nothing on screen depends on is the caveat this diet exists to refuse. */}
-          {countSource !== 'log' && (
-            <OutputKindLine kind="inventory" testId="posky-inventory-fresh" />
-          )}
+          {/* ALWAYS, SINCE JOS-253 — and the argument it replaces was a good one, so it is worth
+              stating what changed. JOS-44 showed this line only when the dump fed the numbers
+              (`countSource !== 'log'`), because a freshness line about a file nothing on screen
+              depends on is exactly the caveat the tooltip-and-caveat diet refuses. What that
+              missed is that `log` is the DEFAULT source: a player who never opened the "Count
+              items from" dropdown had no line, no age, and — until this ticket — a disabled
+              Reload button, so the tab's entire answer to "I just ran /outputfile, why did
+              nothing happen?" was blank space. The line is not a caveat about the numbers, it is
+              the control surface for the command the tab keeps telling people to type, and the
+              two instants on it are what make the blank case self-diagnosing.
+
+              `loadedAt` is what this tab knows and the registry cannot: the store's record of
+              when main last read a dump. `null` says we have never loaded one, which is a
+              different sentence from the file not existing and both can be true at once. */}
+          <OutputKindLine
+            kind="inventory"
+            loadedAt={inventoryInfo?.readAt ?? null}
+            testId="posky-inventory-fresh"
+          />
           <CountsLine
             questCount={quests.length}
             totalQuests={totalQuests}

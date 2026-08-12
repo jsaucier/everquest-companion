@@ -21,13 +21,15 @@ import {
   type ComboProvenance,
   type ComboSlot
 } from '@shared/classCombo'
+import { loadoutUncertain } from '@shared/comboIndex'
 import {
   confidenceText,
   intervalProvenance,
   overruledText,
   provenanceLabel,
   slotKind,
-  slotLabel
+  slotLabel,
+  uncertainText
 } from './ClassComboLabels'
 import { Tooltip } from '../../lib/Tooltip'
 
@@ -124,6 +126,25 @@ export function LockedChip(): JSX.Element {
   return (
     <Tooltip title="You set this range.">
       <Chip size="small" variant="outlined" color="info" label="locked" sx={CHIP_SX} />
+    </Tooltip>
+  )
+}
+
+/**
+ * Shown only where the confidence gate is holding the row (JOS-239, `loadoutUncertain`).
+ *
+ * The roster refuses to name a loadout for these spans at all — a kill card is a claim about one
+ * moment and there is no honest trio to put over it. The history list is a different question ("what
+ * do we believe about each stretch, and where do I go to fix it"), so here the classes stay on
+ * screen beside the Edit button and the chip says not to trust them. Same gate, two truthful
+ * renderings of it.
+ */
+export function UncertainChip({ interval }: { interval: ComboInterval }): JSX.Element | null {
+  const text = uncertainText(interval)
+  if (!text || !loadoutUncertain(interval)) return null
+  return (
+    <Tooltip title={text}>
+      <Chip size="small" variant="outlined" color="warning" label="mixed loadouts" sx={CHIP_SX} />
     </Tooltip>
   )
 }

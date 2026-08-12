@@ -171,6 +171,8 @@ export interface TipPalette {
 function whoWord(kind: TimelineEvent['kind']): string {
   if (kind === 'you') return 'You'
   if (kind === 'pet') return 'Pet'
+  // 'Ally pet' (JOS-250) is somebody else's charm pet — never yours, so it must not read 'Pet'.
+  if (kind === 'allyPet') return 'Ally pet'
   return kind === 'member' ? 'Group' : 'Enemy'
 }
 

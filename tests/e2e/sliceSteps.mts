@@ -21,6 +21,7 @@ import { check, countOf, note, settle } from './appHarness.mjs'
 const TS_WINDOW = '[data-testid="leveling-slice-window"]'
 const LOOT_SLICE = '[data-testid="loot-slice"]'
 const LOOT_SUMMARY = '[data-testid="loot-summary"]'
+const LOOT_RATES = '[data-testid="loot-rates"]'
 /** Narrowest first. Any of these is a real cut of the ledger; `custom` is not one until somebody
  *  types two instants into it, so it is deliberately never a candidate. */
 const NARROW_ORDER = ['h1', 'h6', 'h24', 'd7', 'session', 'zone'] as const
@@ -74,16 +75,21 @@ export async function stepZoneSlice(page: Page, readDashboard: () => Promise<str
 /**
  * THE SAME CONTROL ON THE LOOT LEDGER (JOS-130) — where it was asked for.
  *
- * Two claims, and the first is the owner's standing direction rather than a nicety: the ledger
+ * Three claims, and the first is the owner's standing direction rather than a nicety: the ledger
  * comes up on ALL TIME, so a reader who never touches this sees their whole history and the
  * summary makes no claim about a slice. The second is the report itself — "what did I gain in
  * totality vs this session" — which is why the sliced count is stated BESIDE the all-time one
  * rather than replacing it, and why coming back to `All` has to restore the caption exactly.
+ *
+ * The third is JOS-261's, and it rides this step because it rides this control: the caption now
+ * also states how FAST the slice is paying, and that rate follows the same pick the counts do
+ * (`stepLootRates` below states what it checks and why a unit test cannot).
  */
 export async function stepLootSlice(page: Page): Promise<void> {
   if (!check('the timeslice control is mounted on the Loot tab', (await countOf(page, LOOT_SLICE)) === 1)) return
   const all = await textOf(page, LOOT_SUMMARY)
   check('…and the ledger comes up on ALL TIME, hiding nothing', !all.includes('all time'), all.replace(/\s+/g, ' '))
+  const allRates = await stepLootRates(page)
 
   const offered = await offeredSlices(page, 'loot-slice')
   const narrow = NARROW_ORDER.find((id) => offered.includes(id))
@@ -98,8 +104,54 @@ export async function stepLootSlice(page: Page): Promise<void> {
     cut.includes('all time'),
     cut.replace(/\s+/g, ' ')
   )
+  // The rate line follows the SAME pick — the whole reason it is on this tab is "how fast is the
+  // grind I am in paying", and a rate that stayed on the whole log while the counts narrowed would
+  // be the exact mismatch `useSliceLootRates` exists to prevent. A slice can honestly hold the same
+  // drops as All (a fixture short enough that `1h` covers it), so this only asserts it re-derived.
+  if (allRates !== '') {
+    const cutRates = await textOf(page, LOOT_RATES)
+    check(
+      `…and the loot-per-hour line describes the ${narrow} slice too`,
+      cutRates === '' || /drops\/hr .*active/.test(cutRates),
+      `${allRates} → ${cutRates}`.replace(/\s+/g, ' ')
+    )
+  }
 
   await page.click('[data-testid="loot-slice-all"]', { timeout: 10_000 })
   const back = await settle(() => textOf(page, LOOT_SUMMARY), (t) => t === all, { timeoutMs: 8000 })
   check('…and All restores the whole ledger, caption and all', back === all, back.replace(/\s+/g, ' '))
+  check('…including the loot-per-hour line, byte for byte', (await textOf(page, LOOT_RATES)) === allRates)
+}
+
+/**
+ * LOOT PER HOUR, WITH BOTH DENOMINATORS NAMED (JOS-261) — read off the real ledger.
+ *
+ * `tests/lootRateText.test.mts` pins the words and `tests/lootRates.test.mts` pins the arithmetic;
+ * neither can see that the Loot tab actually joins the loot module's history against a `rangeStats`
+ * over the slice in force and renders the result. That is this check: the line is mounted, and it
+ * names BOTH hours — which is the ticket's own requirement that neither reading pass for the other.
+ *
+ * Returns the line's text ('' when the fixture looted nothing, which is a real state and not a
+ * failure) so the caller can prove the slice moves it and All restores it.
+ */
+async function stepLootRates(page: Page): Promise<string> {
+  const text = await settle(() => textOf(page, LOOT_RATES), (t) => t !== '', { timeoutMs: 8000 })
+  if (text === '') {
+    note('this fixture has no loot at all, so the ledger states no rate — the honest empty state')
+    return ''
+  }
+  check('the ledger states loot per hour for the slice in force', /drops\/hr/.test(text), text.replace(/\s+/g, ' '))
+  check(
+    '…over BOTH denominators, each named, so neither reading can pass for the other',
+    text.includes('active') && text.includes('elapsed'),
+    text.replace(/\s+/g, ' ')
+  )
+  // Rule 2 of lootRateText.ts: a rate that outran its span would be a confident claim about ten
+  // minutes of play. Every rate the line prints carries the span it divided by.
+  check(
+    '…and every rate carries the span it was measured over',
+    !/[\d.]+ drops\/hr(?! over)/.test(text),
+    text.replace(/\s+/g, ' ')
+  )
+  return text
 }

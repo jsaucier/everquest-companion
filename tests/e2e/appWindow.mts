@@ -91,6 +91,35 @@ export async function overlayWindow(
 }
 
 /**
+ * QUIT THE WAY A USER QUITS, which is not the way Playwright does.
+ *
+ * MEASURED (JOS-57, and it cost a red run to find): `ElectronApplication.close()` calls
+ * `app.quit()`, and Electron does NOT emit `window-all-closed` on that path — it closes the windows
+ * itself as part of the quit sequence. Every teardown this app hangs off that event (`stopSession`,
+ * `stopTelemetry`, `stopPerf`) therefore never runs under the default harness exit, which is why no
+ * `sessionEnd` had ever appeared in an e2e ring. Closing the windows and letting the app quit itself
+ * is the real user path — clicking the X — and it is the only one under which the last record of a
+ * session is written.
+ *
+ * IT LIVES HERE, beside `launchApp`, rather than in the one spec that first needed it: a lesson
+ * this expensive should have exactly one copy, and any spec that asserts about what a session
+ * WROTE ON THE WAY OUT needs this exit rather than Playwright's. (It was
+ * tests/e2e/telemetry.e2e.mts's private helper first; that spec now imports this one, unchanged.)
+ *
+ * Best effort on both halves: a launch that has already gone is not an error here, and the caller's
+ * own `close()` still runs afterwards (it swallows "already closed").
+ */
+export async function closeWindows(app: ElectronApplication): Promise<void> {
+  const exited = app.waitForEvent('close').catch(() => undefined)
+  await app
+    .evaluate(({ BrowserWindow }) => {
+      for (const w of BrowserWindow.getAllWindows()) w.close()
+    })
+    .catch(() => undefined)
+  await exited
+}
+
+/**
  * THE ISOLATION UNIT IS ONE LAUNCH.
  *
  * It used to be one CHECKOUT: a single `userData` dir keyed by a hash of the repo root, shared by

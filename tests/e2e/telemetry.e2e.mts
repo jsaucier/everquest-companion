@@ -23,7 +23,7 @@
  *
  * Run: `node --import tsx tests/e2e/telemetry.e2e.mts` (it is also in tests/e2e/run-all.mts).
  */
-import type { ElectronApplication, Page } from 'playwright-core'
+import type { Page } from 'playwright-core'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -38,7 +38,7 @@ import {
   settleGone,
   sleep
 } from './appHarness.mjs'
-import { mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
+import { closeWindows, mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
 import { launchOnFixture, stageFixture, type FixtureLog } from './logFixture.mjs'
 // The error-report steps (JOS-100) live next door: adding them here put this spec past the
 // repo's 400-code-line ceiling, and the split follows a real seam. See errorReportSteps.mts.
@@ -506,29 +506,9 @@ interface FirstRun {
   byWindow?: boolean
 }
 
-/**
- * QUIT THE WAY A USER QUITS, which is not the way Playwright does.
- *
- * MEASURED (JOS-57, and it cost a red run to find): `ElectronApplication.close()` calls
- * `app.quit()`, and Electron does NOT emit `window-all-closed` on that path — it closes the
- * windows itself as part of the quit sequence. Every teardown this app hangs off that event
- * (`stopSession`, `stopTelemetry`, `stopPerf`) therefore never runs under the default harness
- * exit, which is why no `sessionEnd` has ever appeared in an e2e ring. Closing the windows and
- * letting the app quit itself is the real user path — clicking the X — and it is the only one
- * under which the last record of a session is written.
- *
- * Best effort on both halves: a launch that has already gone is not an error here, and the
- * caller's own `close()` still runs afterwards (it swallows "already closed").
- */
-async function closeWindows(app: ElectronApplication): Promise<void> {
-  const exited = app.waitForEvent('close').catch(() => undefined)
-  await app
-    .evaluate(({ BrowserWindow }) => {
-      for (const w of BrowserWindow.getAllWindows()) w.close()
-    })
-    .catch(() => undefined)
-  await exited
-}
+// `closeWindows` — QUIT THE WAY A USER QUITS — moved to ./appWindow.mts, which is where
+// `launchApp` and `mainWindow` already live and where any spec asserting about a session's LAST
+// record can reach it. Its whole measured story is in that file's header, unchanged.
 
 async function firstRun({ label, errors, step, log, userData, byWindow }: FirstRun): Promise<void> {
   console.log(label)

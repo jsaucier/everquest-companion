@@ -11,6 +11,10 @@ import { meleeSkill } from '../log/parseCombat'
 import { SEC_AGGREGATE, SEC_CLASSIFY } from './foldProbe'
 import { ensureEncounter } from './lifecycle'
 import { baseLaneName } from './procDetect'
+// SOMEBODY ELSE'S CHARM PET (JOS-250). Its own module because it is its own feature: the three
+// calls below are the only places it touches this file, and every one of them sits on a line the
+// meter was already dropping. See allyRouting.ts for what it may and may not do.
+import { noteAllyPetEvidence, routeAllyPetDamage, routeAllyPetMiss } from './allyRouting'
 import { ACTIVE_MS, type Encounter } from './encounter'
 import type { DamageEvent, MissFold, SourceRef } from './aggregate'
 import type { HealAccum, HealInput } from './healing'
@@ -277,6 +281,7 @@ function routeOutgoingDamage(st: EngineState, enc: Encounter, ev: DamageEvent, a
   st.log(ev.ts, cat, src.kind, `${src.name} → ${tgtName}  ${ev.amount}${mark}  ${ev.skill}`)
 }
 
+
 /**
  * "YOU HIT IT", FILED ONCE, off the verdict `classify()` just reached (JOS-48).
  *
@@ -312,7 +317,18 @@ export function route(st: EngineState, ev: DamageEvent): Attribution | null {
   if (ev.amount <= 0) return null
   const at = verdict(st, ev)
   noteStruckEvidence(st, ev, at)
-  if (at.kind === 'ignore') return at
+  // BEFORE the ignore gate, and before the outgoing/incoming split: a bound ally pet swinging at
+  // YOU classifies as 'incoming' rather than 'ignore', and that line is the strongest soft-hostile
+  // proof there is (JOS-250). Reading the evidence off every line is what keeps the two cases from
+  // needing two rules.
+  noteAllyPetEvidence(st, ev.attacker, ev.target, ev.ts)
+  if (at.kind === 'ignore') {
+    // …and the mob-vs-mob lines the meter has always dropped are where a THIRD PARTY's charm pet
+    // finally has a row. Only while bound and unambiguous; everything else stays dropped exactly
+    // as it was.
+    routeAllyPetDamage(st, ev)
+    return at
+  }
 
   // Twin evidence: You→pet-name or same-name→same-name proves a hostile twin
   // co-exists with the pet; ensure the world model has a second instance so the
@@ -411,7 +427,13 @@ export function routeMiss(st: EngineState, ev: MissEvent): void {
     category: 'melee', modifiers: []
   }
   const at = verdict(st, probe)
-  if (at.kind === 'ignore') return
+  // Same two judgements the damage path reads, off the same lines, for the same reason: an ally
+  // pet's swing at a friendly proves the break whether or not it connected (JOS-250).
+  noteAllyPetEvidence(st, attacker, target, ts)
+  if (at.kind === 'ignore') {
+    routeAllyPetMiss(st, ev, missFold(st, ev, false))
+    return
+  }
   const fold = missFold(st, ev, at.kind === 'out-you')
   // A miss doesn't open or extend an encounter (closure is death/CC/fallback driven),
   // but it attaches to the in-progress fight if one is fresh (so hit% is per-fight).

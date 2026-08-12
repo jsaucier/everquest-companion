@@ -176,20 +176,81 @@ export function landingSpec(candidates: string[] | undefined, at: LandingPlaceme
     dispOverride: at.disp,
     caster: at.caster,
     count: at.permanent ? 1 : at.record.group.count,
+    // DISPLAY ONLY (JOS-238) — the rank the cast line spelled, when it said one.
+    ...(at.record.castName != null ? { castName: at.record.castName } : {}),
     ...(candidates ? { candidates } : {}),
     opts: { messageDriven: true, permanent: at.permanent }
   }
 }
 
 /**
- * Permanent Illusion AA (Task #34): a SELF illusion cast at or after the AA was owned never
- * expires, so it is shown with no countdown and pairs no duration sample.
+ * THE SPEC FOR RE-PROJECTING A ROW THAT IS ALREADY LIVE: everything the instance IS, carried
+ * forward from the row being replaced, with only the coordinates a re-projection restates
+ * (`at`) supplied by the caller.
+ *
+ * IT EXISTS BECAUSE THE STORE RE-PROJECTS FROM TWO PLACES THAT MUST NOT DRIFT — `restat` (the
+ * hold group moved: a landing closed, or another mob of that name joined it) and `addSample` (a
+ * fresh duration changed what every live instance of that line counts down from). Both used to
+ * hand-copy the same seven fields, and a display fact added to one and not the other is precisely
+ * the shape of the defect JOS-238 fixed one level up: a row that says a different thing depending
+ * on which internal event last touched it. There is one copy now, and `castName` — the ranked text
+ * of the cast line, which a re-projection must not silently drop — is carried here.
  */
-export function isPermanentIllusion(
-  self: boolean,
-  illusion: boolean,
-  ts: number,
-  ownedTs: number | undefined
-): boolean {
-  return self && illusion && ownedTs != null && ts >= ownedTs
+export function reprojectSpec(
+  a: ActiveBuff,
+  at: { key: string; entityKey: string; startedTs: number; caster: string; count: number }
+): ActiveSpec {
+  return {
+    spell: a.spell,
+    ...at,
+    dispOverride: a.disposition,
+    ...(a.castName != null ? { castName: a.castName } : {}),
+    ...(a.candidates ? { candidates: [...a.candidates] } : {}),
+    opts: { messageDriven: a.messageDriven, permanent: a.permanent }
+  }
+}
+
+/**
+ * The landing's own claims, as the store already holds them — a structural subset of
+ * `buffsInstances.ts LandingSpec`, spelled here rather than imported so this file stays the
+ * dependency-free RULES half (importing the store back would close a cycle).
+ */
+export interface PermanenceClaims {
+  illusion: boolean
+  ts: number
+  /** ts from which the Permanent Illusion AA is owned, when it is. */
+  permanentIllusionOwnedTs?: number
+}
+
+/**
+ * DOES THIS LANDING NEVER EXPIRE (JOS-215, generalizing Task #34's `isPermanentIllusion`).
+ *
+ * TWO INDEPENDENT REASONS, both of which mean "no countdown, no duration sample, and no hygiene
+ * retirement":
+ *
+ *   1. THE SPELL ITSELF (JOS-215). The wiki states `Permanent` — Yaulp, the Shielding ladder, the
+ *      rogue blade coats, 62 rows in all, every one of them Self. The buff simply has no timer.
+ *   2. THE PERMANENT ILLUSION AA (Task #34). A SELF illusion cast at or after the AA was owned
+ *      never expires, whatever the spell's own duration says.
+ *
+ * BOTH ARE GATED ON `self`, AND THAT IS NOT AN ACCIDENT of the AA rule leaking into the new one.
+ * All 62 permanent rows are `targetType: Self`, so a permanent landing on somebody else is a shape
+ * the game does not print; if a re-scrape ever produces one, the honest answer is a normal count-up
+ * row rather than an unkillable bar on an entity this model may lose track of. The 90-minute
+ * hygiene long stop is the only thing that retires a row nothing else can, and exempting a NON-self
+ * instance from it is how a bar ends up standing on a corpse forever.
+ *
+ * THE FIVE ILLUSION PERMANENTS TAKE ARM 1, NOT ARM 2 (JOS-215, and this is the second half of the
+ * ticket). Lich, Call of Bones, Wolf Form, Greater Wolf Form and Form of the Great Wolf are the
+ * intersection: `durationText: Permanent` AND illusion-flagged. Before this they were the only
+ * permanents the model admitted at all — the old guard let an illusion through without a duration —
+ * but they were permanent only if the AA had been PURCHASED, so without it they opened as ordinary
+ * count-up rows and the 90-minute hygiene cap retired a form the player was still wearing. Reading
+ * the spell's own duration first makes the AA irrelevant to them, which is what the game does.
+ */
+export function landingIsPermanent(self: boolean, dbPermanent: boolean, at: PermanenceClaims): boolean {
+  if (!self) return false
+  if (dbPermanent) return true
+  const owned = at.permanentIllusionOwnedTs
+  return at.illusion && owned != null && at.ts >= owned
 }

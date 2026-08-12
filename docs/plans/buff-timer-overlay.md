@@ -65,7 +65,7 @@ The corollaries, each of which is a real branch in the code:
 | a DB `msg_wears_off` match | `buffWearOff` | `target:'self'`, `spell` (first candidate), **`candidates[]`** |
 | `Your <S> spell has worn off.` / `Your pet's <S> spell has worn off.` | `buffFade` | `spell`, `target?:'pet'` |
 | `Your <S> spell has worn off of <mob>.` | routed by SPELL NAME in `rulesets.ts` | `charmSpell` ⇒ `uncharm{mob}`; `ccSpell` ⇒ `cc{mob, spell, refresh:true}`; neither ⇒ `buffFade{spell, target:mob}` |
-| `<mob> has been mesmerized\|enthralled\|entranced\|ensnared.` | `cc` | **`mob` and nothing else** — no spell, no caster |
+| `<mob> has been mesmerized\|enthralled\|entranced\|ensnared.` | `cc` | `mob`, `verb` (JOS-228), `candidates[]` when a DB is installed — never a spell NAME, never a caster |
 | `<mob> has been charmed.` | `charm` | `mob` |
 | `You have been slain by <k>!` / `You died.` | `playerDeath` | `killer?` |
 | `<mob> has been slain by <k>!` / `You have slain <mob>!` | `death` | `name`, `bySelf`, `killer?` |
@@ -201,7 +201,13 @@ It folds only what the buffs model demonstrably does not:
   Recorded as an END with its spell + ts so the projection can also retire a matching
   `ActiveBuff` (§3.3).
 - `uncharm {mob}` → ends any hold on that mob (charm and CC are the same sentence family).
-- `death {name}` → ends every hold on that mob.
+- `death {name}` → **depends on the landing VERB (JOS-228)**. A `mesmerized`/`enthralled`/
+  `entranced` hold is NOT ended: a mesmerized mob cannot be killed while it is mesmerized, so a
+  corpse sharing the name is another mob (the owner's urgent report was the mez bar vanishing when
+  the mob beside it died). A `ensnared` hold — and a charm hold, which reaches the module with no
+  verb — closes its OLDEST landing, per JOS-140 ruling 7. Either way the death CONTAMINATES the
+  whole group (JOS-156: land-to-death is never a duration) and records **no END** (an END with no
+  spell matches every `ActiveBuff` on that entity in the projection).
 - `zone` → ends every hold (you left them behind).
 - an event-time gap ≥ `SESSION_GAP_MS` (30 min) and `epoch` → clear everything.
 
@@ -299,6 +305,7 @@ moments and belong in different corners of the screen.
 | row kind | window | why |
 | --- | --- | --- |
 | `buff` | `'buffs'` | a beneficial spell you have running |
+| `buff` + `calmsTarget` | `'debuffs'` | the calm line — beneficial, but the effect is on a mob (JOS-213) |
 | `debuff` | `'debuffs'` | something you put on something else |
 | `cc` | `'debuffs'` | the owner rules mez and slow ARE debuffs, so the holds sit beside them |
 
@@ -307,6 +314,22 @@ cleric you buffed are `group: 'target'` and are still buffs; routing by target w
 own group buffs under "debuffs", which is a lie about what they are. `tests/buffTimers.test.mts`
 pins that both ways, plus the partition property (every row lands on exactly one surface) over
 every committed fixture.
+
+**The one exception is a SPELL fact, not a target fact (JOS-213).** Report
+01KZSDPV3NV8NWK2GF01MCQMK3 casts `Pacify IV` at `an icy terror` and watches the aggro clock
+appear beside their own Clarity: the calm line is `spellType: Beneficial`, so `cls` is `'buff'`
+and always will be — a calm is a good thing you cast at something you are afraid of. What was
+missing is the orthogonal fact that its effect lands on a *mob's state*, which is
+`ActiveBuff.calmsTarget`, filled by main from a roster spells.json's landing messages derive
+(`src/main/data/spellDb.ts spellCalmsTarget`: `Someone looks less aggressive.` /
+`Someone calms down.` / `Someone looks friendly.` — ten members, re-derived and audited every
+run, the `ccSpell`/`charmSpell` oracle pattern). The first cut routed on the *target* instead
+("a mob is not a person") and two committed goldens rejected it: `disposition: 'hostile'` means
+only "not you and not a pet I am currently holding", so a `Resist Disease` on a spider and the
+owner's own `Valor` on a charmed fire giant warrior both went to the debuffs window. That is the
+same rule JOS-136/JOS-140 ruling 8 settled one level down — nature comes from the spell, never
+from the shape of the target — and routing obeys it too. `tests/calmLineTimers.test.mts` carries
+the fixtures, the oracle and the friendly-buff guard.
 
 **One component.** `BuffsOverlay.tsx` takes a `kind` prop and everything that differs is one
 data table (`SURFACE`): tag, title, accent, empty sentence, the heading a self row sits under,
@@ -425,7 +448,11 @@ regression run that this ticket is not the place for.
     `ccSpell` on every run) gets the same guarantee with the constant staying a constant.
   - **A death line for a mob we were never holding records no END.** The draft had `death` always
     write one; that would have churned the snapshot on every kill in the zone AND been a second
-    opinion about a fact `retireEntity(key, {hostileOnly:true})` already settles.
+    opinion about a fact `retireEntity(key, {hostileOnly:true})` already settles. **JOS-228 took
+    the remaining half**: a death that DID close a hold still wrote an anonymous END, and an END
+    with no spell on it matches EVERY `ActiveBuff` on that entity in `endedByCc` — so it blanked
+    the slow row the buffs half had correctly kept standing at one fewer on its own count chip.
+    A death now records nothing here at all.
   - **The `module:delta` fan-out is a per-kind list, not a broadcast.** `pipeline.ts` forwarded
     only to `'events'`, by name; it is now `MODULE_READING_OVERLAYS`. An overlay that reads no
     module should not be woken ~10×/second.

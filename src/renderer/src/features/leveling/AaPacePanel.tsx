@@ -17,6 +17,7 @@ import ScienceIcon from '@mui/icons-material/Science'
 import type { AaPace } from '@shared/aaPace'
 import { Tooltip } from '../../lib/Tooltip'
 import { aaPaceCaption, aaPaceTiles, type AaPaceTile } from './aaPaceRows'
+import { ACTIVE_TIME_TITLE } from './rangeStatsRows'
 
 /** The leveling feature's existing hero hues, reused rather than re-invented. */
 const ACCENT: Record<AaPaceTile['id'], string> = {
@@ -83,7 +84,14 @@ export function AaPacePanel({ pace, windowLabel }: AaPacePanelProps): JSX.Elemen
   return (
     <Paper variant="outlined" sx={{ p: 2 }} data-testid="leveling-aa-pace">
       <Typography variant="subtitle2">AA pace</Typography>
-      <Typography variant="caption" color="text.secondary" gutterBottom display="block">
+      {/* The caption ends in 'over 42m active' — a native title says what that span is (JOS-249). */}
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        gutterBottom
+        display="block"
+        title={ACTIVE_TIME_TITLE}
+      >
         {windowLabel} - {aaPaceCaption(pace)}
       </Typography>
       <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 1 }}>

@@ -40,6 +40,22 @@
 //      loot ledger's group counts have said so since Task #47 (`lootGrouping.ts`). These counts
 //      are the same quantity, so "220 motes" means the same thing on both surfaces. The LINE
 //      count rides along separately as `events` for anything that needs "how many times".
+//
+//   5. A LOOT RATE HAS TWO HONEST DENOMINATORS, AND THE LEDGER STATES BOTH (JOS-261). Active time
+//      answers "how fast is this camp paying while I am working it"; it is also the denominator a
+//      0.23.0 reporter said reads INFLATED, because every gap under five minutes — the regen sit
+//      between pulls — stays inside it. The wall denominator answers the other half of the same
+//      question, "how fast is this camp paying per hour of my evening", and the two together are
+//      the only pair that cannot be mistaken for each other. So `windowLootRates` divides once by
+//      each and hands back both, each beside the span it was measured over; a surface that shows
+//      one alone must say WHICH one, in the words `lootRateText.ts` already spells.
+//
+//      THE WALL DENOMINATOR IS THE ONE THIS REPO ALREADY HAS: `durationMs - offlineMs`, exactly
+//      `RangeStats.levelsPerHourWall`'s (see that field). A logout the log CLOSED with a login
+//      line is carved out and nothing else is — medding, banking and travelling stay in, because
+//      you spent them — so an overnight in an `All` slice cannot drive the number toward zero and
+//      make it arithmetic about an empty chair. A second definition of "wall" here would be world
+//      -model law 12's drift with a clock in it.
 
 import type { LootEvent } from './types'
 import type { ZoneRangeRow } from './progressionStats'
@@ -61,6 +77,19 @@ function perHour(amount: number, windowMs: number): number | null {
 /** Stack-aware drop count for one loot line. Rule 4. */
 function dropsOf(e: LootEvent): number {
   return e.count ?? 1
+}
+
+/**
+ * IS THIS ROW INSIDE THE WINDOW — the ONE membership test both window derivations run.
+ *
+ * Half-open `[t0, t1)` exactly like `rangeStats`, and the zone half is the MEMBERSHIP fold
+ * (`shared/zones.zoneKey`), which is also what `timeslice.inSlice` applies to the very same rows.
+ * Extracted (JOS-261) rather than written a second time for the totals: the ledger's caption states
+ * a count and a rate over one slice, and two spellings of "inside" is how those two stop agreeing.
+ */
+function inWindow(e: LootEvent, t0: number, t1: number, zk?: string | null): boolean {
+  if (e.ts < t0 || e.ts >= t1) return false
+  return zk == null || zoneKey(e.zone ?? UNKNOWN_ZONE) === zk
 }
 
 /** One zone this item has dropped in, for you. */
@@ -204,8 +233,7 @@ export function windowItemRows(args: WindowItemArgs): WindowItemRow[] {
   const { events, t0, t1, activeMs } = args
   const rows = new Map<string, WindowItemRow>()
   for (const e of events) {
-    if (e.ts < t0 || e.ts >= t1) continue
-    if (args.zoneKey != null && zoneKey(e.zone ?? UNKNOWN_ZONE) !== args.zoneKey) continue
+    if (!inWindow(e, t0, t1, args.zoneKey)) continue
     const key = e.item.toLowerCase()
     let row = rows.get(key)
     if (!row) {
@@ -220,4 +248,81 @@ export function windowItemRows(args: WindowItemArgs): WindowItemRow[] {
   const out = [...rows.values()]
   for (const row of out) row.dropsPerHourActive = perHour(row.drops, activeMs)
   return out.sort((a, b) => b.drops - a.drops || b.lastTs - a.lastTs || a.item.localeCompare(b.item))
+}
+
+/**
+ * THE SPANS A WINDOW'S RATES DIVIDE BY — `RangeStats`' three time columns, taken as a plain shape.
+ *
+ * A shape rather than the whole `RangeStats` so this file keeps its TYPE-only dependency on
+ * `progressionStats` and a test can state three numbers instead of building a snapshot; the three
+ * fields are named exactly as that interface names them, so the caller's `rangeStats(...)` answer
+ * is assignable verbatim and nothing has to be re-spelled on the way in.
+ */
+export interface WindowSpans {
+  /** The window's WALL clock — Σ of the zone's own visits when the slice carries a zone. */
+  durationMs: number
+  /** `durationMs` minus idle minus offline (`RangeStats.activeMs`). */
+  activeMs: number
+  /** The logouts the log CLOSED with a login line. Carved out of the wall denominator (rule 5). */
+  offlineMs: number
+}
+
+/** What dropped in a window, and how fast — over BOTH denominators (rule 5). */
+export interface WindowLootRates {
+  /** Σ stack sizes inside the window (rule 4) — the numerator of both rates. */
+  drops: number
+  /** Loot LINES inside the window. Differs from `drops` exactly when something dropped in stacks. */
+  events: number
+  /** The ACTIVE denominator, restated so a surface can print the span beside the rate it made. */
+  activeMs: number
+  /** The WALL denominator: `durationMs - offlineMs`, never negative (rule 5). */
+  wallMs: number
+  /** Drops per hour of active time. Null when there is no active time (rule 3). */
+  dropsPerHourActive: number | null
+  /** Drops per hour of online wall time. Null when the window is entirely offline (rule 3). */
+  dropsPerHourWall: number | null
+}
+
+export interface WindowRatesArgs {
+  /** The whole loot history. Filtered here, exactly as `windowItemRows` filters it. */
+  events: readonly LootEvent[]
+  /** The window's instants, half-open at the top like `rangeStats`. */
+  t0: number
+  t1: number
+  /** `rangeStats(...)` for THIS window — the same object, never a second query over a wider one. */
+  spans: WindowSpans
+  /** The slice's zone restriction (a `shared/zones.zoneKey` fold), or null/absent for every zone.
+   *  Applied HERE for `windowItemRows`' reason: `spans` is already the zone's own time. */
+  zoneKey?: string | null
+}
+
+/**
+ * HOW FAST THIS STRETCH OF PLAY IS PAYING, said twice so neither reading can pass for the other.
+ *
+ * The numerator is the window's drops (stack-aware, rule 4); the denominators are the window's own
+ * active time and its own online wall time, and both are handed back beside the rates they made so
+ * a caption can state the span rather than imply it. Nothing is ranked, weighted or thresholded —
+ * this is one division per denominator over counts the loot module already folded.
+ *
+ * `drops === 0` is a MEASURED zero and prints as one: unlike a missing denominator it is a fact
+ * about the window ("you looted nothing in this hour"), which is why only the rates are nullable.
+ */
+export function windowLootRates(args: WindowRatesArgs): WindowLootRates {
+  const { events, t0, t1, spans } = args
+  let drops = 0
+  let lines = 0
+  for (const e of events) {
+    if (!inWindow(e, t0, t1, args.zoneKey)) continue
+    drops += dropsOf(e)
+    lines += 1
+  }
+  const wallMs = Math.max(0, spans.durationMs - spans.offlineMs)
+  return {
+    drops,
+    events: lines,
+    activeMs: spans.activeMs,
+    wallMs,
+    dropsPerHourActive: perHour(drops, spans.activeMs),
+    dropsPerHourWall: perHour(drops, wallMs)
+  }
 }

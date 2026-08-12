@@ -20,11 +20,8 @@
 // (§ 5.4 / § 7).
 
 import type { EqModule } from './types'
-import { S, validate, type FoldSchema } from '../foldCache/schema'
-import type { FoldCheckpointable } from '../foldCache/serialize'
 import type { LogEvent } from '../../shared/logEvents'
 import {
-  CLASS_ABBRS,
   isClassAbbr,
   type ClassObservation,
   type ComboCorrection,
@@ -44,50 +41,7 @@ import { buildIntervals, type LevelPoint, type WhoRow } from './comboIntervals'
  */
 const TABLES_READY = Object.keys(classesJson.stances).length > 0
 
-const CLASS: FoldSchema = S.enum(...CLASS_ABBRS)
-
-/**
- * THE CHECKPOINT DECLARATION (JOS-208 phase 2) — the THREE RETAINED OBSERVATION SERIES, and
- * nothing derived from them.
- *
- * `intervals` is deliberately absent even though it is what the snapshot publishes: this module
- * RECOMPUTES FROM SCRATCH (see the header — a `/who` typed now re-labels the past hour), so the
- * intervals are a pure function of the three series plus the corrections. Storing them would be a
- * second answer that a correction written while the app was closed could silently contradict.
- * `stale` is therefore restored as TRUE, which is the same state `reset()` leaves.
- *
- * `corrections` is STORE-DERIVED and excluded by the standing rule — they are the one piece of
- * combo state a replay cannot restate, which is exactly why they live in the store and are pulled
- * through a provider on every recompute.
- *
- * `rev` IS stored: it is the module's published seq (JOS-87's counter, see its field doc), and a
- * restore that reset it would make the first live delta look like a dupe of the hydration.
- */
-const COMBO_FOLD_SCHEMA: FoldSchema = S.obj({
-  observations: S.arr(
-    S.obj({
-      ts: S.num,
-      seq: S.num,
-      source: S.enum('who', 'stance', 'invocation', 'poisonCoat', 'skillUp', 'cast'),
-      label: S.str,
-      candidates: S.arr(CLASS),
-      weight: S.num
-    })
-  ),
-  whoRows: S.arr(S.obj({ ts: S.num, seq: S.num, classes: S.arr(CLASS), level: S.num })),
-  levels: S.arr(S.obj({ ts: S.num, level: S.num })),
-  rev: S.num
-})
-
-/** The combo module's complete event-derived state. */
-export interface ComboFoldState {
-  observations: ClassObservation[]
-  whoRows: WhoRow[]
-  levels: LevelPoint[]
-  rev: number
-}
-
-export class ComboModule implements EqModule<ComboSnap, ComboDelta>, FoldCheckpointable<ComboFoldState> {
+export class ComboModule implements EqModule<ComboSnap, ComboDelta> {
   readonly id = 'combo'
 
   private observations: ClassObservation[] = []
@@ -247,34 +201,5 @@ export class ComboModule implements EqModule<ComboSnap, ComboDelta>, FoldCheckpo
     if (changed.length === 0 && removed.length === 0) return null
     this.pushed = next
     return { seq: this.rev, delta: { changed, removed } }
-  }
-
-  // ---- the checkpoint seam (JOS-208) ---------------------------------------------------------
-
-  readonly foldSchema = COMBO_FOLD_SCHEMA
-
-  serializeFold(): ComboFoldState {
-    return {
-      observations: this.observations.map((o) => ({ ...o, candidates: [...o.candidates] })),
-      whoRows: this.whoRows.map((w) => ({ ...w, classes: [...w.classes] })),
-      levels: this.levels.map((l) => ({ ...l })),
-      rev: this.rev
-    }
-  }
-
-  deserializeFold(state: unknown): boolean {
-    if (!validate(COMBO_FOLD_SCHEMA, state).ok) return false
-    const s = state as ComboFoldState
-    this.observations = s.observations
-    this.whoRows = s.whoRows
-    this.levels = s.levels
-    this.rev = s.rev
-    // STALE ON PURPOSE (see the declaration): the intervals are recomputed from the restored
-    // series and the store's CURRENT corrections, so a correction written while the app was
-    // closed lands on the restored fold exactly as it would on a cold one.
-    this.intervals = []
-    this.stale = true
-    this.pushed.clear()
-    return true
   }
 }

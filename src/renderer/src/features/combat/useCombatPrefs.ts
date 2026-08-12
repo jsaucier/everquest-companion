@@ -137,11 +137,11 @@ export function useCombinePetRow(): [boolean, (v: boolean) => void] {
  * click, and reading three of them to guess which one the "real" answer was would be a coin flip
  * dressed as a migration.
  *
- * DEFAULT 'group', not 'you' — for a fresh install and for an absent key alike. That is the design
- * doc's call and it is safe by construction: with no roster, Group renders as Everyone and the
- * label says `Group (no roster yet)` (shared/roster.ts effectiveScope), so a solo player sees
- * exactly what they saw before and a grouped player sees their group without having to find a
- * control first.
+ * DEFAULT 'everyone' — for a fresh install and for an absent key alike (JOS-229; it was 'group'
+ * from JOS-115 until then, and combatPrefs.DEFAULT_METER_SCOPE carries the argument). The short
+ * version: an inferred roster can be incomplete as easily as empty, and a meter missing a real
+ * group-mate's bars reads as a broken meter. Only the ABSENT key moves — a stored 'group' is an
+ * answer the user gave and is handed straight back.
  *
  * A value that is not one of the three — a hand-edited localStorage, a key written by a future
  * build — degrades to the default rather than rendering an empty meter (combatPrefs.readMeterScope).

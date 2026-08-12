@@ -38,7 +38,12 @@ import { allowedExternalUrl, isInternalPageUrl } from './security'
 import { captureMainWindowErrors, forwardConsoleMessages } from './windowErrors'
 import { resolvedGraphics } from './graphics'
 import { resolveAppIconPath } from './appIcon'
-import { getOverlayConfig, getWindowBounds, setOverlayConfig, setWindowBounds } from './store'
+import { getOverlayConfig, getWindowBounds, setOverlayConfig } from './store'
+// WHAT THE MAIN WINDOW REMEMBERS ABOUT ITSELF, and when that is written (JOS-248). The policy is
+// pure and node-tested in windowState.ts; the store handle between it and this file is
+// windowMemory.ts. This file supplies the only thing neither of them can: the real window.
+import { declareWindowPlacement, flushWindowState, rememberWindowState } from './windowMemory'
+import { DEFAULT_MAIN_WINDOW_SIZE } from './windowState'
 // The main window's text size (JOS-123). Its own module because store.ts is at the 400-code-line
 // ceiling — see the banner there.
 import { getUiScale } from './uiScale'
@@ -281,16 +286,40 @@ export function applyMainWindowScale(scale: number): void {
   getMainWindow()?.webContents.setZoomFactor(scale)
 }
 
+// ---- WHAT THE MAIN WINDOW REMEMBERS (JOS-248) -------------------------------------------------
+//
+// Every geometry event routes through here, and two things are deliberately NOT written — both
+// decided in windowState.ts, not restated at any listener: a MINIMIZED window (being in the
+// taskbar is not a placement) and a window still sitting exactly where this file PUT it (the
+// placement declared at creation, which is how the store keeps the rectangle the user chose when a
+// monitor goes away). The write itself is debounced, trailing, so a drag or a resize is ONE store
+// write when the gesture ends.
+const captureMainWindowState = (): void => {
+  rememberWindowState(getMainWindow())
+}
+
+/** Write the main window's state NOW — its own `close`, and index.ts's `before-quit`. */
+export function flushMainWindowState(): void {
+  flushWindowState(getMainWindow())
+}
+
 export function createMainWindow(): void {
   // The remembered rectangle, KEPT ON A SCREEN THAT STILL EXISTS (JOS-187). A main window lost off
   // the edge is worse than a lost overlay, not better: it is frameless, so there is no title bar
   // sticking onto the remaining display to drag it back by. Unlike the overlays it needs no live
   // re-placement — the user can move this one, and Windows itself relocates ordinary top-level
   // windows when their monitor goes away; it is the RESTORE that had no answer.
-  const bounds = mainWindowBounds(getWindowBounds())
   const appIcon = resolveAppIconPath()
+  const stored = getWindowBounds()
+  const bounds = mainWindowBounds(stored)
+  // What we are about to apply, so the first save cannot mistake it for the user's own choice. An
+  // OS-placed first launch declares nothing: it has no remembered rectangle to protect, and
+  // wherever it lands is worth writing down.
+  declareWindowPlacement(bounds, stored?.maximized === true)
   mainWindow = new BrowserWindow({
-    ...(bounds ?? { width: 1280, height: 860 }),
+    // No remembered state means TODAY'S DEFAULT, exactly: the size a fresh install has always had,
+    // and no position at all — a first launch is placed by the OS, as it always was.
+    ...(bounds ?? DEFAULT_MAIN_WINDOW_SIZE),
     minWidth: 900,
     minHeight: 600,
     show: false,
@@ -316,8 +345,18 @@ export function createMainWindow(): void {
 
   // E2E: never show (and therefore never focus) the window — the harness drives it
   // entirely through the renderer's DOM while the user is playing.
+  //
+  // …WHICH IS ALSO WHY THE MAXIMIZE RESTORE LIVES INSIDE THAT GUARD (JOS-248). `maximize()` is not
+  // a geometry write: Electron's own doc says it "will also show (but not focus) the window if it
+  // isn't being shown already", so calling it at construction would put a window on screen over the
+  // user's game in the one mode whose whole promise is that it never does. Here it is a single
+  // gesture at first paint — maximize, then `show()` for the focus the ordinary path gives. The
+  // window was CONSTRUCTED at its normal bounds, so the restore button lands back where the user
+  // left it rather than on some fresh default.
   mainWindow.on('ready-to-show', () => {
-    if (!E2E) mainWindow?.show()
+    if (E2E) return
+    if (stored?.maximized === true) mainWindow?.maximize()
+    mainWindow?.show()
   })
 
   // Frameless title bar (Task #23): push maximize state so the React max/restore
@@ -327,8 +366,17 @@ export function createMainWindow(): void {
       mainWindow.webContents.send(IPC.onWindowMaximized, mainWindow.isMaximized())
     }
   }
+  // …and REMEMBER it, on the same two transitions (JOS-248). The title bar's double-click is the
+  // gesture that produces most of them (JOS-204: `isDragSurfaceDoubleClick` decides which
+  // double-clicks reach `window:toggleMaximize` at all), and the window buttons the rest — both
+  // arrive here as Electron's own events, so there is no third opinion about whether the window is
+  // maximized and nothing for the IPC handler to remember. `getNormalBounds()` keeps the RECTANGLE
+  // honest across the transition: a maximized window still reports the rectangle a restore returns
+  // to, so the two halves of the state are recorded together and never fight.
   mainWindow.on('maximize', pushMaximized)
   mainWindow.on('unmaximize', pushMaximized)
+  mainWindow.on('maximize', captureMainWindowState)
+  mainWindow.on('unmaximize', captureMainWindowState)
   // Give the renderer its initial state once the page is ready to receive it.
   mainWindow.webContents.on('did-finish-load', pushMaximized)
 
@@ -356,15 +404,12 @@ export function createMainWindow(): void {
   // must see the module's current `mainWindow` rather than the one that existed at wiring time.
   captureMainWindowErrors(mainWindow.webContents, () => mainWindow)
 
-  // Remember window position + size across restarts.
-  const saveBounds = (): void => {
-    if (mainWindow && !mainWindow.isMinimized() && !mainWindow.isMaximized()) {
-      setWindowBounds(mainWindow.getBounds())
-    }
-  }
-  mainWindow.on('moved', saveBounds)
-  mainWindow.on('resized', saveBounds)
-  mainWindow.on('close', saveBounds)
+  // Remember window position + size across restarts (JOS-248 — the policy is in windowState.ts).
+  // `moved`/`resized` are END-of-gesture events, and the saver debounces on top of that; `close`
+  // flushes, as does `before-quit` (index.ts) for the quit paths that never close a window.
+  mainWindow.on('moved', captureMainWindowState)
+  mainWindow.on('resized', captureMainWindowState)
+  mainWindow.on('close', flushMainWindowState)
 
   // The overlay (Task #52) is an accessory of the main window: tear it down when the
   // main window closes so it can't keep the app alive on its own. Its persisted

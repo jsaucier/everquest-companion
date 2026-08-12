@@ -22,7 +22,8 @@ import { logInfo } from './errorLog'
 import { LogBus } from './log/bus'
 import { EpochDetector } from './log/epochDetector'
 import { SessionDetector } from './log/sessionDetector'
-import { baselineOverlay, loadUserOverlay } from './data/overlayPersistence'
+import { baselineOverlay, loadUserSources } from './data/overlayPersistence'
+import { BASELINE_SOURCE } from './data/messageOverlay'
 import { spellCorrectionsReport } from './data/spellDb'
 import { CombatEngine } from './combat/engine'
 import { ModuleRegistry } from './modules/registry'
@@ -152,8 +153,13 @@ const modules = createModules({
   buffTrust: getBuffTrustPrefs(),
   // Which mobs get a respawn clock (JOS-194). ipc/respawn.ts keeps it in sync while the app runs.
   respawnPrefs: getRespawnPrefs(),
-  // The committed baseline first, then what this user's own log has taught since install.
-  overlays: [baselineOverlay(), loadUserOverlay()],
+  // The committed baseline first, then what this user's own logs have taught since install — each
+  // under the SOURCE KEY that produced it (JOS-231), so the fold about to re-mine a character's
+  // log replaces that character's bucket rather than piling onto it.
+  overlays: [
+    { key: BASELINE_SOURCE, counts: baselineOverlay() },
+    ...loadUserSources().map((s) => ({ key: s.key, counts: s }))
+  ],
   lookupItem,
   lookupMob,
   ownLoot,

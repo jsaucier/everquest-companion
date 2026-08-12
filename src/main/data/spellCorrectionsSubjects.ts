@@ -107,6 +107,54 @@
 // would change nothing and would look like coverage. shared/poisons.ts owns that family.
 //
 // ─────────────────────────────────────────────────────────────────────────────
+// THE ROW THE OWNER'S LOG CANNOT WITNESS: `<mob> has been consumed in the flames of the wild.`
+// (JOS-245).
+//
+// A druid reported that Vengeance of the Wild — the level-49 DoT — never appears in the debuff
+// window (01KZSR4HQVWJKDG0NCDGZ01928, v0.21.0). The shape is this sweep's, exactly: the wiki writes
+// the third-person landing as `Target has been consumed in the flames of the wild.`, so the spell
+// yields no suffix, is in no table, and the live line classifies as `{kind:'unknown'}` — MEASURED
+// against the committed DB, before this entry, on the reporter's own bytes.
+//
+// WHAT IS NEW IS THE EVIDENCE LOG. Every row above is anchored in `eqlog_Primitive_freeport.txt`,
+// and `hits` is a count in it. This spell has NO trace there at all: measured 2026-08-12 over
+// 1,608,490 lines, the restored sentence occurs 0 times, the wiki form 0 times, the self landing
+// (`You are consumed by the flames of the wild.`) 0, the wear-off (`The wild flames fade away.`) 0,
+// and the words `Vengeance of the Wild` never appear in any line of any kind. The owner is not a
+// druid of that level and nobody has cast it near him, so his log can neither confirm nor deny the
+// sentence, and waiting for it to would be waiting forever.
+//
+// So this row's evidence log is the REPORTER'S SLICE, cited by report id — the same route Odium and
+// the Tuyen chants use for their cast attribution, promoted here to carry the count as well, and the
+// same route AGENTS.md already prescribes for a defect that exists only in somebody else's log. What
+// the slice states, measured through the real parser: 3,405 lines, 7 `You begin casting Vengeance of
+// the Wild VI.` casts, 6 lines of `<mob> has been consumed in the flames of the wild.` — one per
+// cast, every one of them at EXACTLY +2 s (the DB's own 3 s cast time, rounded by the log's
+// one-second stamp), and the seventh cast is the one the slice shows INTERRUPTED. Zero of the wiki
+// form. That is a stronger cast attribution than most rows above can show, on a smaller log; what it
+// cannot show is a whole-log frequency, and `hits: 0` says so rather than borrowing a number.
+//
+// The tail is minted, not joined, and nothing else in the DB comes near it: no other spell message
+// mentions flames of the wild, and no existing suffix is a suffix of this one or has it as one
+// (`tests/spellCorrectionsSubjects.test.mts` proves the second half for every row here). So the
+// attribution would be `sole` on the table alone; it is `cast` because the slice shows the casts.
+//
+// THE BLAST RADIUS IS PROVABLY ZERO, and it was measured anyway rather than argued. The owner's
+// whole log parsed TWICE in one process, with and without this one correction: 1,608,487 events
+// across 56 kinds, and NOT ONE count moves. That is what a row whose sentence the evidence log has
+// never printed looks like from the tripwire's side — the JOS-174 and JOS-189 rows each moved lines
+// here, this one cannot, and the same measurement says so in both directions.
+//
+// NOT A DURATION FIX, and the difference matters (the WRONG NUMBER note in `spellCorrectionsList.ts`
+// governs it). The DB states 5 ticks / 30 s and the slice's one complete cycle runs 47 s from
+// landing to `Your Vengeance of the Wild spell has worn off of Lady Vox.` — eight damage ticks, not
+// five, because the reporter is casting rank VI. That is the scaling-duration defect those two
+// reports named, not a wrong sentence, and `SpellStats.estimateFor` is the thing that answers it: the
+// DB figure is a FLOOR and a clean observed cycle raises it. This entry's job is to make the cycle
+// OBSERVABLE at all — before it, there was no landing, so no instance, so nothing for the learner to
+// pair the wear-off with and no bar to raise.
+//
+// ─────────────────────────────────────────────────────────────────────────────
 // WHAT EVERY ROW BELOW IS.
 //
 // The sentence is the WIKI'S OWN, unchanged. Only the subject token is restored, which is why the
@@ -152,7 +200,12 @@ interface SubjectDrift {
   readonly from: string
   /** The same sentence with `Someone`/`Someone's` restored. Nothing else changes. */
   readonly to: string
-  /** Whole-log occurrences of the restored shape in the owner's log (see the header). */
+  /**
+   * Whole-log occurrences of the restored shape in the owner's log (see the header). ZERO is
+   * allowed and means exactly one thing: the owner's log cannot witness this spell at all, so the
+   * row's evidence log is a REPORTER'S SLICE and its `evidence` must say which report and what was
+   * counted there (JOS-245). It is never "we did not check".
+   */
   readonly hits: number
   /** Overrides the default `sole` when a cast is demonstrably attached to the landing. */
   readonly attribution?: CorrectionAttribution
@@ -319,7 +372,16 @@ const SUBJECT_DRIFTS: readonly SubjectDrift[] = [
   { spells: ['Voice of Darkness'],
     from: 'speaks with the voice of darkness.',
     to: 'Someone speaks with the voice of darkness.',
-    hits: 1 }
+    hits: 1 },
+  {
+    spells: ['Vengeance of the Wild'],
+    from: 'Target has been consumed in the flames of the wild.',
+    to: 'Someone has been consumed in the flames of the wild.',
+    hits: 0,
+    attribution: 'cast',
+    evidence:
+      'THE REPORTED DEFECT (01KZSR4HQVWJKDG0NCDGZ01928, v0.21.0, a druid): Vengeance of the Wild does not appear in debuff tracking. THE OWNER`S LOG CANNOT WITNESS IT — 1,608,490 lines measured 2026-08-12 hold 0 of the restored shape, 0 of the wiki form, 0 of the self landing, 0 of the wear-off and not one line naming the spell at all — so the evidence log is the reporter`s slice, cited by id (see THE ROW THE OWNER`S LOG CANNOT WITNESS in this file`s header). That slice, 3,405 lines through the real parser: 7 `You begin casting Vengeance of the Wild VI.` casts, 6 lines of `<mob> has been consumed in the flames of the wild.`, one per cast at EXACTLY +2 s, and the 7th cast is the one it shows interrupted. 0 of the wiki form. The tail is new to the suffix table and no other DB message mentions the flames of the wild, so nothing else could be meant either.'
+  }
 ]
 
 /**

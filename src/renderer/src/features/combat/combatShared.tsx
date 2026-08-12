@@ -12,8 +12,8 @@ import { MARKER_COLOR } from './markerStyle'
 import type { ProcAnnotation } from './procRows'
 import { landEvidence } from './landEvidence'
 import { useAbilityExpand } from './abilityExpand'
-import { abilityExpandable } from './abilityStats'
-import type { AbilityMulti } from './abilityStats'
+import { abilityExpandable, type AbilityMulti } from './abilityStats'
+import { groupLabels } from './skillGroups'
 import type { FlatSkill, SkillRow } from './dashboardData'
 import { Tooltip } from '../../lib/Tooltip'
 
@@ -28,11 +28,10 @@ import { MultiAttackStats, StatItem } from './meterBits'
 
 // `member` (a group-mate, docs/plans/group-model.md) is a green in the same muted family as the
 // pet's blue — a friendly, clearly not you, and clearly not the enemy's red.
+// `allyPet` (JOS-250) is somebody ELSE's charm pet: a dimmer, cooler wash of the pet blue, so it
+// reads as the same KIND of thing as your pet while never being mistaken for it at a glance.
 export const KIND_COLOR: Record<string, string> = {
-  you: '#d9b25f',
-  pet: '#6fb3d2',
-  member: '#7fbf8f',
-  enemy: '#cf6679'
+  you: '#d9b25f', pet: '#6fb3d2', allyPet: '#5b7f95', member: '#7fbf8f', enemy: '#cf6679'
 }
 
 /**
@@ -270,12 +269,13 @@ function SkillReadout({
 }
 
 /**
- * The grouped row's child list: the same bars, one per weapon skill the proc fired from, inside
- * the parent's expansion. Each child is a full SkillBar, so it keeps its embedded stats AND its
- * own click-to-expand readout — the interaction is the identical one users already know, just
- * nested; no third nav level and no breadcrumb change.
+ * The grouped row's child list — one bar per weapon skill the proc fired from, or per message
+ * shape the spell printed — inside the parent's expansion. Each child is a full SkillBar, so it
+ * keeps its embedded stats AND its own click-to-expand readout: the interaction is the identical
+ * one users already know, just nested; no third nav level and no breadcrumb change. The heading
+ * is `skillGroups.groupLabels`, which is also what wrote the count on the parent's face.
  */
-function SkillChildren({ rows, approx }: { rows: FlatSkill[]; approx?: boolean }): React.JSX.Element {
+function SkillChildren({ s, approx }: { s: SkillRow; approx?: boolean }): React.JSX.Element {
   return (
     <Box sx={{ mt: 1 }}>
       <Typography
@@ -290,9 +290,9 @@ function SkillChildren({ rows, approx }: { rows: FlatSkill[]; approx?: boolean }
           mb: 0.5
         }}
       >
-        By skill
+        {groupLabels(s).heading}
       </Typography>
-      {rows.map((c) => (
+      {(s.children ?? []).map((c) => (
         <SkillBar key={`${c.category}|${c.name}`} s={c} approx={approx} nested />
       ))}
     </Box>
@@ -367,9 +367,10 @@ function skillInline(s: SkillRow, a: string, land: ReturnType<typeof landEvidenc
  * as a ranked list at a glance.
  * `approx` prefixes the derived numbers with `~` — used by the mob-filtered list when the
  * encounter's event ring was downsampled (the numbers are then sample estimates).
- * A GROUPED row (`s.children` — today only the Slay Undead aggregate) renders exactly like any
- * other row; the difference is only in what its expansion holds. `nested` marks a child of such
- * a group: its parent already names the proc, so the row drops the `· Slay Undead` tag.
+ * A GROUPED row (`s.children` — the Slay Undead aggregate, or the two message shapes of one
+ * spell) renders exactly like any other row; the difference is only in what its expansion holds.
+ * `nested` marks a child of such a group: its parent already names the proc, so the row drops
+ * the `· Slay Undead` tag.
  */
 export function SkillBar({
   s,
@@ -446,9 +447,10 @@ export function SkillBar({
             )}
             <InlineStats>
               {skillInline(s, a, land, compact)}
-              {/* A group row says how many skills it stands for, so the merge is visible from the
-                  row itself and the expansion is obviously worth a click. */}
-              {s.children && s.children.length > 0 ? ` · ${s.children.length} skills` : ''}
+              {/* A group row says how many rows it stands for, so the merge is visible from the
+                  row itself and the expansion is obviously worth a click (skillGroups.groupLabels
+                  picks the noun: a spell group's parts are message SHAPES, not abilities). */}
+              {groupLabels(s).face}
             </InlineStats>
           </>
         }
@@ -461,7 +463,7 @@ export function SkillBar({
             s={s}
             multi={multi}
             approx={approx}
-            after={s.children && s.children.length > 0 ? <SkillChildren rows={s.children} approx={approx} /> : undefined}
+            after={s.children?.length ? <SkillChildren s={s} approx={approx} /> : undefined}
           />
         </Collapse>
       )}

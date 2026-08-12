@@ -79,7 +79,9 @@ function EntityLanes({
             key={r.pet.id}
             pet={r.pet}
             pct={r.pct}
-            onDrill={setDrill ? () => setDrill({ kind: 'entity', entityId: r.pet.id }) : undefined}
+            // The pet's NAME rides along with its id: `pet:<instanceId>` is minted per summon, so
+            // the name is what keeps this drill open across fights and across a re-summon (JOS-240).
+            onDrill={setDrill ? () => setDrill({ kind: 'entity', entityId: r.pet.id, name: r.pet.name }) : undefined}
           />
         ) : (
           <SkillBar
@@ -123,7 +125,7 @@ export function DrillCrumb({
   compact?: boolean
   setDrill: (d: Drill | null) => void
 }): React.JSX.Element {
-  const up = (): void => setDrill(parent ? { kind: 'entity', entityId: parent.id } : null)
+  const up = (): void => setDrill(parent ? { kind: 'entity', entityId: parent.id, name: parent.name } : null)
   const label = isTarget ? `damage to ${crumb}` : crumb
   if (compact) {
     return (
@@ -131,7 +133,7 @@ export function DrillCrumb({
         <IconButton size="small" data-testid="drill-back" onClick={up} sx={{ p: 0.25 }}>
           <ChevronLeftIcon sx={{ fontSize: 16 }} />
         </IconButton>
-        <Typography variant="caption" color="text.secondary" noWrap>
+        <Typography variant="caption" color="text.secondary" data-testid="drill-crumb" noWrap>
           {label}
         </Typography>
       </Stack>
@@ -164,7 +166,9 @@ export function DrillCrumb({
             {parent.name}
           </Link>
         ) : null}
-        <Typography variant="caption" color="text.primary">
+        {/* The drilled subject's own name — `drill-crumb` is what tells a test WHICH row is open,
+            not merely that one is (the JOS-240 spec asserts the same subject came back). */}
+        <Typography variant="caption" color="text.primary" data-testid="drill-crumb">
           {label}
         </Typography>
       </Breadcrumbs>
@@ -235,7 +239,7 @@ export function MeterRows({
           e={e}
           rank={i + 1}
           compact={compact}
-          onDrill={setDrill ? () => setDrill({ kind: 'entity', entityId: e.id }) : undefined}
+          onDrill={setDrill ? () => setDrill({ kind: 'entity', entityId: e.id, name: e.name }) : undefined}
         />
       ))}
       {hidden > 0 && <MoreRows n={hidden} onMore={onMore} />}

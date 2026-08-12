@@ -51,6 +51,10 @@ import {
 } from './appHarness.mjs'
 import { mainWindow } from './appWindow.mjs'
 import { launchOnFixture } from './logFixture.mjs'
+// The GLOBAL always-play preference and the per-alert box it takes over (JOS-222) — next door
+// because this spec is at its line budget, and here because this is the spec that owns the
+// throttle opt-out that preference overrides. See that file's header for why it is an e2e claim.
+import { stepAlwaysPlayAll } from './alwaysPlayAllSteps.mjs'
 
 const VOICE_PANEL = '[data-testid="pref-voice"]'
 /** The RETIRED master switch. Asserted to be absent — see the header. */
@@ -549,6 +553,9 @@ async function main(): Promise<void> {
       await stepRowPicker(page)
       await stepRowSetupNote(page)
       const name = await stepEditor(page)
+      // BEFORE the firing steps, and it puts the preference back off when it is done: everything
+      // below counts utterances, and the audio throttle's state is an input to that.
+      await stepAlwaysPlayAll(page)
       if (name) await stepFire(page, name)
       else note('no seeded alert to edit this run — the firing path is not asserted')
       // §5 LAST, because it appends to the tailed log and stores a def of its own — every step

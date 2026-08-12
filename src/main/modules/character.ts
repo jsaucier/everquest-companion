@@ -26,39 +26,11 @@
 // overlay and a permanently-dropped delta to the main window, and neither is wanted here.
 
 import type { EqModule } from './types'
-import { S, validate, type FoldSchema } from '../foldCache/schema'
-import type { FoldCheckpointable } from '../foldCache/serialize'
 import type { LogEvent } from '../../shared/logEvents'
 import type { CharacterDelta, CharacterRef, CharacterSnap } from '../../shared/types'
 import { laterStatement, type LevelStatement } from '../../shared/currentLevel'
 
-/**
- * THE CHECKPOINT DECLARATION (JOS-208 phase 2).
- *
- * `character` — the CharacterRef — is NOT in it, and this is the clearest case of the
- * event-derived-only rule in the tree: the ref is index.ts's, resolved from which log the app
- * chose to tail, and it is pushed in by `setCharacter()` on every launch before a single line is
- * folded. A copy in the checkpoint would be a second, older answer to "who am I" — and the one
- * fact the app is least entitled to get from last week.
- *
- * `rev` IS stored, because it is this module's published `seq` (see the header) and the renderer
- * dedupes deltas against it. A restore that reset it to zero would make the first live delta look
- * older than the hydration snapshot.
- */
-const CHARACTER_FOLD_SCHEMA: FoldSchema = S.obj({
-  zone: S.opt(S.str),
-  level: S.opt(S.obj({ level: S.num, ts: S.num, source: S.enum('who', 'ding') })),
-  rev: S.num
-})
-
-/** The character module's complete event-derived state — the ref deliberately excluded. */
-export interface CharacterFoldState {
-  zone?: string
-  level?: LevelStatement
-  rev: number
-}
-
-export class CharacterModule implements EqModule<CharacterSnap, CharacterDelta>, FoldCheckpointable<CharacterFoldState> {
+export class CharacterModule implements EqModule<CharacterSnap, CharacterDelta> {
   readonly id = 'character'
   private character: CharacterRef | null = null
   private zone: string | undefined
@@ -143,31 +115,5 @@ export class CharacterModule implements EqModule<CharacterSnap, CharacterDelta>,
     const delta = this.pending
     this.pending = {}
     return { seq: this.rev, delta }
-  }
-
-  // ---- the checkpoint seam (JOS-208) ---------------------------------------------------------
-
-  readonly foldSchema = CHARACTER_FOLD_SCHEMA
-
-  serializeFold(): CharacterFoldState {
-    return {
-      ...(this.zone === undefined ? {} : { zone: this.zone }),
-      ...(this.level === undefined ? {} : { level: { ...this.level } }),
-      rev: this.rev
-    }
-  }
-
-  deserializeFold(state: unknown): boolean {
-    if (!validate(CHARACTER_FOLD_SCHEMA, state).ok) return false
-    const s = state as CharacterFoldState
-    this.zone = s.zone
-    this.level = s.level
-    this.rev = s.rev
-    // The pending delta is DROPPED rather than restored: `setCharacter` ran before this (the
-    // composition root's order) and its pending `character` entry is the one thing a restored
-    // fold still owes the renderer — but the re-hydrate that follows a restore serves the whole
-    // snapshot anyway, exactly as it does after a cold replay.
-    this.pending = {}
-    return true
   }
 }

@@ -15,7 +15,17 @@
 // and the rule is to split rather than to ratchet.
 
 import type { Page } from 'playwright-core'
-import { check, countOf, note, settle, settleCount, settleGone } from './appHarness.mjs'
+import {
+  check,
+  countOf,
+  note,
+  openPicker,
+  openSelectorValues,
+  settle,
+  settleCount,
+  settleGone,
+  settleStable
+} from './appHarness.mjs'
 
 const BACK = '[data-testid="drill-back"]'
 /** The crumb's root link. ONE click from any level, which is what makes this reader bounded. */
@@ -244,4 +254,105 @@ export async function stepDrillRoundTrip(page: Page): Promise<void> {
   check('a drill naming a source this fight does not have degrades to level 1', stillDrilled === false)
   check('…and level 1 still ranks its sources rather than rendering empty', (await meterRows(page)) === rows, `${rows} rows`)
   check('…with no orphaned ability readout left open', (await inPanelCount(page, STATS)) === 0)
+}
+
+// ── THE DRILL SURVIVES A CHANGE OF FIGHT (JOS-240) ─────────────────────────────────────────
+//
+// Owner, 2026-08-12: "drill into a row on fight A, switch to fight B and back — the drill should be
+// where you left it." It was not: the Combat tab cleared the drill on its own selection handler, so
+// comparing the same breakdown across two pulls meant re-clicking into it every single time.
+//
+// WHY THIS NEEDS A REAL APP, when the store shape and the row builder are both node-tested
+// (tests/combatPrefs.test.mts, tests/combatPetNesting.test.mts). Neither of those can see the thing
+// that was actually wrong: a HANDLER in the view that ran `setDrill(null)` on the way to selecting
+// a fight. Both suites were green while the bug shipped, and both stay green if it comes back. The
+// only observable that moves is the crumb over the meter after a real click on a real picker row.
+//
+// AND THE OBSERVABLE IS THE SUBJECT, not merely "something is drilled". A drill that survived as
+// some OTHER row would satisfy `drilled()` and be a worse bug than the one being fixed, so the
+// assertion is that the crumb says the same name it said before the trip.
+
+const CRUMB = '[data-testid="dash-panel"] [data-testid="drill-crumb"]'
+const DRILL_KEY = 'eq.combat.drill.combat'
+
+/** Which subject the meter is drilled into, by name — '' when it is at level 1. */
+function crumbName(page: Page): Promise<string> {
+  return page.evaluate((sel) => document.querySelector(sel)?.textContent?.trim() ?? '', CRUMB)
+}
+
+/** The token the renderer has stored, verbatim. `null` is level 1 (an absent key IS the default). */
+function storedDrill(page: Page): Promise<string | null> {
+  return page.evaluate((k) => localStorage.getItem(k), DRILL_KEY)
+}
+
+/** Pick a fight from the real picker and wait for the meter to stop moving under the new one. */
+async function selectFight(page: Page, id: string): Promise<void> {
+  await openPicker(page)
+  await page.click(`li[data-value="${id}"]`, { timeout: 15_000 })
+  await settleGone(page, '[data-testid="fight-picker"]', { timeoutMs: 8_000 })
+  // The selection change is an IPC round trip to main and back, so the honest signal that the
+  // dashboard has finished re-rendering is that its crumb and its row count have stopped changing.
+  await settleStable(async () => [await crumbName(page), await countOf(page, ROW)] as const, {
+    timeoutMs: 15_000
+  })
+}
+
+export async function stepDrillAcrossFights(page: Page): Promise<void> {
+  // The fights come from the PICKER, not from a snapshot: only the list actually on screen knows
+  // which ids are clickable, and the head row's '__live__' sentinel re-resolves to whatever fight
+  // is current — a moving target this step must not stand on.
+  const fights = (await openSelectorValues(page)).filter((v) => v !== '__live__')
+  const [a, b] = fights
+  if (a === undefined || b === undefined || a === b) {
+    note(
+      `the fight list offers fewer than two selectable finalized fights (${fights.join(', ') || 'none'}) — nothing to switch between`
+    )
+    return
+  }
+
+  // 1. LAND ON FIGHT A AT LEVEL 1, whatever the steps before this left behind, and drill a row.
+  await selectFight(page, a)
+  if ((await meterRows(page)) === 0) {
+    note('fight A ranks no outgoing damage — there is no bar to drill')
+    return
+  }
+  await page.click(ROW, { timeout: 15_000 })
+  if (!check('a source bar drills on fight A', await settle(() => drilled(page), (d) => d, { timeoutMs: 10_000 }))) {
+    return
+  }
+  const subject = await crumbName(page)
+  check('…and the crumb names the row it opened', subject !== '', subject || 'the crumb was empty')
+
+  // 2. SWITCH TO FIGHT B. Whether it stays drilled depends on whether that fight HAS this row —
+  //    both outcomes are correct and the ticket names both, so what is asserted unconditionally is
+  //    the part that used to be false: the remembered token is never thrown away by the switch.
+  await selectFight(page, b)
+  const keptB = await storedDrill(page)
+  check('switching fights NEVER clears the remembered drill (JOS-240)', keptB !== null, String(keptB))
+  const onB = await crumbName(page)
+  if (onB === subject) {
+    check(`…and fight B has ${subject} too, so it opens drilled straight into it`, await drilled(page))
+  } else {
+    // The degrade half of the acceptance: a clean top-level view, its rows intact, no crash — and
+    // the memory still standing so the next fight that has the row re-opens it (step 3 proves it).
+    check(`…and a fight without ${subject} shows the clean source list instead`, !(await drilled(page)))
+    check('…which still ranks its own sources rather than rendering empty', (await countOf(page, ROW)) >= 1)
+  }
+
+  // 3. …AND BACK. The headline.
+  await selectFight(page, a)
+  const still = await settle(() => drilled(page), (d) => d, { timeoutMs: 10_000 })
+  check('THE DRILL IS WHERE YOU LEFT IT AFTER SWITCHING FIGHTS AND BACK', still)
+  check('…and it is the SAME subject, not merely some drill', (await crumbName(page)) === subject, `${subject} → ${await crumbName(page)}`)
+
+  // 4. A DIRECTION change is the one navigation that still un-drills: Outgoing / Incoming /
+  //    Healing rank three different sets of subjects, so a token carried sideways means nothing
+  //    where it lands. This is the boundary of the ticket, asserted rather than described.
+  const TOGGLE = '[data-testid="direction-toggle"]'
+  await page.click(`${TOGGLE} button[value="in"]`, { timeout: 10_000 }).catch(() => undefined)
+  const cleared = await settle(() => storedDrill(page), (v) => v === null, { timeoutMs: 10_000 })
+  check('switching DIRECTION still un-drills — that boundary did not move', cleared === null, String(cleared))
+  // …and leave the tab the way the steps after this one expect to find it: Outgoing, level 1.
+  await page.click(`${TOGGLE} button[value="out"]`, { timeout: 10_000 }).catch(() => undefined)
+  await settleStable(() => countOf(page, ROW), { timeoutMs: 10_000 })
 }

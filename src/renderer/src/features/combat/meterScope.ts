@@ -31,6 +31,18 @@ export function memberKeyOf(id: string): string | null {
   return id.startsWith('member:') ? id.slice('member:'.length) : null
 }
 
+/**
+ * The CHARMER's canonical key behind an ally-pet row id (JOS-250). The id is
+ * `allypet:<charmerKey>:<petKey>` — the charmer sits in the middle because the pet's own key may
+ * itself contain a colon-free but space-bearing mob name, and because the ROW is about the person.
+ */
+export function charmerKeyOf(id: string): string | null {
+  if (!id.startsWith('allypet:')) return null
+  const rest = id.slice('allypet:'.length)
+  const cut = rest.indexOf(':')
+  return cut <= 0 ? null : rest.slice(0, cut)
+}
+
 /** The canonical key behind a healer id (`heal:<key>`, or 'you' for your own row). */
 function healerKeyOf(id: string): string | null {
   return id.startsWith('heal:') ? id.slice('heal:'.length) : null
@@ -50,9 +62,11 @@ export function scopeSources(rows: SourceView[], scope: MeterScope, roster: Rost
   const eff = effectiveScope(scope, roster)
   if (eff === 'everyone') return rows
   const kept = rows.filter((r) => {
-    if (r.kind !== 'member') return true
+    // An ally's charm pet filters like the person who charmed it (shared/roster.ts scopeAllows
+    // carries the argument); the key it filters on is the CHARMER's, off the row id.
+    if (r.kind !== 'member' && r.kind !== 'allyPet') return true
     if (eff === 'you') return false
-    const key = memberKeyOf(r.id)
+    const key = r.kind === 'member' ? memberKeyOf(r.id) : charmerKeyOf(r.id)
     return key !== null && onRoster(roster, key)
   })
   if (kept.length === rows.length) return rows

@@ -42,13 +42,17 @@ import { useProgress } from '../posky/useProgress'
 import { ItemDetailPane } from './ItemDetailPane'
 import { itemStats, questItemNames } from './lootItemData'
 import { ROW_HEIGHT } from './lootRows'
-import { LootTable } from './LootTables'
+import type { GroupRow, KeyedLoot } from './lootGrouping'
+import { LootTable, type LootTableContext } from './LootTables'
 // The chrome around the table — the toolbar, the caption and the notices — plus the two pieces of
 // view state that belong to them. JOS-160 moved it out when this file crossed its measured line
 // ceiling; nothing changed in the move.
 import { LootNotices, LootSummary, LootToolbar, useLootSort } from './LootChrome'
 import { NotablePickupsStrip, useNotableStrip } from './NotablePickupsStrip'
 import { useLootRows } from './useLootRows'
+// HOW FAST THE SLICE IS PAYING (JOS-261) — the aggregate loot-per-hour the caption states, joined
+// against the same `progression` snapshot the slice was resolved from.
+import { useSliceLootRates } from './useSliceLootRates'
 // THE TIMESLICE (JOS-130): the app's one "which stretch of play is this about" control. The ledger
 // is where it was asked for — "what did I gain in totality vs this session" — and it is the SAME
 // control and the SAME pick the Leveling tab reads, so the drops and the xp behind them can never
@@ -176,6 +180,60 @@ function LootDetailTakeover(p: TakeoverProps): JSX.Element {
   )
 }
 
+/**
+ * THE LEDGER BODY: the scroll container, and the windowing hook that reads it — TOGETHER (JOS-260).
+ *
+ * They used to be apart. `useWindowedRows` was called in `LootView`, which returns the detail
+ * takeover early, so the container it windows mounts and unmounts UNDER a hook that never does.
+ * That is what broke this list for a 0.23.0 reporter: the hook's listeners bound once, to the
+ * first node, and a drill-in-and-back replaced that node — leaving the window frozen at the
+ * thirty-odd rows it happened to hold while the rest of the ledger scrolled past blank.
+ *
+ * The hook is hardened against that on its own side now. This split is the structural half: with
+ * the hook living in the same component as the `Box` it measures, there is no lifetime for them to
+ * disagree about — the same shape `LogPreview.PreviewLines` and `ReportsPanel.ReportRows` already
+ * had, which is why neither of them ever showed this bug.
+ *
+ * The ref still comes from `LootView`, because the scroll-position contract across the takeover
+ * (save on the way in, restore in a layout effect on the way back) belongs to the view.
+ */
+function LootLedgerBody({
+  scrollRef,
+  groupByItem,
+  groupRows,
+  events,
+  ctx
+}: {
+  scrollRef: React.RefObject<HTMLDivElement | null>
+  groupByItem: boolean
+  groupRows: GroupRow[]
+  events: KeyedLoot[]
+  ctx: Omit<LootTableContext, 'win'>
+}): JSX.Element {
+  // Window whichever list is active — only the rows intersecting the viewport are
+  // mounted, so a filter keystroke never mounts hundreds of MUI rows synchronously.
+  const count = groupByItem ? groupRows.length : events.length
+  const win = useWindowedRows({ count, rowHeight: ROW_HEIGHT, scrollRef })
+  return (
+    // The scroll container owns the ref the windowing hook reads. Spacer rows (top/bottom) reserve
+    // the full scroll height so only the visible slice of MUI rows is mounted — see
+    // useWindowedRows. `minHeight: 0` is what lets it actually SHRINK inside the column flex above
+    // it, so this box is the only thing on the page that scrolls the ledger.
+    // `overscrollBehavior: contain` is the other half of the reporter's sentence (JOS-260): they
+    // described dead space above and below that the wheel moved through. A wheel gesture that
+    // reaches the end of this box CHAINS into whatever is behind it, so a list that had stopped
+    // rendering still felt like it was scrolling — the app shell moving instead of the ledger.
+    // Contained, the gesture ends here, which is what a self-scrolling pane means.
+    <Box
+      ref={scrollRef}
+      data-testid="loot-scroll"
+      sx={{ flexGrow: 1, minHeight: 0, overflow: 'auto', overscrollBehavior: 'contain' }}
+    >
+      <LootTable groupByItem={groupByItem} rows={groupRows} events={events} ctx={{ ...ctx, win }} />
+    </Box>
+  )
+}
+
 export default function LootView(props: LootViewProps = {}): JSX.Element {
   const { isFavorite, toggle: toggleFavorite } = useFavorites()
   // ONE subscription to the loot module: useProgress already owns it (and needs it for the
@@ -195,13 +253,20 @@ export default function LootView(props: LootViewProps = {}): JSX.Element {
   const [sort, setSort] = useLootSort()
   const [showInventoryOnly, setShowInventoryOnly] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
-  const { available, slice, setId, setCustom } = useTimeslice()
+  // `prog` comes back with the slice on purpose (TimesliceState.prog): the rate line below needs a
+  // `rangeStats` over this very slice, and a second subscription to the same module is how a
+  // numerator and a denominator end up describing two different snapshots.
+  const { prog, available, slice, setId, setCustom } = useTimeslice()
   // THE SLICE IS APPLIED ONCE, HERE, and everything below reads the result — the ledger, the
   // grouped counts, the notable strip and the drill-down's events. `inSlice` is the shared
   // membership test (`shared/timeslice.ts`), half-open exactly like `rangeStats`, so a row is in
   // this table if and only if the same instant is inside the range the xp numbers were measured
   // over. Under `All` it keeps every row, so this costs one pass and changes nothing.
   const sliced = useMemo(() => history.filter((e) => inSlice(slice, e.ts, e.zone)), [history, slice])
+  // THE WHOLE history goes in, not `sliced`: the hook applies the slice through the same membership
+  // test `inSlice` is, so the caption's count and the caption's rate cannot disagree about what
+  // "inside this slice" means (useSliceLootRates' header states the argument).
+  const rates = useSliceLootRates(history, slice, prog)
   const { knowledgeByKey, strip } = useNotableStrip(sliced)
   const rows = useLootRows({
     history: sliced,
@@ -217,10 +282,6 @@ export default function LootView(props: LootViewProps = {}): JSX.Element {
   const onReload = async (): Promise<void> => setToast(await reloadInventory())
 
   const scrollRef = useRef<HTMLDivElement>(null)
-  // Window whichever list is active — only the rows intersecting the viewport are
-  // mounted, so a filter keystroke never mounts hundreds of MUI rows synchronously.
-  const count = groupByItem ? groupRows.length : events.length
-  const win = useWindowedRows({ count, rowHeight: ROW_HEIGHT, scrollRef })
   const detail = useLootDetail(props, scrollRef)
 
   const selected = detail.selected
@@ -230,7 +291,10 @@ export default function LootView(props: LootViewProps = {}): JSX.Element {
   }
 
   return (
-    <Stack spacing={2} data-testid="loot-list" sx={{ height: '100%' }}>
+    // `minHeight: 0`: this column's last child is the scrolling ledger, and a flex column whose
+    // items keep their automatic minimum size cannot shrink one — the list would size itself to
+    // its own content and push the scroll onto the app shell behind it (JOS-260).
+    <Stack spacing={2} data-testid="loot-list" sx={{ height: '100%', minHeight: 0 }}>
       {/* ABOVE the toolbar and on its own row: it governs everything below it, including the
           filters, and it must never be crowded into the same line as the search box (the
           compact-bar contract — controls never shrink). */}
@@ -259,6 +323,7 @@ export default function LootView(props: LootViewProps = {}): JSX.Element {
         slice={slice}
         uniqueCount={grouped.length}
         inventoryInfo={inventoryInfo}
+        rates={rates}
       />
 
       <NotablePickupsStrip {...strip} onSelect={detail.open} />
@@ -274,17 +339,13 @@ export default function LootView(props: LootViewProps = {}): JSX.Element {
         onSelect={detail.open}
       />
 
-      {/* The scroll container owns the ref the windowing hook reads. Spacer rows
-          (top/bottom) reserve the full scroll height so only the visible slice of
-          MUI rows is mounted — see useWindowedRows. */}
-      <Box ref={scrollRef} sx={{ flexGrow: 1, overflow: 'auto' }}>
-        <LootTable
-          groupByItem={groupByItem}
-          rows={groupRows}
-          events={events}
-          ctx={{ win, isFavorite, knowledgeByKey, invByKey, onToggleFavorite: toggleFavorite, onSelect: detail.open }}
-        />
-      </Box>
+      <LootLedgerBody
+        scrollRef={scrollRef}
+        groupByItem={groupByItem}
+        groupRows={groupRows}
+        events={events}
+        ctx={{ isFavorite, knowledgeByKey, invByKey, onToggleFavorite: toggleFavorite, onSelect: detail.open }}
+      />
 
       <Snackbar
         open={!!toast}

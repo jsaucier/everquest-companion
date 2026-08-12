@@ -196,6 +196,13 @@ function applyScalarChange(
     setAlertPrefs({ ...getAlertPrefs(), muted: body.alertPrefs.muted })
     return true
   }
+  if (change.id === 'alertPrefs.alwaysPlayAll' && body.alertPrefs) {
+    // Normalized to a boolean here rather than spread through: the wire may omit the key, and
+    // `setAlertPrefs` writes it only when true (JOS-222), so an incoming `false` must ERASE a
+    // local `true` rather than being read as "said nothing".
+    setAlertPrefs({ ...getAlertPrefs(), alwaysPlayAll: body.alertPrefs.alwaysPlayAll === true })
+    return true
+  }
   if (change.id.startsWith('overlay.')) return applyOverlayScalar(change.id, body)
   if (change.id.startsWith('ui.')) return applyUiScalar(change.id, body, ui, uiWrites)
   return false

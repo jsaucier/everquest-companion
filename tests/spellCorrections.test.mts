@@ -478,11 +478,12 @@ test("JOS-161: a Sionachie's Dreams cast plus its landing yields a countdown row
   )
   const row = r.rows.find((x) => x.target === 'a revenant')
   assert.ok(row, `no row: ${r.rows.map((x) => `${x.name}@${x.target ?? 'self'}`).join(', ') || '(none)'}`)
-  assert.equal(row.name, "Sionachie's Dreams IV", 'the ranked cast line names the row')
+  assert.equal(row.name, "Sionachie's Dreams", 'the DB name is the row identity (JOS-238)')
+  assert.equal(row.castName, "Sionachie's Dreams IV", 'and the rank the cast line spelled rides beside it')
   assert.equal(row.mode, 'countdown')
   assert.equal(row.durationMs, 18_000, 'the DB states 3 ticks for the line')
   assert.ok(
-    r.active.some((a) => a.spell === "Sionachie's Dreams IV" && a.target === 'a revenant'),
+    r.active.some((a) => a.spell === "Sionachie's Dreams" && a.target === 'a revenant'),
     `no held instance: ${r.active.map((a) => `${a.spell}@${a.target ?? 'self'}`).join(', ') || '(none)'}`
   )
 })
@@ -497,7 +498,8 @@ test('JOS-161: a Bewitching Bravura cast plus its landing yields a countdown row
   )
   const row = r.rows.find((x) => x.target === 'a fire giant warrior')
   assert.ok(row, `no row: ${r.rows.map((x) => `${x.name}@${x.target ?? 'self'}`).join(', ') || '(none)'}`)
-  assert.equal(row.name, "Solon's Bewitching Bravura IX")
+  assert.equal(row.name, "Solon's Bewitching Bravura")
+  assert.equal(row.castName, "Solon's Bewitching Bravura IX", 'the rank the cast line spelled (JOS-238)')
   assert.equal(row.mode, 'countdown')
   assert.equal(row.durationMs, 18_000)
 })

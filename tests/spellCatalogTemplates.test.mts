@@ -87,7 +87,10 @@ test('NO DEAD `lands`: every lands template names a message the parser can match
   }
 })
 
-test('the dead-lands gate actually removed something — 48 of them', () => {
+// The title carried the count until JOS-189 moved it and left the name behind, which is the ordinary
+// way a frozen number rots. The count lives in the assertion, where a change has to be argued for in
+// the comment below it; the title only claims the gate removes SOMETHING.
+test('the dead-lands gate actually removed something, and the count is measured here', () => {
   // Provenance for the claim in spellDb.ts's comment: a count, measured here rather than asserted
   // in prose. These were Detrimental spells with a cast-on-other message the suffix table cannot
   // key, every one of which was being offered a suggestion that could not fire.
@@ -125,12 +128,19 @@ test('the dead-lands gate actually removed something — 48 of them', () => {
   // his debuffs filed under the wrong chant and two with no row at all (report
   // 01KZN3FSW4BQ519N3TV8CQ1TC1). They are the sweep's first entries to JOIN an existing suffix
   // rather than mint one, which is also why the population moves by exactly two.
+  //
+  // AND IT IS 45 SINCE JOS-245: `Vengeance of the Wild`, the druid DoT at 49, reported by a druid
+  // whose debuff window never showed it (01KZSR4HQVWJKDG0NCDGZ01928). ONE row, and the shape of the
+  // remainder is the point — the owner's log has never printed a single line of that spell, so this
+  // is the first entry the sweep admitted on a REPORTER'S SLICE rather than on his own bytes. The
+  // rest of this population is still what nobody has evidenced from any log at all, which is what
+  // the gate is for.
   let dead = 0
   for (const s of db.spells) {
     if (s.spellType !== 'Detrimental' || !s.msgCastOnOther) continue
     if (castOnOtherSuffix(s.msgCastOnOther) === null) dead += 1
   }
-  assert.equal(dead, 46, 'the measured population the `lands` gate now excludes')
+  assert.equal(dead, 45, 'the measured population the `lands` gate now excludes')
 })
 
 test('`landsOnOther` always travels with the pattern it needs', () => {

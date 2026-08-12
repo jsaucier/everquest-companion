@@ -91,8 +91,9 @@ export async function setCombinePet(page: Page, on: boolean, back: string): Prom
 /**
  * Which scope Preferences shows as CHOSEN, read from the control itself and not from the store,
  * then back to `back`. On a fresh profile this is the answer to "does an absent key resolve to
- * Group" — the half of the default that the meters' own wording cannot distinguish, because
- * `Group (no roster yet)` is what You would never say but Everyone's fallback shares no text with.
+ * Everyone" (JOS-229) — the half of the default the meters' own wording cannot carry, because a
+ * meter reading `Everyone` looks identical whether the user picked it or never opened this tab,
+ * and only one of those is what a fresh-state default claims.
  */
 export async function scopeFromPrefs(page: Page, back: string): Promise<string> {
   await page.click('[data-testid="nav-preferences"]', { timeout: 30_000 })

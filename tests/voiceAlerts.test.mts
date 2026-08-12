@@ -9,7 +9,9 @@
 //      voice enable any more, so nothing outside the def can turn a spoken alert back into its
 //      sound except having nothing truthful to say.
 //   2. `coalesceAudio` — "three buffs fading at once is ONE audio alert" (owner direction), plus
-//      the per-alert opt-out's exact contract: it bypasses the window AND does not occupy it.
+//      the per-alert opt-out's exact contract: it bypasses the window AND does not occupy it —
+//      and now the GLOBAL preference above it (JOS-222, `AlertPrefs.alwaysPlayAll`), whose whole
+//      claim is that it is the SAME branch with a wider subject and STARTS OFF.
 //   3. `pickVoice` — a stored voice id resolved against a per-machine voice list, bounded: exact
 //      then case-insensitive, and NEVER "the first voice" (a stranger's voice is worse than the
 //      engine's own default).
@@ -22,7 +24,19 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { AlertDef } from '../src/shared/types'
 import { DEFAULT_VOICE_PREFS } from '../src/shared/speechText'
-import { pickVoice, speechPlan, voiceIdOf } from '../src/renderer/src/lib/speech'
+import {
+  noteSpeechEngineFault,
+  onSpeechEngineFault,
+  pickVoice,
+  resetSpeechEngineFault,
+  speechEngineFault,
+  speechPlan,
+  speechSetupGap,
+  voiceIdOf,
+  SPEECH_SETUP_NOTES,
+  type SpeechEngineFault,
+  type SpeechSetupGap
+} from '../src/renderer/src/lib/speech'
 import { AUDIO_COALESCE_MS, coalesceAudio } from '../src/renderer/src/features/alerts/audioThrottle'
 
 function def(over: Partial<AlertDef> = {}): AlertDef {
@@ -140,6 +154,47 @@ test('alwaysPlay BYPASSES the window and does NOT occupy it', () => {
   assert.equal(b.lastAudioMs, null, 'a critical alert never opens a window against the next one')
 })
 
+// ---------------------------------------------------- the GLOBAL always-play preference (JOS-222)
+
+test('the global preference STARTS OFF — an omitted 4th argument throttles exactly as before', () => {
+  // The regression that would be invisible: a default of `true` (or a caller that forgets to pass
+  // the flag through as a boolean) silently deletes the throttle for everyone. The owner's spec is
+  // that it starts off, so the ABSENCE of the argument must mean off.
+  const t0 = 7_000
+  const first = coalesceAudio(def(), t0, null)
+  assert.equal(first.play, true)
+  assert.equal(coalesceAudio(def(), t0 + 10, first.lastAudioMs).play, false)
+  // …and passing it explicitly false is the same answer, not a different code path.
+  assert.deepEqual(coalesceAudio(def(), t0 + 10, first.lastAudioMs, false), { play: false, lastAudioMs: t0 })
+})
+
+test('the global preference plays EVERY alert in a burst, and opens no window doing it', () => {
+  const now = 2_000_000
+  let last: number | null = null
+  const played: boolean[] = []
+  for (let i = 0; i < 3; i++) {
+    const gate = coalesceAudio(def(), now + i, last, true)
+    last = gate.lastAudioMs
+    played.push(gate.play)
+  }
+  assert.deepEqual(played, [true, true, true], 'three buffs fading at once is now three sounds')
+  assert.equal(last, null, 'nothing occupied the channel, so nothing can be silenced by it later')
+})
+
+test('the global preference is the SAME branch as the per-alert opt-out, not a second one', () => {
+  // It bypasses an already-open window and leaves it exactly as it found it — the property that
+  // makes the per-alert opt-out safe, asserted for the global one so the two cannot drift.
+  const opened = coalesceAudio(def(), 500, null)
+  const gate = coalesceAudio(def(), 510, opened.lastAudioMs, true)
+  assert.deepEqual(gate, { play: true, lastAudioMs: 500 })
+  // And it is a bypass laid OVER the defs, never a rewrite of them: a def that already opted out
+  // reads identically with the preference on or off.
+  assert.deepEqual(
+    coalesceAudio(def({ alwaysPlay: true }), 510, opened.lastAudioMs, true),
+    coalesceAudio(def({ alwaysPlay: true }), 510, opened.lastAudioMs, false)
+  )
+})
+
 test("'both' is ONE occupancy — its sound+speech pair cannot silence itself", () => {
   // The caller charges the window once per FIRING, whatever the plan contains; this pins that
   // the throttle has no per-channel notion at all.
@@ -174,4 +229,57 @@ test('a voice with no URI is identified by its name', () => {
   assert.equal(voiceIdOf(VOICES[2]), 'Google UK English Male')
   assert.equal(voiceIdOf(VOICES[0]), 'urn:sapi:David?en-US')
   assert.equal(pickVoice(VOICES, 'Google UK English Male')?.lang, 'en-GB')
+})
+
+// ------------------------------------------------------ 4. the engine fault latch (JOS-247)
+//
+// The reported failure was SILENT, and this is the mechanism that ends that. A downloaded
+// natural voice whose worker will not start enumerates all 54 of its voices perfectly — the
+// picker reads the FILE — so nothing derived from the inventory can ever notice. Only a failed
+// utterance knows, and before this it told a `console.warn` in a window with no console.
+
+test('the fault latches from a failed utterance, and tells its listeners once', () => {
+  resetSpeechEngineFault()
+  const seen: SpeechEngineFault[] = []
+  const off = onSpeechEngineFault((f) => seen.push(f))
+  assert.equal(speechEngineFault(), null, 'nothing has failed yet')
+  noteSpeechEngineFault('engine-unloadable')
+  noteSpeechEngineFault('engine-unloadable')
+  assert.equal(speechEngineFault(), 'engine-unloadable')
+  assert.deepEqual(seen, ['engine-unloadable'], 'a fault is a STATE, not an event per alert')
+  off()
+  resetSpeechEngineFault()
+})
+
+test('a setup state is NOT a fault — "not downloaded" is already said everywhere else', () => {
+  // Latching this one would double the note the picker and every speaking row already carry,
+  // and would keep saying it after the download finished.
+  resetSpeechEngineFault()
+  noteSpeechEngineFault('engine-not-installed')
+  noteSpeechEngineFault('invalid-request')
+  noteSpeechEngineFault('not-implemented')
+  assert.equal(speechEngineFault(), null)
+})
+
+test('every gap the UI can render has a note, and the unloadable one names its remedy', () => {
+  const gaps: SpeechSetupGap[] = ['engine-not-installed', 'no-voices', 'engine-failed', 'engine-unloadable']
+  for (const gap of gaps) assert.ok(SPEECH_SETUP_NOTES[gap].length > 0, gap)
+  // The two engine faults must never send a user off to re-download a model they already have —
+  // which is precisely what the old 'engine-not-installed' answer did say to them.
+  for (const gap of ['engine-failed', 'engine-unloadable'] as const) {
+    assert.match(SPEECH_SETUP_NOTES[gap], /is downloaded/, gap)
+    assert.ok(!SPEECH_SETUP_NOTES[gap].includes(SPEECH_SETUP_NOTES['engine-not-installed']), gap)
+  }
+  // …and the one whose remedy was MEASURED (the PE import tables of the shipped binaries) says it.
+  assert.match(SPEECH_SETUP_NOTES['engine-unloadable'], /Visual C\+\+/)
+  // House copy law (JOS-106): no em dashes in user-facing strings.
+  for (const gap of gaps) assert.ok(!SPEECH_SETUP_NOTES[gap].includes('—'), gap)
+})
+
+test('the inventory gap is unchanged — it still answers only what asking can answer', () => {
+  assert.equal(speechSetupGap('kokoro', []), 'engine-not-installed')
+  assert.equal(speechSetupGap('system', []), 'no-voices')
+  // THE REPORTER'S OWN STATE: a downloaded pack lists its voices, so nothing is missing and the
+  // inventory has nothing to say. That is why the fault has to come from having TRIED.
+  assert.equal(speechSetupGap('kokoro', [{ id: 'af_heart' }]), null)
 })

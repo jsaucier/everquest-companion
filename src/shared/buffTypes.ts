@@ -38,6 +38,24 @@ import type { ClassAbbr } from './classCombo'
  */
 export type BuffClass = 'buff' | 'debuff'
 
+/**
+ * WHERE A DURATION ESTIMATE CAME FROM — the provenance of every countdown this app draws
+ * (buffsStats.ts `estimateFor` is the one place that decides it).
+ *
+ *   'db'       — the spell-database baseline held: nothing observed beat it, and nothing
+ *                observed corroborated a shorter answer.
+ *   'observed' — a logged cycle ran LONGER than the baseline (AA/focus extension) and won.
+ *   'cluster'  — the app's own clean cycles agree the spell is SHORTER than the baseline says,
+ *                and there are enough of them to say so (JOS-212, owner ruling 2026-08-12).
+ *                It is a separate label from 'observed' on purpose: the two answers are read off
+ *                the same samples but they make opposite claims about the database row, and a UI
+ *                that said "longer than the baseline" for both would be lying about one of them.
+ *
+ * Every consumer that is not asking specifically about the DB floor should treat 'cluster' the
+ * way it treats 'observed' — both are this caster's own measured cycles.
+ */
+export type EstimatorSource = 'db' | 'observed' | 'cluster'
+
 /** Per-spell mined duration statistics (milliseconds). */
 export interface BuffStat {
   /** spell name (display casing of the first observed cast/fade). */
@@ -64,12 +82,13 @@ export interface BuffStat {
   /**
    * The value the estimator uses for the remaining-time bar (JOS-117): max(DB baseline, recent
    * observed max) — the DB is a FLOOR that below-base click-off samples cannot pull under, and a
-   * logged cast that beat the floor wins. Provenance in `estimatorSource`. Null when neither is
-   * available (n=0, no DB duration).
+   * logged cast that beat the floor wins. Since JOS-212 the floor is no longer absolute: a
+   * corroborated cluster of clean below-floor cycles removes it (see {@link EstimatorSource}).
+   * Provenance in `estimatorSource`. Null when neither is available (n=0, no DB duration).
    */
   estimateMs?: number | null
-  /** Where `estimateMs` came from: 'db' (floor held) | 'observed' (a logged cast beat it). */
-  estimatorSource?: 'db' | 'observed'
+  /** Where `estimateMs` came from — see {@link EstimatorSource}. */
+  estimatorSource?: EstimatorSource
   /**
    * The newest event ts (ms epoch) this spell was seen — the last castBegin / apply / fade
    * involving it (Task #45). The RECENCY signal the suggested-alerts wizard sorts by (recent
@@ -80,9 +99,46 @@ export interface BuffStat {
 
 /** A currently-active (landed, not yet faded) buff INSTANCE = (spell, target entity). */
 export interface ActiveBuff {
+  /**
+   * THE SPELL'S IDENTITY, and since JOS-238 that means the DB's own display name whenever the
+   * model resolved which spell this is — never the ranked text one cast line happened to spell.
+   *
+   * It used to be the cast line's when a cast ANCHOR resolved an ambiguous landing, and the cost
+   * was the whole reason that ticket exists: `Swift Like the Wind IV` travelled from the anchor
+   * into this field, into the learner's display, and into the derived `buffExpired`, so a
+   * suggested wears-off alert — which pins the bare catalog name, `Swift Like The Wind` — could
+   * never fire for a spell cast at rank II or above. The rank is now {@link castName}.
+   *
+   * A FAMILY the anchors could not narrow still names every candidate here (`A / B`) and says so
+   * with `candidates`; that is an honest absence of an identity, not a second spelling of one.
+   */
   spell: string
+  /**
+   * The RANKED name the cast line spelled (`Swift Like the Wind IV`), when the model resolved this
+   * instance from a cast anchor AND the log's spelling says something `spell` does not (JOS-238).
+   *
+   * DISPLAY ONLY, and deliberately so: nothing keys, matches, learns or alerts off this field. It
+   * exists because the rank is genuinely information — the cast line is the ONLY line in the whole
+   * family that carries one — and losing it entirely would give back a fact JOS-126 asked for. A
+   * surface that wants to show "which rank is up" reads this; everything that wants to know WHICH
+   * SPELL is up reads `spell`.
+   */
+  castName?: string
   /** buff vs debuff — a SPELL property (Task #35), not who it's on. */
   cls: BuffClass
+  /**
+   * True when the spell CALMS its target — the calm/lull line (JOS-213): a `cls: 'buff'` whose
+   * effect happens to a MOB's aggression. Absent for every other spell.
+   *
+   * It is a SECOND, ORTHOGONAL fact about the spell, not a correction to `cls`. A Pacify is a
+   * beneficial spell and the row keeps saying so; what this adds is that the thing it does is a
+   * mob-state effect, which is what routes its timer to the DEBUFFS overlay beside the slows and
+   * the mez holds (shared/buffTimers.ts `timerRowSurface`) instead of leaving an aggro clock among
+   * the player's own buffs. Filled by main from the DB roster (`data/spellDb.ts
+   * spellCalmsTarget`), and — like `cls` since JOS-140 ruling 8 — never resolved by looking at who
+   * the spell landed on.
+   */
+  calmsTarget?: true
   /**
    * True when this instance is on the PLAYER (self). False when it's on some other
    * entity (a pet, another player, or — for a debuff — a hostile mob). The UI shows
@@ -116,12 +172,10 @@ export interface ActiveBuff {
    */
   inferredTarget?: boolean
   /**
-   * Where `estimatedMs` came from (JOS-117):
-   *   'db'       — the spell-database baseline held (no logged cast beat it).
-   *   'observed' — a logged cast beat the floor: max over the recent sample window.
-   *   undefined  — no estimate (n=0 and no DB duration).
+   * Where `estimatedMs` came from (JOS-117) — see {@link EstimatorSource}. `undefined` means no
+   * estimate at all (n=0 and no DB duration).
    */
-  durationSource?: 'db' | 'observed'
+  durationSource?: EstimatorSource
   /**
    * THE BUFFS/TIMER OVERLAY's countdown duration (ms). Since JOS-117 this is the SAME estimator the
    * Buffs TAB uses — max(DB floor, recent observed max) — so both surfaces agree; a below-base
@@ -131,14 +185,30 @@ export interface ActiveBuff {
    * buffsStats.ts `estimateFor` and shared/buffTimers.ts `timerModeOf`.
    */
   overlayDurationMs?: number | null
-  /** Where `overlayDurationMs` came from: 'db' (floor held) | 'observed' (a logged cast beat it). */
-  overlaySource?: 'db' | 'observed'
+  /** Where `overlayDurationMs` came from — see {@link EstimatorSource}. */
+  overlaySource?: EstimatorSource
   /**
-   * True when this buff is PERMANENT (Task #34): an illusion-flagged spell the player
-   * self-cast while the Permanent Illusion AA is owned (self-cast illusions last forever
-   * on the player). The UI shows "permanent · illusion AA" and no countdown.
+   * True when this buff NEVER EXPIRES, for either of the two reasons `permanentSource` names
+   * (Task #34's Permanent Illusion AA; JOS-215's permanent SPELLS). The UI draws no countdown, the
+   * hygiene sweep never retires it, and no duration sample is ever paired from it — only a
+   * wear-off, a death or a zone can take it off the board.
    */
   permanent?: boolean
+  /**
+   * WHY it is permanent, so the row can say so without guessing (JOS-215).
+   *
+   *   'spell'       — the spell database states `Permanent` for this line. 62 rows, all Self:
+   *                   Yaulp, the Shielding ladder, the blade coats, Instrument of Nife, the wolf
+   *                   forms. Nothing about the player's AAs is involved.
+   *   'illusion-aa' — the Permanent Illusion AA (Task #34): an illusion-flagged spell the player
+   *                   self-cast at or after buying it, whose OWN duration is finite.
+   *
+   * Present only when `permanent` is true. It is DERIVED in main from the same DB row the
+   * permanence was read off (buffsView.ts), never plumbed through the landing, so the two can not
+   * disagree. The distinction is the whole of the JOS-215 copy fix: the row used to hardcode
+   * "permanent · illusion AA" and said it about a rogue's poison coat.
+   */
+  permanentSource?: 'spell' | 'illusion-aa'
   /**
    * True when this active was applied by an EXACT chat MESSAGE match (Task #34) — a
    * msg_cast_on_you / msg_cast_on_other / self-heal-by-buff line. Since JOS-118 this is the ONLY
@@ -273,6 +343,31 @@ export interface SpellEntry {
   illusion: boolean
   /** mana cost, when present. */
   mana?: number
+  /**
+   * THE WIKI'S NUMBERED EFFECT LIST, VERBATIM (JOS-251) — one string per `{{SpellSlotRow}}` on
+   * the page, in the order the page prints them:
+   *
+   *   ["Charm (up to L37)", "Decrease Magic Resist by 4 (L27) to 8 (L60)"]
+   *
+   * RAW, and deliberately so. Wiki markup is stripped exactly the way every other field's text
+   * is (`clean()` in the scrape — links, bold, tags), and NOTHING else is normalised: no
+   * lower-casing, no re-ordering, no interpretation. The two phrasings the wiki uses for the same
+   * effect ("Charm up to level 37" and "Charm (up to L37)") both survive here as written, because
+   * the file's job is to record what the wiki said. What the strings MEAN is a separate,
+   * deletable layer — `src/main/data/spellEffectClass.ts` — for the reason the corrections overlay
+   * exists: a scrape rewrites this file wholesale, so anything we conclude must not live in it.
+   *
+   * Absent when the page carries no slot list at all. The slot NUMBER is not kept: it is the
+   * list's own ordinal for every page but the seven that write `?`, and no reader needs it.
+   */
+  effects?: string[]
+  /**
+   * The bard pages' `Enhanced by instrument?` row, verbatim ("Yes", "No", "Required",
+   * "Yes (just the resists debuff)"). It is a row of the same slot table but is not an effect, so
+   * it gets its own field rather than polluting `effects`. Absent on the ~95% of pages (every
+   * non-song) that have no such row.
+   */
+  instrumentEnhanced?: string
 }
 
 /** The committed spells.json shape: metadata + the spell list. */
@@ -280,6 +375,14 @@ export interface SpellDbFile {
   scrapedAt: string
   count: number
   spells: SpellEntry[]
+  /**
+   * Scrape schema version — bumped when the scraper starts capturing a new per-spell field, so a
+   * consumer can tell an old committed file from a new one instead of guessing from absent keys.
+   * 2 = the effect list + instrument flag (JOS-251). Absent means 1 (pre-JOS-251).
+   */
+  schema?: number
+  /** How many spells carry a non-empty `effects` list — scrape health at a glance. */
+  withEffects?: number
 }
 
 // ----- Suggested-alerts wizard (Task #38) -----

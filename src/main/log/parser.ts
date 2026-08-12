@@ -39,6 +39,7 @@ import {
   classifyDbBuff,
   classifyIllusionFade,
   classifyPetClaim,
+  classifyAllyPetLeader,
   classifyPetLeader,
   classifyPetSay,
   classifyPoisonCoat,
@@ -131,6 +132,12 @@ const CLASSIFIERS: readonly Classifier[] = [
   // and "My leader is <X>." are disjoint), and this shape was `{kind:'unknown'}` before it
   // existed — the whole log holds exactly one line of it.
   classifyPetLeader,
+  // …and the SAME sentence about somebody else (JOS-250). It MUST sit directly beneath the self
+  // rule and never above it: the two differ only in whose name the second capture holds, so the
+  // self rule has to be offered every line first or your own `/pet who leader` answer would parse
+  // as a stranger's pet. It claims nothing the self rule claims, and the whole log holds zero
+  // lines of its shape (the one occurrence of the family names the owner).
+  classifyAllyPetLeader,
   classifyDeath,
   classifyZone,
   // SESSION frame (login / camp-out / camp-abort). Beside the zone rule because they answer

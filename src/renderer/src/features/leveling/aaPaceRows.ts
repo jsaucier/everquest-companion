@@ -41,6 +41,11 @@ function rate(n: number | null, fmt: (v: number) => string): string {
   return n == null ? NONE : fmt(n)
 }
 
+// THE TILE HOVERS STAY ONE CLAUSE, and JOS-249's definition rides the PANEL's caption instead
+// (AaPacePanel). This file's own diet rule — a tile tooltip names what the tile measures and
+// nothing more, because the `inferred` chip is the disclosure — is pinned at 16 words by
+// tests/aaPace.test.mts, and appending a definition here would restate on four tiles what the
+// caption directly above them says once.
 const RATE_TITLE = 'AA completions per hour of active time.'
 
 const POINTS_TITLE = 'Ability points per hour of active time.'

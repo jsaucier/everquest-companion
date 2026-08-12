@@ -36,9 +36,14 @@
  * copies a committed dump in beside the log for the specs whose subject is the dump-present half.
  * A COPY like the log, for the same reason — main WATCHES this file, and a spec that ever writes
  * one must not be writing into the working tree.
+ *
+ * `writeInventoryDump` is that same copy, EXPORTED (JOS-253), because staging is only half of what
+ * a dump-fed spec needs: the app's job is to notice the player re-running `/outputfile inventory`,
+ * which is this write happening while the app is up. It is one function rather than two so the
+ * filename rule — load-bearing, see below — has one home whichever moment does the writing.
  */
 
-import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, mkdtempSync, openSync, symlinkSync, writeSync } from 'node:fs'
+import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, mkdtempSync, openSync, symlinkSync, utimesSync, writeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -116,10 +121,21 @@ export interface FixtureLog {
  * file name would be found only by the newest-file fallback and would stop being found at all the
  * day a spec staged two.
  */
-function stageInventory(installDir: string, fixture: string): void {
+export function writeInventoryDump(installDir: string, fixture: string): string {
   const dump = join(FIXTURES, fixture)
   if (!existsSync(dump)) throw new Error(`e2e: no such fixture — ${dump}`)
-  copyFileSync(dump, join(installDir, `Primitive_${SERVER}-Inventory.txt`))
+  const at = join(installDir, `Primitive_${SERVER}-Inventory.txt`)
+  copyFileSync(dump, at)
+  // AND STAMP IT NOW — MEASURED, JOS-253. Windows' `CopyFileW`, which is what `copyFileSync` calls
+  // here, PRESERVES the source's last-write time, so a staged dump arrived carrying the mtime of
+  // the committed fixture in the working tree: the first cut of the auto-load spec watched the app
+  // correctly report a file it had just been handed as "updated 15m ago". That is a lie about the
+  // thing this helper is pretending to be — the player typing the command right now — and the app
+  // reads mtime as "when the player dumped", so the fixture's own age would silently become part
+  // of every dump-fed assertion.
+  const now = new Date()
+  utimesSync(at, now, now)
+  return at
 }
 
 /** The real EQ install, if this machine has one — the only source of map packs. */
@@ -161,7 +177,7 @@ export function stageFixture(
     others[name] = otherPath
   }
 
-  if (opts.inventory !== undefined) stageInventory(installDir, opts.inventory)
+  if (opts.inventory !== undefined) writeInventoryDump(installDir, opts.inventory)
 
   if (opts.maps) {
     const root = realEqRoot()

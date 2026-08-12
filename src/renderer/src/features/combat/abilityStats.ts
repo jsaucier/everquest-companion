@@ -149,12 +149,18 @@ export function abilityMultiAttack(source: SourceView, name: string, category: D
  *                     multi-attack). Always expandable.
  *   - a multi-attack ability → its double/triple is a thing to see, whatever its category.
  *   - a direct spell that CRIT → crit rate is worth stating.
+ *   - a GROUP row → its children ARE the thing to expand (JOS-244). Without this a merged spell
+ *     row could hide its own components: a DoT whose ticks never crit passes none of the tests
+ *     above, and collapsing two bars into one that will not open would take information away
+ *     rather than tidy it. The slay group has always passed on its category; this is the same
+ *     rule said generally, so no group is ever a dead end.
  * A DoT tick has none of these — no swings to miss, no rounds, and DoT ticks do not crit in this
  * engine — so it does not expand; its resist rate, if any, already rides the bar face (SkillBar).
  * A damage shield is passive and likewise inert.
  */
-export function abilityExpandable(row: FlatSkill, multi: AbilityMulti | null): boolean {
+export function abilityExpandable(row: FlatSkill & { children?: unknown[] }, multi: AbilityMulti | null): boolean {
   if (row.category === 'melee' || row.category === 'slay') return true
+  if (row.children && row.children.length > 0) return true
   if (multi) return true
   if (row.crits > 0) return true
   return false

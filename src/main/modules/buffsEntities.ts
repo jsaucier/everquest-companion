@@ -9,7 +9,6 @@
 
 import { classifyFadeTarget, type EntityDisposition } from '../combat/entityRules'
 import { idKey } from '../log/parser'
-import { S, type FoldSchema } from '../foldCache/schema'
 import { SELF_KEY } from './buffsShapes'
 
 export class PetEntities {
@@ -168,64 +167,4 @@ export class PetEntities {
     this.petTargetDisplay = undefined
     return changed
   }
-
-  // ---- the checkpoint seam (JOS-208 phase 2) --------------------------------------------------
-  //
-  // THE WHOLE OBJECT TRAVELS. Every slot here is an answer to "who is bound to me right now",
-  // folded from charm / petClaim / uncharm / death / zone lines, and every one of them decides
-  // where the NEXT landing binds — so a fresh instance would bind a pet buff to nobody and censor
-  // the wrong entity on the next zone line. `namedEntityDisplay` is the learned display CASING
-  // for arbitrary entities, which `reset()` clears but `clearForGap()` deliberately keeps.
-
-  static readonly FOLD_SCHEMA: FoldSchema = S.obj({
-    charmedKey: S.opt(S.str),
-    charmedDisplay: S.opt(S.str),
-    brokenCharmKey: S.opt(S.str),
-    brokenCharmDisplay: S.opt(S.str),
-    summonedKey: S.opt(S.str),
-    summonedDisplay: S.opt(S.str),
-    petTargetKey: S.opt(S.str),
-    petTargetDisplay: S.opt(S.str),
-    namedEntityDisplay: S.arr(S.tuple(S.str, S.str))
-  })
-
-  serializeFold(): PetEntitiesFoldState {
-    return {
-      ...(this.charmedKey === undefined ? {} : { charmedKey: this.charmedKey }),
-      ...(this.charmedDisplay === undefined ? {} : { charmedDisplay: this.charmedDisplay }),
-      ...(this.brokenCharmKey === undefined ? {} : { brokenCharmKey: this.brokenCharmKey }),
-      ...(this.brokenCharmDisplay === undefined ? {} : { brokenCharmDisplay: this.brokenCharmDisplay }),
-      ...(this.summonedKey === undefined ? {} : { summonedKey: this.summonedKey }),
-      ...(this.summonedDisplay === undefined ? {} : { summonedDisplay: this.summonedDisplay }),
-      ...(this.petTargetKey === undefined ? {} : { petTargetKey: this.petTargetKey }),
-      ...(this.petTargetDisplay === undefined ? {} : { petTargetDisplay: this.petTargetDisplay }),
-      namedEntityDisplay: [...this.namedEntityDisplay]
-    }
-  }
-
-  /** Adopt previously serialized entity slots. Validation is the OWNER's — see `BuffsModule`. */
-  deserializeFold(state: PetEntitiesFoldState): void {
-    this.charmedKey = state.charmedKey
-    this.charmedDisplay = state.charmedDisplay
-    this.brokenCharmKey = state.brokenCharmKey
-    this.brokenCharmDisplay = state.brokenCharmDisplay
-    this.summonedKey = state.summonedKey
-    this.summonedDisplay = state.summonedDisplay
-    this.petTargetKey = state.petTargetKey
-    this.petTargetDisplay = state.petTargetDisplay
-    this.namedEntityDisplay = new Map(state.namedEntityDisplay)
-  }
-}
-
-/** The pet/charm/target slots as plain data. */
-export interface PetEntitiesFoldState {
-  charmedKey?: string
-  charmedDisplay?: string
-  brokenCharmKey?: string
-  brokenCharmDisplay?: string
-  summonedKey?: string
-  summonedDisplay?: string
-  petTargetKey?: string
-  petTargetDisplay?: string
-  namedEntityDisplay: [string, string][]
 }

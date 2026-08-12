@@ -189,10 +189,72 @@ function rawLine(text: string): AlertTrigger {
  * Deeds 26, Languid Pace 23, Tepid Deeds 3 — and zero for the other seven, because this
  * character is an enchanter who has not reached 57. The two defs below quote what was
  * observed; the roster is what the def has to cover to still be right next month.
+ *
+ * THE BARD'S BINDING SONGS JOIN THE MOB SIDE (JOS-233, owner ruling 2026-08-12), and they are
+ * the first members that do NOT come from the emote oracle — so they are listed separately and
+ * the reason is written down rather than folded into the family regex.
+ *
+ * JOS-225 took `Largo's Melodic Binding` (Bard 20) and `Largo's Assonant Binding` (Bard 51) out
+ * of the parser's `ccSpell` roster because their wear-off was firing "Mez / root broke" at a bard
+ * and they hold nothing — the target trades melee blows through the song and `<mob> has been
+ * awakened by <name>.` accompanies 0 of 81 of the level-20 song's wear-offs (see the NOT A HOLD
+ * section of src/main/log/rulesets.ts for the full count table). That fix was right about what
+ * they are not, and it left them SILENT: the break fell through to a plain `buffFade` that no
+ * group claimed. The owner's ruling names what they are — an attack-speed debuff as well as a
+ * snare, i.e. a slow whose expiry is the same quiet loss this group exists for — so the wear-off
+ * fires "Slow wore off a mob" instead of nothing.
+ *
+ * THE PROVENANCE IS AN OWNER RULING, NOT THE MESSAGE ORACLE, and that distinction is the whole
+ * reason for two lists. The DB groups spells by LANDING message, and each Largo's landing sentence
+ * (`Someone is bound in/by strands of solid music.`) is its own one-member family — so the oracle
+ * that enumerates the enchanter and shaman ladders has nothing to say here in either direction.
+ * A message family is not an effect family (the law JOS-200 and JOS-225 each learned the hard
+ * way), which cuts both ways: it cannot put these songs in, and it cannot keep them out.
+ *
+ * THE WIDER BARD BINDING LINE STAYS OUT — `Selo's Consonant Chain` (23), `Selo's Chords of
+ * Cessation` (48) and `Selo's Assonant Strain` (54) are the same shape of song and are EXPLICITLY
+ * UNRULED. They print their own wear-off sentences, they have never been in any roster, and
+ * guessing them in would be inventing an effect claim the owner did not make. JOS-225's slice
+ * used Consonant Chain's silence as its control; it stays silent.
+ *
+ * AND THE ON-YOU SIDE DOES NOT GET THEM, MEASURED. Both Largo's print `The strands fade away.`
+ * when they expire ON you — and so does `Lyssa's Solidarity of Vision`, the Bard 34 BENEFICIAL
+ * vision buff, verbatim. A `where:{spell:…}` matcher tests the whole CANDIDATE list (JOS-84), so
+ * one roster shared by both defs would fire "Slow wore off you" every time a bard's own beneficial
+ * buff lapsed, with no way to tell which spell the sentence meant. That is the haste twin
+ * (`Your speed returns to normal.`) all over again, except the two sentences are not one word
+ * apart — they are IDENTICAL. So the mob side, where `Your <X> spell has worn off of <mob>.` names
+ * the spell outright and carries no candidates at all, takes the two songs; the on-you side keeps
+ * the emote-derived ten, whose two shared sentences resolve to slows and nothing else. Pinned in
+ * tests/slowMoteTellAlerts.test.mts (J1b) and tests/charmCcRoster.test.mts (R1c).
+ *
+ * OWNER-LOG COUNTS for the pair (same file, re-measured read-only 2026-08-12, 1,593,491 lines):
+ * `Your Largo's Melodic Binding spell has worn off of <mob>.` 81, Assonant Binding 0 (this
+ * character never reached 51), `The strands fade away.` 0, and Consonant Chain 0.
  */
-const SLOW_SPELLS =
-  '/^(Languid Pace|Tepid Deeds|Shiftless Deeds|Forlorn Deeds' +
-  '|Drowsy|Walking Sleep|Tagar.s Insects|Togor.s Insects|Turgur.s Insects|Tigir.s Insects)$/'
+const SLOW_LADDERS = [
+  // The enchanter line — `Someone slows down.`
+  'Languid Pace',
+  'Tepid Deeds',
+  'Shiftless Deeds',
+  'Forlorn Deeds',
+  // The shaman line — `Someone yawns.`
+  'Drowsy',
+  'Walking Sleep',
+  'Tagar.s Insects',
+  'Togor.s Insects',
+  'Turgur.s Insects',
+  'Tigir.s Insects'
+]
+
+/** The two songs JOS-233 ruled in — mob side only; see the header for why not the on-you side. */
+const BARD_BINDINGS = ['Largo.s Melodic Binding', 'Largo.s Assonant Binding']
+
+/** The mob-side roster: `Your <X> spell has worn off of <mob>.` names the spell outright. */
+const SLOW_SPELLS_MOB = `/^(${[...SLOW_LADDERS, ...BARD_BINDINGS].join('|')})$/`
+
+/** The on-you roster: shared sentences, so only families whose every candidate is a slow. */
+const SLOW_SPELLS_SELF = `/^(${SLOW_LADDERS.join('|')})$/`
 
 /**
  * THE CATALOG. Order is the order the surface renders them: the two the owner called out
@@ -326,11 +388,14 @@ export const ALERT_GROUPS: AlertGroup[] = [
         // kind cannot discriminate a slow on its own and the SPELL NAME is the whole matcher,
         // which is why it is the family regex above rather than one name.
         //
+        // This sentence NAMES the spell and carries no candidate list, so it is the one side that
+        // can safely hold the two bard binding songs JOS-233 ruled in — see the roster header.
+        //
         // COOLDOWN 5s: one wear-off per slow, and a pull rarely holds two slowed mobs whose
         // timers land together. 5s only ever collapses a genuine double.
         id: 'group:slow:mob',
         name: 'Slow wore off a mob',
-        trigger: { type: 'event', kind: 'buffFade', where: { spell: SLOW_SPELLS } },
+        trigger: { type: 'event', kind: 'buffFade', where: { spell: SLOW_SPELLS_MOB } },
         soundId: SOUND.slowExpired,
         cooldownMs: 5000,
         line: 'Your Shiftless Deeds spell has worn off of King Tranix.',
@@ -341,7 +406,9 @@ export const ALERT_GROUPS: AlertGroup[] = [
           'Fires for any player-castable attack slow - the enchanter line (Languid Pace, Tepid ' +
           'Deeds, Shiftless Deeds, Forlorn Deeds) and the shaman line (Drowsy, Walking Sleep, ' +
           "Tagar's, Togor's, Turgur's, Tigir's) - so it keeps working when you out-level the " +
-          'one you cast today. Tepid Deeds accounts for 3 more wear-offs in the reference log.'
+          'one you cast today. Tepid Deeds accounts for 3 more wear-offs in the reference log. ' +
+          "The bard's binding songs count too (Largo's Melodic Binding and its level 51 upgrade " +
+          "Largo's Assonant Binding), because they slow the mob's swings as well as its feet."
       },
       {
         // THE ON-YOU SIDE, and it is a SHARED MESSAGE (world-model law 3), so the trigger is
@@ -359,13 +426,18 @@ export const ALERT_GROUPS: AlertGroup[] = [
         // never fire this. The roster regex is anchored `^…$`, which is what keeps them apart —
         // pinned in tests/slowMoteTellAlerts.test.mts.
         //
+        // …and THAT is why this side reads the SELF roster, which is the emote-derived ten and
+        // NOT the two bard binding songs JOS-233 added to the mob side: their self sentence
+        // (`The strands fade away.`) is shared verbatim with a beneficial bard buff, so no
+        // candidate list here could tell a slow expiring from a buff expiring.
+        //
         // COOLDOWN 5s, same episode length as the mob side.
         id: 'group:slow:you',
         name: 'Slow wore off you',
         trigger: {
           type: 'event',
           kind: 'buffWearOff',
-          where: { spell: SLOW_SPELLS, target: 'self' }
+          where: { spell: SLOW_SPELLS_SELF, target: 'self' }
         },
         soundId: SOUND.slowExpired,
         cooldownMs: 5000,

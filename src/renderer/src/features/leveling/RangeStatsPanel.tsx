@@ -58,6 +58,7 @@ import { fmtDuration } from './levelChartGeometry'
 import {
   AA_RATE_TITLE,
   AA_RESPEC_CAPTION,
+  ACTIVE_TIME_TITLE,
   OFFLINE_CAPTION,
   OFFLINE_TITLE,
   aaRateText,
@@ -114,6 +115,9 @@ function StatCard({ stat }: { stat: HeroStat }): JSX.Element {
       variant="outlined"
       sx={{ p: 1.25, flex: 1, minWidth: 150, borderLeft: `3px solid ${accent}`, display: 'flex', gap: 1 }}
       data-testid="leveling-range-hero"
+      // A NATIVE title, never a popper (JOS-143), and only on the card that has one: the rate
+      // card's denominator is active time and JOS-249 says so on hover.
+      title={stat.title}
     >
       <Box sx={{ color: accent, display: 'flex', alignItems: 'center' }}>{ICON[stat.id]}</Box>
       <Box sx={{ minWidth: 0 }}>
@@ -150,7 +154,9 @@ function ChipRow({ stats }: { stats: RangeStats }): JSX.Element {
   return (
     <Box>
       <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-        <Tooltip title={gaps ?? ''} disableHoverListener={!gaps}>
+        {/* The chip PRINTS active time, so it carries the definition (JOS-249) — with the gap
+            count still leading when there is one, because that is this chip's own detail. */}
+        <Tooltip title={gaps ? `${gaps} · ${ACTIVE_TIME_TITLE}` : ACTIVE_TIME_TITLE}>
           <Chip size="small" variant="outlined" label={activeIdleText(stats)} sx={CHIP_SX} />
         </Tooltip>
         {offline && (
@@ -200,7 +206,13 @@ function ZoneRow({ row }: { row: ZoneStatRow }): JSX.Element {
         {row.time}
         {/* '(2h 03m active)', or '(2h 03m active · 8h 12m offline)' for the camp you logged
             out of. Null — and so nothing at all — when the zone was pure activity. */}
-        <Box component="span" sx={{ opacity: 0.55 }} title={row.offline ? OFFLINE_CAPTION : undefined}>
+        <Box
+          component="span"
+          sx={{ opacity: 0.55 }}
+          // The parenthetical prints this camp's active ms, so it hovers the definition (JOS-249)
+          // — and nothing at all when there is no parenthetical to hover.
+          title={row.detail ? (row.offline ? `${OFFLINE_CAPTION} · ${ACTIVE_TIME_TITLE}` : ACTIVE_TIME_TITLE) : undefined}
+        >
           {row.detail ? ` (${row.detail})` : ''}
         </Box>
       </TableCell>
@@ -258,10 +270,12 @@ function ZoneTable({ zones }: { zones: RangeStats['zones'] }): JSX.Element | nul
             <TableCell align="right" sx={HEAD_SX}>
               Levels
             </TableCell>
-            <TableCell align="right" sx={HEAD_SX}>
+            {/* Both rates divide by the ROW's own active time, so both headers say what that is
+                (JOS-249) — a native title on the label, no popper. */}
+            <TableCell align="right" sx={HEAD_SX} title={ACTIVE_TIME_TITLE}>
               {head('levels', 'Levels/hr')}
             </TableCell>
-            <TableCell align="right" sx={HEAD_SX}>
+            <TableCell align="right" sx={HEAD_SX} title={ACTIVE_TIME_TITLE}>
               Kills/hr
             </TableCell>
           </TableRow>

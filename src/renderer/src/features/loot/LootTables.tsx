@@ -6,6 +6,24 @@ import type { InventoryRow } from '../inventory/reconcile'
 import type { GroupRow, KeyedLoot } from './lootGrouping'
 import { FlatRow, GroupedRow } from './lootRows'
 
+/**
+ * `tableLayout: fixed` — the other half of the fixed-height contract (JOS-260, lootRows.tsx).
+ *
+ * An AUTO-layout table sizes its columns from the widest cell it can see, and a windowed table can
+ * only ever see a screenful: scrolling swaps the rows underneath, the widest visible item name
+ * changes, the columns re-measure and the row heights move with them — under a hook whose every
+ * index assumes they cannot. Fixed layout takes the widths from the HEADER row alone, so the
+ * geometry stops depending on which slice happens to be mounted, and a long name is clipped by the
+ * cell rather than being allowed to wrap the row to two lines.
+ *
+ * Percentages, not pixels, so the columns always add up to the pane the user actually has: a fixed
+ * table whose stated widths exceed its box grows past it and hands the ledger a horizontal
+ * scrollbar. The one exception is the star, which is an icon and has no reason to grow.
+ */
+const FIXED_TABLE = { tableLayout: 'fixed' } as const
+/** The favourite star's column: an icon, sized for the icon. */
+const STAR_COL = { width: 44 } as const
+
 // The spacer rows (top/bottom) that reserve the full scroll height so only the visible
 // slice of MUI rows is ever mounted — see useWindowedRows.
 function PadRow({ height, colSpan }: { height: number; colSpan: number }): JSX.Element | null {
@@ -85,18 +103,19 @@ export function GroupedLootTable({
   onSelect: (item: string) => void
 }): JSX.Element {
   return (
-    <Table size="small" stickyHeader>
+    <Table size="small" stickyHeader sx={FIXED_TABLE}>
       <TableHead>
         <TableRow>
-          <TableCell padding="checkbox" />
+          <TableCell padding="checkbox" sx={STAR_COL} />
+          {/* No width: the item NAME takes whatever the stated columns leave. */}
           <TableCell>Item</TableCell>
-          <TableCell align="right">Times looted</TableCell>
+          <TableCell align="right" sx={{ width: '11%' }}>Times looted</TableCell>
           {/* The header carries the caveat as ONE WORD (JOS-127 + the house tooltip diet): a
               popper on a sticky header hangs over the first rows, and every row is a control. */}
-          <TableCell align="right">In inventory (est.)</TableCell>
-          <TableCell>Top source</TableCell>
-          <TableCell align="right">Zones</TableCell>
-          <TableCell>Last looted</TableCell>
+          <TableCell align="right" sx={{ width: '13%' }}>In inventory (est.)</TableCell>
+          <TableCell sx={{ width: '20%' }}>Top source</TableCell>
+          <TableCell align="right" sx={{ width: '8%' }}>Zones</TableCell>
+          <TableCell sx={{ width: '15%' }}>Last looted</TableCell>
         </TableRow>
       </TableHead>
       <TableBody>
@@ -134,14 +153,15 @@ export function FlatLootTable({
   onSelect: (item: string) => void
 }): JSX.Element {
   return (
-    <Table size="small" stickyHeader>
+    <Table size="small" stickyHeader sx={FIXED_TABLE}>
       <TableHead>
         <TableRow>
-          <TableCell padding="checkbox" />
-          <TableCell sx={{ width: 150 }}>Time</TableCell>
+          <TableCell padding="checkbox" sx={STAR_COL} />
+          <TableCell sx={{ width: '15%' }}>Time</TableCell>
+          {/* No width: the item NAME takes whatever the stated columns leave. */}
           <TableCell>Item</TableCell>
-          <TableCell>From</TableCell>
-          <TableCell>Zone</TableCell>
+          <TableCell sx={{ width: '24%' }}>From</TableCell>
+          <TableCell sx={{ width: '20%' }}>Zone</TableCell>
         </TableRow>
       </TableHead>
       <TableBody>

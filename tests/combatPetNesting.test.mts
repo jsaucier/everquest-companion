@@ -406,6 +406,93 @@ test('the overlay drill maps onto the collapsed model: pet drill, its way back, 
   })
 })
 
+// ── THE DRILL SURVIVES A CHANGE OF FIGHT (JOS-240) ─────────────────────────────────────────
+//
+// Owner, 2026-08-12: drilling a row and then flipping to the next pull reset the meter to level 1,
+// so comparing the same breakdown across two fights meant re-clicking into it every time. The
+// Combat tab no longer un-drills on a fight change (CombatView.undrilling — only the DIRECTION
+// does); everything else is this builder's job, because a token is only worth keeping if it can
+// find its row in the fight it lands in.
+//
+// AND HALF THESE IDS ARE PER-SPAWN. 'you' and `member:<key>` are the same string in every fight,
+// but `pet:<instanceId>` is minted per summon and an incoming mob's id per spawn — so "the same
+// pet, the next pull" is a DIFFERENT id for a row the user reads as the same one, and after a
+// restart re-folds the log it is a different id for the very fight they left drilled. Hence the
+// recorded NAME, and hence the order: the id first (an exact row always wins, including when two
+// same-named pets are both in the segment — the two-pet case is pinned above), the name only as
+// the rescue that keeps the drill from degrading.
+//
+// The degrade itself is UNCHANGED and is what makes "a fight lacking that row" safe: level 1 with
+// its sources, and the caller's stored token untouched, so the next fight that HAS the row opens
+// drilled again. That is asserted here rather than described, because it is the acceptance
+// criterion the owner wrote ("switch to a fight lacking the entity - clean top-level view").
+
+/** The same pet, one summon later: a new instance id under the name the user actually clicked. */
+const RESUMMONED = source('pet:19', 'Vebarn', 'pet', [
+  cat('melee', [skill('Melee', { total: 4200, hits: 130, max: 88, min: 5, misses: 18 })])
+])
+
+test('a drill follows its row into the next fight by NAME when the id was minted per spawn', () => {
+  // Fight A: the user drills the pet. Fight B is the same pet after a re-summon — same name, new
+  // instance. Without the name this is a stale id and the meter drops to level 1 on every flip.
+  const drill: Drill = { kind: 'entity', entityId: 'pet:7', name: 'Vebarn' }
+  const fightB = [YOU, RESUMMONED]
+  assert.deepEqual(panel(ENTITIES, true, drill), { level: 2, subject: 'Vebarn', rows: ['Melee'] })
+  assert.deepEqual(panel(fightB, true, drill), { level: 2, subject: 'Vebarn', rows: ['Melee'] })
+  // It really resolved to fight B's row, not to a remembered copy of fight A's.
+  const b = combatTab(fightB, true, drill)
+  assert.equal(b.level === 2 && b.subject.id, 'pet:19')
+  assert.equal(b.level === 2 && b.subject.total, 4200)
+  // …and it is still nested, so Back goes to your row exactly as it did in fight A.
+  assert.equal(b.level === 2 && b.parent?.id, 'you')
+})
+
+test('…and the ID still wins: a name is a rescue, never a re-targeting', () => {
+  // Both pets in one segment, the stored name matching BOTH. The exact row the user clicked opens.
+  const both = [YOU, PET, RESUMMONED]
+  const a = combatTab(both, true, { kind: 'entity', entityId: 'pet:19', name: 'Vebarn' })
+  assert.equal(a.level === 2 && a.subject.id, 'pet:19')
+  const c = combatTab(both, true, { kind: 'entity', entityId: 'pet:7', name: 'Vebarn' })
+  assert.equal(c.level === 2 && c.subject.id, 'pet:7')
+  // A name that contradicts a resolvable id is ignored outright — the id resolved, so nothing
+  // needed rescuing.
+  const d = combatTab(ENTITIES, true, { kind: 'entity', entityId: 'you', name: 'Vebarn' })
+  assert.equal(d.level === 2 && d.subject.id, 'you')
+})
+
+test('a fight without that row is LEVEL 1, never a blank panel or a wrong subject', () => {
+  // The acceptance case, both ways round. A fight where nobody is called Vebarn degrades…
+  const petless = [YOU]
+  assert.deepEqual(panel(petless, true, { kind: 'entity', entityId: 'pet:7', name: 'Vebarn' }), {
+    level: 1,
+    subject: 'sources',
+    rows: ['You']
+  })
+  // …a fight where YOU dealt nothing degrades the same way (your row is absent, not empty)…
+  assert.deepEqual(panel([PET], true, { kind: 'entity', entityId: 'you', name: 'You' }), {
+    level: 1,
+    subject: 'sources',
+    rows: ['Vebarn']
+  })
+  // …and a token with NO name (every drill stored before JOS-240, and every overlay drill) is
+  // exactly the pure-id behaviour it has always had.
+  assert.equal(combatTab(ENTITIES, true, { kind: 'entity', entityId: 'pet:404' }).level, 1)
+  assert.equal(combatTab(ENTITIES, true, { kind: 'entity', entityId: 'pet:404', name: 'Nobody' }).level, 1)
+  // An empty name never means "match the row with no name" — parseDrillMemory drops it, and the
+  // builder refuses it too, so the two ends agree.
+  assert.equal(combatTab(ENTITIES, true, { kind: 'entity', entityId: 'pet:404', name: '' }).level, 1)
+})
+
+test('IDENTICAL FOR ANYONE WHO NEVER DRILLS: no token, no change, at either preference', () => {
+  // The ticket's third acceptance line. Nothing about level 1 moved, so a user who has never
+  // clicked a bar cannot tell this ticket shipped.
+  for (const combine of [true, false]) {
+    assert.deepEqual(shown(combatTab(ENTITIES, combine, null)), shown(overlayMeter(ENTITIES, combine, null)))
+  }
+  assert.deepEqual(panel(ENTITIES, true, null), { level: 1, subject: 'sources', rows: ['You'] })
+  assert.deepEqual(panel(ENTITIES, false, null), { level: 1, subject: 'sources', rows: ['Vebarn', 'You'] })
+})
+
 // ── THE HEADLINE OVER THE ROWS FOLLOWS THE ROWS (JOS-170) ──────────────────────────────────
 //
 // Owner report, 2026-08-09: "with a fight drilled into the You row, changing the pet preference

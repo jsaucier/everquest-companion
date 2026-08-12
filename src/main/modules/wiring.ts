@@ -24,7 +24,7 @@
 
 import { installSpellDb } from '../log/rulesets'
 import { loadSpellDb, applyOverlayCorrections, type SpellDb } from '../data/spellDb'
-import { MessageOverlayMiner } from '../data/messageOverlay'
+import { MessageOverlayMiner, type OverlaySeed } from '../data/messageOverlay'
 import { ComboModule } from './combo'
 import { RosterModule } from './roster'
 import { LootModule } from './loot'
@@ -43,8 +43,9 @@ import { BuffTimersModule } from './buffTimers'
 import { ConsiderModule, type ConsiderDeps } from './consider'
 import { EventFeedModule, type EventFeedDeps } from './eventFeed'
 import type { EqModule } from './types'
+import { buildTimerRows } from '../../shared/buffTimers'
 import type { LogEvent } from '../../shared/logEvents'
-import type { AlertDef, MessageOverlay } from '../../shared/types'
+import type { AlertDef } from '../../shared/types'
 import type { BuffTrustPrefs } from '../../shared/buffTrust'
 import type { RespawnPrefs } from '../../shared/respawn'
 
@@ -54,11 +55,13 @@ export interface ModuleWiringDeps extends ConsiderDeps, EventFeedDeps {
   /** The user's alert definitions (the store owns them; the module is kept in sync by setDefs). */
   alertDefs?: AlertDef[]
   /**
-   * Observed-message overlays to seed the miner with, in merge order: the committed baseline, then
-   * the user's persisted one. Both are additive and both are optional — a caller with no userData
-   * (the bench) passes the baseline alone and says so.
+   * Observed-message counts to seed the miner with, in merge order: the committed baseline, then
+   * the user's persisted buckets. Each carries the SOURCE KEY its counts belong to (JOS-231) —
+   * that is what lets a re-fold of a log replace its own previous contribution instead of adding
+   * to it. All are additive and all are optional — a caller with no userData (the bench) passes
+   * the baseline alone and says so.
    */
-  overlays?: (MessageOverlay | null | undefined)[]
+  overlays?: readonly OverlaySeed[]
   /**
    * Where the buffs module hands its RESOLVED `buffExpired` back (Task #47) — `bus.emitDerived` in
    * both callers, but the bus is the caller's, so the function is injected rather than the bus.
@@ -113,13 +116,17 @@ export interface ModuleWiring {
  * Pinzarn's real message) is only recognized once the corrections are in the cast-on-you table.
  * A fold that skipped this step would parse a different event stream and time a different program.
  */
-function effectiveSpellDb(overlays: readonly (MessageOverlay | null | undefined)[]): {
+function effectiveSpellDb(overlays: readonly OverlaySeed[]): {
   db: SpellDb
   corrections: number
 } {
   const db = loadSpellDb()
   const seedMiner = new MessageOverlayMiner(db.byKey)
-  for (const ov of overlays) seedMiner.merge(ov)
+  // EVERY seed, the persisted buckets included — the corrections a user's OWN log has earned reach
+  // the parser through here and nowhere else (this runs before the fold that would re-derive them,
+  // and nothing recomputes them afterwards). JOS-231 changed how counts are FILED, never which of
+  // them inform the DB.
+  for (const seed of overlays) seedMiner.merge(seed.counts, seed.key)
   const corrections = applyOverlayCorrections(db, seedMiner.deriveLandingCorrections())
   installSpellDb(db)
   return { db, corrections }
@@ -190,6 +197,13 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
   // history and had no learner at all, so a mez could never be taught its real duration and the
   // two halves could disagree about whose spell had just landed.
   const buffTimers = new BuffTimersModule(buffs.castAnchors(), buffs.spellStats())
+  // THE EARLY-WARNING OFFSET READS THE TIMER PROJECTION, AND NOTHING ELSE (JOS-216). An alert may
+  // fire N seconds before a tracked debuff's estimated end; the end it counts back from is the very
+  // row the debuffs overlay draws — `buildTimerRows` over these two snapshots — so the feature adds
+  // no duration tracking of its own and can never disagree with the bar the user is looking at.
+  // A LAZY reader, not a subscription: the alerts module calls it at most once per heartbeat, and
+  // only while a warning is actually armed (alertsEarlyWarning.ts `idle`).
+  alerts.setTimerRows(() => buildTimerRows(buffs.snapshot().state, buffTimers.snapshot().state))
   // The consider ring (Task #63): the mobs you've recently `/con`ed. It also OWNS the shared
   // own-loot index's lifetime — it folds every loot event into `ownLoot` and resets it on
   // epoch/character switch.

@@ -11,6 +11,27 @@ import type { GroupRow } from './lootGrouping'
 // Fixed dense-row height (px) for the windowed tables (MUI Table size="small").
 export const ROW_HEIGHT = 37
 
+/**
+ * THE FIXED-HEIGHT CONTRACT, as CSS (JOS-260). `useWindowedRows` is a FIXED-row-height hook: every
+ * spacer, every index and every scroll offset it computes assumes each row is exactly
+ * `ROW_HEIGHT`. A row that wraps to two lines is therefore not a cosmetic problem — it desyncs the
+ * whole window, because the browser's real geometry and the hook's arithmetic stop agreeing, and
+ * the drift compounds with every row above the viewport. `height` alone is only a MINIMUM for a
+ * table row, so the row states a maximum too and every cell is one clipped, ellipsised line. The
+ * tables that use these rows are `tableLayout: fixed` for the same reason (LootTables.tsx).
+ */
+const FIXED_ROW = {
+  height: ROW_HEIGHT,
+  maxHeight: ROW_HEIGHT,
+  '& td': {
+    py: 0,
+    maxHeight: ROW_HEIGHT,
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis'
+  }
+} as const
+
 function fmtTime(ts: number): string {
   return formatDateTime(ts, { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
@@ -89,7 +110,7 @@ export const GroupedRow = memo(function GroupedRow({
       // The stable handle for "a drill opened from the ledger itself" — a NATIVE arrival, whose
       // Back must still mean this list (JOS-43). Both row kinds carry it: they are one control.
       data-testid="loot-row"
-      sx={{ cursor: 'pointer', height: ROW_HEIGHT, '& td': { py: 0 }, opacity: g.invOnly ? 0.7 : 1 }}
+      sx={{ ...FIXED_ROW, cursor: 'pointer', opacity: g.invOnly ? 0.7 : 1 }}
       onClick={() => onSelect(g.item)}
     >
       <TableCell padding="checkbox">
@@ -143,7 +164,7 @@ export const FlatRow = memo(function FlatRow({
     <TableRow
       hover
       data-testid="loot-row"
-      sx={{ cursor: 'pointer', height: ROW_HEIGHT, '& td': { py: 0 } }}
+      sx={{ ...FIXED_ROW, cursor: 'pointer' }}
       onClick={() => onSelect(e.item)}
     >
       <TableCell padding="checkbox">

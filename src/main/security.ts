@@ -37,6 +37,14 @@ import { sep } from 'node:path'
  *   wiki.project1999.com — the other wiki this app already talks to (boss portraits, see
  *                          imageCache.ts's IMAGE_URL_ALLOWLIST). Listed so a future boss link
  *                          works, not because one exists today.
+ *   github.com           — the releases page, from the What's new panel (JOS-254). Widened on
+ *                          purpose and with the smallest possible new power: the ONE link that
+ *                          uses it is a constant in the renderer bundle, not text this app did
+ *                          not author, and github.com is already where every build of this app
+ *                          comes from (the updater's own feed, src/main/updater.ts). It is the
+ *                          host the user would have typed by hand to answer the question the
+ *                          panel is there to answer, and the panel exists so that they do not
+ *                          have to.
  *
  * Adding a host here is a deliberate decision to let renderer-supplied text cause the OS to
  * open something. Deliberately NOT shared with imageCache's list: that one governs what the
@@ -46,7 +54,8 @@ import { sep } from 'node:path'
 export const EXTERNAL_LINK_ALLOWLIST: readonly string[] = [
   'eqlwiki.com',
   'www.eqlwiki.com',
-  'wiki.project1999.com'
+  'wiki.project1999.com',
+  'github.com'
 ]
 
 const ALLOWED_LINK_HOSTS = new Set(EXTERNAL_LINK_ALLOWLIST)

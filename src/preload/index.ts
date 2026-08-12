@@ -185,8 +185,6 @@ export type {
 }
 export type { PackInstallProgress, PackMutationResult, PackPreviewList, RegistryListResult }
 export type { AppFocus, UpdateStatus }
-// `FoldCacheState` is deliberately NOT re-exported here: Preferences reads it straight from
-// `@shared/foldCachePrefs`, which is where the switch's vocabulary lives.
 export type { CursorRingPrefs, OverlayAutoHidePrefs }
 export type { ShareApplyResult, SharePreview }
 export type { FeedbackDraft, FeedbackEnv, LogSliceMeta, SubmitErrorCode }

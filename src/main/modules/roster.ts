@@ -72,9 +72,7 @@
 
 import type { EqModule } from './types'
 import { idKey } from '../log/parser'
-import { BuffFanOut, type FanOutFoldState } from './buffFanOut'
-import { S, validate, type FoldSchema } from '../foldCache/schema'
-import type { FoldCheckpointable } from '../foldCache/serialize'
+import { BuffFanOut } from './buffFanOut'
 import type { GroupEvent, HealEvent, LogEvent } from '../../shared/logEvents'
 import type { RosterEdit } from '../../shared/types'
 import {
@@ -85,72 +83,6 @@ import {
   type RosterView
 } from '../../shared/roster'
 
-/**
- * THE CHECKPOINT DECLARATION (JOS-208 phase 2).
- *
- * THE THREE EXCLUSIONS, each at the reason that excludes it:
- *   * `edits` / `editsProvider` — STORE-DERIVED. The user's roster edits are `ProgressState`'s
- *     truth, PULLED through a provider on every read precisely so this module never holds a copy
- *     that could go stale. A copy in the checkpoint would be that copy, one week older.
- *   * `selfKey` — INJECTED. session.ts installs the tailed character's name on every character
- *     load, before a line is folded; it is the same fact `character.character` is and is excluded
- *     for the same reason.
- *   * `pushed` / `dirty` / `cache` — flush and hot-path bookkeeping. A restored fold has published
- *     nothing, and the derived cache is rebuilt from `rev` on the first read.
- *
- * WHAT IS DELIBERATELY IN IT and might look like it should not be:
- *   * `neverMember` — the pet refusals. `reset()` keeps them ON PURPOSE (a pet does not stop
- *     being one because the character was reborn), so they are fold state that outlives the
- *     roster itself, and a fresh module would re-admit a pet the log already refused.
- *   * `epochTs` / `leftTs` — the two instants the edit filter reads. They decide WHICH
- *     store-derived edits still apply, so excluding them would silently resurrect edits from a
- *     dead character's group — the store-derived rule inverted.
- *   * `fanOut` — the one-second burst bucket, for the reason written on it.
- *   * `rev` — this module's cache revision. Not published (the snapshot's seq is the log seq),
- *     but the hot-path cache is keyed on it, so a restore that reset it would serve a stale view
- *     built before the restore.
- */
-const ROSTER_FOLD_SCHEMA: FoldSchema = S.obj({
-  log: S.arr(
-    S.tuple(
-      S.str,
-      S.obj({
-        key: S.str,
-        name: S.str,
-        source: S.enum('joined', 'stated', 'confirmed', 'buffed', 'user'),
-        sinceTs: S.num,
-        lastConfirmedTs: S.num,
-        stale: S.bool
-      })
-    )
-  ),
-  admittedKeys: S.arr(S.tuple(S.str, S.str)),
-  seen: S.bool,
-  lastSignalTs: S.num,
-  seq: S.num,
-  partyExp: S.bool,
-  neverMember: S.arr(S.str),
-  epochTs: S.num,
-  leftTs: S.num,
-  rev: S.num,
-  fanOut: BuffFanOut.FOLD_SCHEMA
-})
-
-/** The roster module's complete event-derived state. */
-export interface RosterFoldState {
-  log: [string, RosterMember][]
-  admittedKeys: [string, string][]
-  seen: boolean
-  lastSignalTs: number
-  seq: number
-  partyExp: boolean
-  neverMember: string[]
-  epochTs: number
-  leftTs: number
-  rev: number
-  fanOut?: FanOutFoldState
-}
-
 /** Which provenance rung each membership-bearing `change` writes. */
 const CHANGE_SOURCE: Partial<Record<GroupEvent['change'], RosterSource>> = {
   join: 'joined',
@@ -158,7 +90,7 @@ const CHANGE_SOURCE: Partial<Record<GroupEvent['change'], RosterSource>> = {
   confirm: 'confirmed'
 }
 
-export class RosterModule implements EqModule<RosterSnap, RosterSnap>, FoldCheckpointable<RosterFoldState> {
+export class RosterModule implements EqModule<RosterSnap, RosterSnap> {
   readonly id = 'roster'
 
   /** The log-derived roster, keyed canonically. Insertion order is join order, which is the
@@ -481,58 +413,5 @@ export class RosterModule implements EqModule<RosterSnap, RosterSnap>, FoldCheck
    */
   view(): RosterView {
     return this.derived().view
-  }
-
-  // ---- the checkpoint seam (JOS-208) ---------------------------------------------------------
-
-  readonly foldSchema = ROSTER_FOLD_SCHEMA
-
-  /**
-   * The membership records are copied per row: `add()` MUTATES a live `RosterMember` in place
-   * (`lastConfirmedTs`, `stale`, `source`, `name`), so an uncopied blob would keep moving after
-   * it was taken.
-   */
-  serializeFold(): RosterFoldState {
-    const log: [string, RosterMember][] = []
-    for (const [key, m] of this.log) log.push([key, { ...m }])
-    const fanOut = this.fanOut.serializeFold()
-    return {
-      log,
-      admittedKeys: [...this.admittedKeys],
-      seen: this.seen,
-      lastSignalTs: this.lastSignalTs,
-      seq: this.seq,
-      partyExp: this.partyExp,
-      neverMember: [...this.neverMember],
-      epochTs: this.epochTs,
-      leftTs: this.leftTs,
-      rev: this.rev,
-      ...(fanOut === undefined ? {} : { fanOut })
-    }
-  }
-
-  deserializeFold(state: unknown): boolean {
-    if (!validate(ROSTER_FOLD_SCHEMA, state).ok) return false
-    const s = state as RosterFoldState
-    // Insertion order IS join order (the popover lists them in it), so both maps are rebuilt by
-    // walking their arrays forwards and nothing sorts them.
-    this.log = new Map(s.log)
-    this.admittedKeys = new Map(s.admittedKeys)
-    this.seen = s.seen
-    this.lastSignalTs = s.lastSignalTs
-    this.seq = s.seq
-    this.partyExp = s.partyExp
-    this.neverMember.clear()
-    for (const key of s.neverMember) this.neverMember.add(key)
-    this.epochTs = s.epochTs
-    this.leftTs = s.leftTs
-    this.rev = s.rev
-    this.fanOut.deserializeFold(s.fanOut)
-    // The derived cache is keyed on `rev`, which has just moved under it — dropped rather than
-    // trusted, because a cache built before a restore describes the world before the restore.
-    this.cache = null
-    this.pushed = ''
-    this.dirty = true
-    return true
   }
 }

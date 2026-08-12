@@ -202,4 +202,5 @@ export class SpecialAttacks {
   reset(): void {
     this.active.clear()
   }
+
 }

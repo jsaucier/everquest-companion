@@ -38,16 +38,7 @@
 //      changes. In particular a sighting never touches `minGapMs`, `samples` or `lastTs`: it is
 //      not a death and the ladder must not learn from it.
 
-//   5. AND IT IS THE SECOND CHECKPOINT PILOT (JOS-208 — src/main/foldCache/serialize.ts). It was
-//      chosen because it is the STRUCTURED-STATE shape and it exercises all three exclusion rules
-//      at once: a keyed history with gaps and an LRU order that must survive the round trip, a
-//      second input the STORE owns (`prefs`, and the `watchIndex` derived from it) that must NOT
-//      be in the blob, and a WALL-CLOCK field (`nowMs`) that must be re-read rather than restored.
-//      `serializeFold` below states each one at the line that drops it.
-
 import type { EqModule } from './types'
-import type { FoldCheckpointable } from '../foldCache/serialize'
-import { S, validate, type FoldSchema } from '../foldCache/schema'
 import { isCountedKill } from '../log/reducers'
 import { idKey } from '../log/parser'
 import type { LogEvent } from '../../shared/logEvents'
@@ -206,57 +197,7 @@ function seenSpell(ev: LogEvent): (string | null | undefined)[] | null {
 const FLOOR: WikiRespawnData = respawnsJson
 const WIKI = new Map<string, WikiRespawn>(FLOOR.rows.map((r) => [r.key, r]))
 
-/**
- * The respawn module's complete EVENT-DERIVED state (JOS-208).
- *
- * The history is an ARRAY OF ENTRIES rather than a Map, for the reason the seam's header gives:
- * plain data only, and the order of that array IS the LRU order the fold maintains — so it is
- * load-bearing, not incidental, and a round trip that reordered it would change which mob gets
- * evicted next.
- */
-export interface RespawnFoldState {
-  /** `[id, entry]` pairs in the Map's own insertion (LRU) order. */
-  history: [string, MobHistory][]
-  zone: string
-  zoneSince: number
-  rev: number
-}
-
-/**
- * THE DECLARATION (JOS-208). Field for field, this is `MobHistory` — and writing it out is the
- * point: the shape hash is derived from these lines, so `seenPubTs` (say) being added to the
- * interface above without being added here would be caught by the plain-data audit rather than
- * shipped as a checkpoint that quietly drops it.
- *
- * `confirmedTs` IS here even though the header calls it "never persisted": that sentence is about
- * the STORE (a confirmation is a judgement about one spawn, not a preference to remember forever),
- * and this is not the store — it is the fold at byte B, and the fold at byte B had it. Restoring
- * without it would make `restore(checkpoint(prefix)) + tail` differ from `fold(prefix + tail)`,
- * which is the one property the whole feature rests on.
- */
-const MOB_HISTORY_SCHEMA: FoldSchema = S.obj({
-  key: S.str,
-  display: S.str,
-  zone: S.str,
-  lastTs: S.num,
-  minGapMs: S.opt(S.num),
-  samples: S.num,
-  gaps: S.arr(S.num),
-  kills: S.num,
-  seenTs: S.opt(S.num),
-  seenVia: S.opt(S.enum('combat', 'consider', 'hold', 'spell')),
-  seenPubTs: S.opt(S.num),
-  confirmedTs: S.opt(S.num)
-})
-
-const RESPAWN_FOLD_SCHEMA: FoldSchema = S.obj({
-  history: S.arr(S.tuple(S.str, MOB_HISTORY_SCHEMA)),
-  zone: S.str,
-  zoneSince: S.num,
-  rev: S.num
-})
-
-export class RespawnModule implements EqModule<RespawnSnap, RespawnDelta>, FoldCheckpointable<RespawnFoldState> {
+export class RespawnModule implements EqModule<RespawnSnap, RespawnDelta> {
   readonly id = 'respawn'
   private history = new Map<string, MobHistory>()
   private zone = ''
@@ -569,50 +510,6 @@ export class RespawnModule implements EqModule<RespawnSnap, RespawnDelta>, FoldC
     if (!this.dirty) return null
     this.dirty = false
     return { seq: this.rev, delta: this.build(this.nowMs) }
-  }
-
-  // ---- the checkpoint seam (JOS-208) ---------------------------------------------------------
-
-  readonly foldSchema = RESPAWN_FOLD_SCHEMA
-
-  /**
-   * THE THREE EXCLUSIONS, each at the line that drops it:
-   *
-   *   * `prefs` — STORE-DERIVED. The watch list is the settings file's truth, injected at
-   *     construction by pipeline.ts and re-applied by ipc/respawn.ts. A copy here would be a
-   *     second, older truth for the same fact: a checkpoint written before the user added a watch
-   *     would restore the fold to not watching it. One truth per fact.
-   *   * `watchIndex` — DERIVED FROM `prefs`, and rebuilt by the constructor and `setPrefs`. Storing
-   *     a derivation of an excluded fact is the same mistake with an extra step.
-   *   * `nowMs` — WALL CLOCK. It is only the ordering clock `build` publishes against, and a
-   *     restored fold is entitled to today's reading; `reset()` re-reads it and the go-live tick
-   *     (session.ts's `registry.tick(Date.now())`, one call BEFORE the interval) overwrites it
-   *     before the first publish, exactly as after a cold replay.
-   *
-   * `dirty` is likewise absent: a restored fold has published nothing, and the loader's caller
-   * re-hydrates every consumer from `snapshot()` anyway.
-   *
-   * The entries are shallow-copied per row so the blob cannot alias live `MobHistory` objects
-   * (their `gaps` array is mutated in place by `recordDeath`).
-   */
-  serializeFold(): RespawnFoldState {
-    const history: [string, MobHistory][] = []
-    for (const [id, h] of this.history) history.push([id, { ...h, gaps: [...h.gaps] }])
-    return { history, zone: this.zone, zoneSince: this.zoneSince, rev: this.rev }
-  }
-
-  deserializeFold(state: unknown): boolean {
-    if (!validate(RESPAWN_FOLD_SCHEMA, state).ok) return false
-    const s = state as RespawnFoldState
-    // Insertion order IS the LRU order (see `recordDeath`'s delete-then-set), so the Map is rebuilt
-    // by walking the array forwards and nothing sorts it.
-    this.history = new Map(s.history)
-    this.zone = s.zone
-    this.zoneSince = s.zoneSince
-    this.rev = s.rev
-    this.nowMs = Date.now()
-    this.dirty = true
-    return true
   }
 }
 

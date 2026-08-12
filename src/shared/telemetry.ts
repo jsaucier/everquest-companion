@@ -599,6 +599,7 @@ export interface EvSessionEnd {
   /** This launch's startup replay, if no heartbeat carried it first. Optional, same rule. */
   startup?: StartupReplayStats
 }
+
 export interface EvViewDwell {
   t: 'viewDwell'
   view: TelemetryView

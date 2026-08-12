@@ -181,7 +181,12 @@ export function StartupSection({ data }: { data: TriageAnalyticsData }): JSX.Ele
         The second line of each row is the MACHINE&apos;s half: the drift of a fixed heartbeat that
         ran through the same fold, and how long the first megabyte took to arrive. Drift that
         climbs while the block figures hold still is a healthy process on a stuttering computer -
-        neither number claims that alone, the pair does.
+        neither number claims that alone, the pair does. The third line is the startup
+        CHECKPOINT&apos;s backstop: how often a client re-folded its log the slow way in the
+        background and compared the answer to the remembered one. Divergences are expected to be
+        zero forever - a non-zero here is the reason to switch the shortcut off, not a number to
+        interpret. It never says WHICH part of the fold differed; that stays on the user&apos;s own
+        machine.
       </Typography>
       {s.byVersion.length === 0 ? (
         <Typography variant="caption" color="text.secondary" data-testid="analytics-startup-empty">

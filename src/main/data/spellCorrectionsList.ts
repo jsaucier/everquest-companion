@@ -354,6 +354,25 @@ const HAND_DERIVED_CORRECTIONS: readonly SpellCorrection[] = [
     evidence: 'Same `(?)`; 48 sibling poisons carry the clean text, which matches 168 owner-log lines.'
   },
   {
+    // JOS-251, and the first correction this file has taken for an edit made UPSTREAM rather than a
+    // scrape artifact. The re-scrape that captured the effect lists picked up 160 changed pages, and
+    // one of them had had its self wear-off sentence replaced with a description of the THIRD-person
+    // one: `Your Beguile spell has worn off of <mob>.` is a real line (50 of them in the owner's
+    // log) and is not what `msg_wears_off` records — that field is what prints on the charmed
+    // TARGET, which for every other member of the family is `You are no longer charmed.`
+    //
+    // It is here rather than in the scrape for the reason the file's header gives: the wiki dataset
+    // stays pristine and idempotent under re-scrape, and if the page is fixed upstream this entry
+    // reports `satisfied` and the audit test says so.
+    spells: ['Beguile'],
+    field: 'msgWearsOff',
+    from: 'Your beguile spell has worn off',
+    to: 'You are no longer charmed.',
+    attribution: 'db',
+    evidence:
+      'Six siblings sharing Beguile`s own landing sentence (`Someone has been charmed.` — Charm, Cajoling Whispers, Boltran`s Agacerie, Dictate, Alluring Whispers, Vampire Charm) all carry `You are no longer charmed.` verbatim. The owner`s log cannot witness either text (he is the charmER: 50 `Your Beguile spell has worn off of <mob>.` lines, 0 self charm fades), which is exactly the unobservable-detrimental state the header describes — so the DB is the only witness and it is unanimous.'
+  },
+  {
     spells: ["Ikatiar's Revenge"],
     field: 'msgCastOnOther',
     from: 'Someone has been poison.',

@@ -9,7 +9,9 @@
 import { idKey } from '../log/parser'
 import { DISPEL_FAMILY, SLOW_STRIKE, coatLineKey } from '../../shared/poisons'
 import { procBuffInCandidates } from '../../shared/procBuffs'
+import { selfLandingProcIn } from './procDetect'
 import { stateKeyOf, type CloseStateArgs, type OpenStateArgs } from './stateTimeline'
+import type { SpellProcFold } from './procDetect'
 import type { EngineState } from './state'
 import type { CoatSlot } from '../../shared/combat'
 import type { PoisonCoatEvent, PoisonDryEvent, PoisonProcEvent } from '../../shared/logEvents'
@@ -135,6 +137,36 @@ export function routeProcBuffApply(st: EngineState, ts: number, target: string, 
   const def = procBuffInCandidates(candidates)
   if (!def) return
   commitState(st, { kind: 'buff', key: idKey(def.name), name: def.name, ts })
+}
+
+/**
+ * A PROC WHOSE ONLY PRINTED EVIDENCE IS THIS LANDING (JOS-246 — procDetect's header carries the
+ * slice evidence and the registry's entry bar).
+ *
+ * A THIRD disjoint gate over the same `buffApply` stream, and it consumes nothing the other two
+ * want: `DISPEL_FAMILY` names a lane on a MOB, `PROC_BUFF_CATALOG` opens a SELF-BUFF SPAN, and
+ * this one counts a FIRING. A spell could in principle sit in two of them; none of the three
+ * short-circuits the others, so that would be two true statements about one line rather than a
+ * conflict.
+ *
+ * IT PAYS THE SAME CAST JOIN EVERY OTHER PROC PAYS. Nothing in the registry is player-castable
+ * today, so the gate never fires on the shipped entry — it is here so the registry cannot grow a
+ * castable spell and start reporting the caster's own casts as procs, which is precisely the
+ * defect JOS-167 was filed for on the damage side.
+ */
+export function routeSelfLandingProc(st: EngineState, ts: number, target: string, candidates: string[]): void {
+  if (target !== 'self') return
+  const def = selfLandingProcIn(candidates)
+  if (!def) return
+  if (st.recentCasts.origin(def.name, ts) !== 'proc') return
+  // ANNOTATION, NEVER DAMAGE (this file's header, world-model law 8): a landing opens no
+  // encounter and extends none. It folds into the fight in progress only while that fight is
+  // FRESH, and always into the zone aggregate — the same two ledgers, in the same order, that
+  // ingest's own `foldBoth` writes.
+  const active = st.stateTimeline.active
+  const fold: SpellProcFold = { spell: def.name, side: 'landing', active }
+  st.zoneAgg.procs.addSpellProc(fold)
+  st.freshEncounter(ts)?.agg.procs.addSpellProc(fold)
 }
 
 /** A tracked proc buff's OWN wears-off line — the rare case where the end is printed, so the

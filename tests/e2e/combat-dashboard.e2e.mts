@@ -72,7 +72,7 @@ import {
 import { mainWindow } from './appWindow.mjs'
 import { launchOnFixture } from './logFixture.mjs'
 import type { FixtureLog } from './logFixture.mjs'
-import { meterRows, stepDrillRoundTrip } from './drill.mjs'
+import { meterRows, stepDrillAcrossFights, stepDrillRoundTrip } from './drill.mjs'
 import {
   clickScope,
   clickView,
@@ -555,6 +555,10 @@ async function main(): Promise<void> {
     await stepAbilityStats(page)
     await stepDrillRoundTrip(page)
     await stepPickAFight(page, snap)
+    // 10a-bis. THE DRILL SURVIVES A CHANGE OF FIGHT (JOS-240). After stepPickAFight, because it
+    //          needs the picker proven to work and two finalized fights to move between; before
+    //          the live-pull steps, because a fight opening under it would move the head row.
+    await stepDrillAcrossFights(page)
     await stepFrozenList(page, log)
     await stepSearch(page, snap)
     await stepResponsive(app, page)

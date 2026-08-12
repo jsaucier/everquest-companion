@@ -15,8 +15,15 @@ import type { RosterSnap } from './roster'
  * your group roster — the widening the reported "my group-mate is missing from the meter" bug
  * needed. It is a SOURCE kind only: a mob hitting a group member stays out of the model
  * entirely, so the incoming meter is still exactly "what is hitting You".
+ *
+ * `'allyPet'` (JOS-250) is SOMEBODY ELSE'S charm pet, bound to the person who charmed it. A FIFTH
+ * kind rather than a flavour of `'pet'`, because the two answer opposite questions: a `'pet'` row
+ * is yours and nests inside your breakdown, while this one belongs to a named third party and must
+ * never be added to your total, your curve or your drill. Its row reads
+ * `Pet (<mob>) - <Charmer>` and its damage is only ever the mob-vs-mob damage the admission gate
+ * lets through while that bind is live and unambiguous (src/main/combat/allyCharms.ts).
  */
-export type SourceKind = 'you' | 'pet' | 'member' | 'enemy'
+export type SourceKind = 'you' | 'pet' | 'member' | 'enemy' | 'allyPet'
 export type DamageType = 'melee' | 'spell' | 'dot' | 'ds'
 
 /**

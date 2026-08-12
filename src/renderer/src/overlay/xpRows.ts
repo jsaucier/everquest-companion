@@ -124,6 +124,9 @@ function rate(n: number | null, fmt: (v: number) => string): string {
   return n == null ? NONE : fmt(n)
 }
 
+// The row hovers stay what they were. JOS-249's definition of ACTIVE TIME rides the window's
+// SPAN line instead (XpOverlay.tsx, `xp-span`) — the one place this window states the
+// denominator, stated once for every row rather than four times over.
 const XP_TITLE =
   'Levels of progress per hour of active time. The log states a percentage of the current level bar, never experience points.'
 const AA_RATE_TITLE =

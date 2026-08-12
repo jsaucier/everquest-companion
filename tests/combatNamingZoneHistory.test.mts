@@ -48,6 +48,13 @@ const MULTI_ADD: string[] = [
 
 test('N1: LIVE fight name = current (most-recent) target; +N counts the other engaged target', () => {
   const eng = new CombatEngine()
+  // LIVE FROM THE START, because that is the only state anybody ever LOOKS at a meter in, and
+  // since JOS-208 phase 4 it is also the only state the wall-clock closure sweep runs in: a
+  // replay is not a moment in time, so `snapshot(now)` no longer finalizes a fight while the
+  // historical fold is still reading (engine.ts). Every window below asks what the meter shows
+  // after its span, which is a live question; the poll-lag arms model the live tick race and
+  // still exercise it.
+  eng.setLive()
   eng.setPlayerName('Primitive')
   const lastTs = feed(eng, MULTI_ADD)
   // Snapshot WHILE the fight is still open (just after the last hit, within the linger window).
@@ -62,6 +69,7 @@ test('N1: LIVE fight name = current (most-recent) target; +N counts the other en
 
 test('N2: FINALIZED fight name = largest-damage target (+N suffix preserved)', () => {
   const eng = new CombatEngine()
+  eng.setLive()
   eng.setPlayerName('Primitive')
   const lastTs = feed(eng, MULTI_ADD)
   // Snapshot far in the future → the fight closes (death-linger/fallback), so it's finalized and
@@ -74,6 +82,7 @@ test('N2: FINALIZED fight name = largest-damage target (+N suffix preserved)', (
 
 test('N3: single-target fight has no +N and live==finalized name', () => {
   const eng = new CombatEngine()
+  eng.setLive()
   eng.setPlayerName('Primitive')
   const lines = [
     '[Sun Jul 19 09:10:00 2026] You crush a lone rat for 20 points of damage.',
@@ -88,6 +97,7 @@ test('N3: single-target fight has no +N and live==finalized name', () => {
 
 test('Z1: a zone change finalizes the prior zone aggregate into a selectable session', () => {
   const eng = new CombatEngine()
+  eng.setLive()
   eng.setPlayerName('Primitive')
   feed(eng, [
     '[Sun Jul 19 09:20:00 2026] You have entered Befallen.',
@@ -115,6 +125,7 @@ test('Z1: a zone change finalizes the prior zone aggregate into a selectable ses
 
 test('Z2: zone-session history is capped at 20 finalized sessions', () => {
   const eng = new CombatEngine()
+  eng.setLive()
   eng.setPlayerName('Primitive')
   let seq = 0
   const ing = (raw: string): void => {
@@ -162,6 +173,7 @@ const ONE_PULL: string[] = [
 
 test('L1: the default selection with an OPEN fight is that fight', () => {
   const eng = new CombatEngine()
+  eng.setLive()
   eng.setPlayerName('Primitive')
   const lastTs = feed(eng, ONE_PULL)
   const snap = eng.snapshot(lastTs + 500, {})
@@ -174,6 +186,7 @@ test('L1: the default selection with an OPEN fight is that fight', () => {
 
 test('L2: with NO open fight the default STAYS on the last fight — it never switches to the zone', () => {
   const eng = new CombatEngine()
+  eng.setLive()
   eng.setPlayerName('Primitive')
   const lastTs = feed(eng, ONE_PULL)
   // Far enough in the future that the fight closed on the idle fallback.
@@ -194,6 +207,7 @@ test('L2: with NO open fight the default STAYS on the last fight — it never sw
 
 test('L2b: with no fights at all the fight scope resolves to NOTHING (it never borrows the zone)', () => {
   const eng = new CombatEngine()
+  eng.setLive()
   eng.setPlayerName('Primitive')
   // A zone line only — no damage anywhere, so there is no fight to show.
   feed(eng, ['[Sun Jul 19 13:00:00 2026] You have entered Befallen.'])
@@ -206,6 +220,7 @@ test('L2b: with no fights at all the fight scope resolves to NOTHING (it never b
 // scope may list. Fight must never offer a zone session and Overall must never offer a fight.
 test('S1: the Fight scope lists only fights and labels a finished head row honestly', () => {
   const eng = new CombatEngine()
+  eng.setLive()
   eng.setPlayerName('Primitive')
   const lastTs = feed(eng, ONE_PULL)
 
@@ -232,6 +247,7 @@ test('S1: the Fight scope lists only fights and labels a finished head row hones
 
 test('S2: the Overall scope lists only zone sessions', () => {
   const eng = new CombatEngine()
+  eng.setLive()
   eng.setPlayerName('Primitive')
   feed(eng, [
     '[Sun Jul 19 14:00:00 2026] You have entered Befallen.',
@@ -251,6 +267,7 @@ test('S2: the Overall scope lists only zone sessions', () => {
 })
 
 test('L3: hydrating is true during the historical replay and false once the tail takes over', () => {
+  // THE ONE ENGINE IN THIS FILE THAT IS NOT LIVE FROM THE START, because the flag is its subject.
   const eng = new CombatEngine()
   eng.setPlayerName('Primitive')
   assert.equal(eng.snapshot(Date.now(), {}).hydrating, true, 'fresh engine = replay phase')

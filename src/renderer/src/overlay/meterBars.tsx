@@ -45,6 +45,7 @@ const ACCENT = '#d9b25f'
 const KIND_COLOR: Record<string, string> = {
   you: '#d9b25f',
   pet: '#6fb3d2',
+  allyPet: '#5b7f95',
   member: '#7fbf8f',
   enemy: '#cf6679'
 }
@@ -326,7 +327,7 @@ function SourceLines({
           label={
             <>
               {e.name}
-              {e.kind === 'pet' ? ' ·pet' : e.kind === 'member' ? ' ·group' : ''}
+              {e.kind === 'pet' ? ' ·pet' : e.kind === 'member' ? ' ·group' : e.kind === 'allyPet' ? ' ·ally' : ''}
             </>
           }
           right={`${formatRate(e.dps)} · ${fmt(e.total)}`}

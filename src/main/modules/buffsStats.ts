@@ -24,9 +24,19 @@
 //     about a caster's AAs, focus items and rank; a grouped enchanter's 31-second mez and your own
 //     44-second one are two answers to two questions, and pooling them gives a bar wrong for both.
 //
-// THE ESTIMATOR ITSELF is unchanged from JOS-117 and confirmed by the owner (ruling 6):
+// THE ESTIMATOR ITSELF is JOS-117's, confirmed by the owner (ruling 6):
 //   estimate = max( DB baseline , max-over-recent-window of CLEAN observed samples )
 // The DB base is a FLOOR and the recent observed max is an EXTENSION over it. See `estimateFor`.
+//
+// JOS-212 (owner ruling 2026-08-12) ADDED THE ONE WAY THE FLOOR CAN LOSE, and it is still the same
+// one estimator: a below-floor observation overrules the DB base when the log CORROBORATES it —
+// three clean cycles in the recency window whose top three agree within 10% (`corroboratedMax` in
+// buffsShapes.ts, where the measurement behind both numbers lives). It exists because the floor's
+// assumption (AA/focus only extend, so nothing is ever shorter than its base) is a claim about
+// classic EQ, and this game re-tiered spells the committed scrape still describes the old way. The
+// estimate then reports source 'cluster' rather than 'observed', because the two make opposite
+// claims about the DB row and the UI must not tell the user "longer than the baseline" about a
+// number that is shorter.
 //
 // WHAT JOS-180 CHANGED IS THE WINDOW, NOT THE ESTIMATOR. A sample now records whether the log
 // NAMED a cause for the cycle ending (`<mob> has been awakened by <name>.`), and the recency window
@@ -35,11 +45,17 @@
 // measurement behind it and the property it must not cost are on `observedWindowMaxFor`.
 
 import type { SpellDb } from '../data/spellDb'
-import { spellNature } from '../data/spellDb'
-import { S, type FoldSchema } from '../foldCache/schema'
+import { spellCalmsTarget, spellNature } from '../data/spellDb'
 import type { BuffClass, BuffStat } from '../../shared/types'
 import { learnKey, SELF_CASTER } from '../../shared/buffTrust'
-import { percentile, RECENT_SAMPLE_WINDOW, type DurationSample, type SpellSamples } from './buffsShapes'
+import type { EstimatorSource } from '../../shared/buffTypes'
+import {
+  corroboratedMax,
+  percentile,
+  RECENT_SAMPLE_WINDOW,
+  type DurationSample,
+  type SpellSamples
+} from './buffsShapes'
 
 export class SpellStats {
   /** The scraped spell database (Task #34), optional — the authoritative prior. */
@@ -84,6 +100,41 @@ export class SpellStats {
   /** True when a spell KEY is illusion-flagged in the DB (Task #36). */
   isIllusion(key: string): boolean {
     return this.db?.byKey.get(key)?.illusion ?? false
+  }
+
+  /**
+   * DOES THE SPELL DATABASE SAY THIS SPELL NEVER EXPIRES (JOS-215) — the self/permanent-buff
+   * discriminator, read at the same seam as `dbDurationFor` and `isIllusion` and from the same row.
+   *
+   * THE REPORT (01KZS7FZEAC0Q0T76ZJRS32DSR, v0.21.0): the buff window omits self buffs. The cause is
+   * one line in `BuffInstances.applyMessageBuff`, which refused a landing with no duration and no
+   * illusion flag — and a permanent buff HAS no duration, by definition. Yaulp, the Shielding line,
+   * Instrument of Nife, the rogue blade coats and 57 others therefore landed, printed their sentence,
+   * and opened nothing at all.
+   *
+   * THE DISCRIMINATOR IS `durationText === 'Permanent'`, AND `durationMs == null` ALONE IS NOT IT.
+   * Measured over the committed spells.json (1,926 rows): 62 rows state `Permanent`, every one of
+   * them `targetType: Self` and beneficial (58 `Beneficial`, 3 `Statistic Buff`, 1 `Damage Shield`),
+   * and every one of them carries `durationMs: null` because `parseDurationMs` deliberately refuses
+   * the word. But 453 Self rows carry a null `durationMs`, and the rest of them are `Instant` nukes,
+   * `Unlimited`, and a handful of clock forms an older scrape could not read — admitting on the null
+   * would open a permanent instance for every instant self-cast in the game. The wiki's own WORD is
+   * the fact; the null is an artefact of reading it.
+   *
+   * IT IS THE WIKI'S WORD AND NOT A CURATED LIST, which is the same rule `spellCalmsTarget` and the
+   * `ccSpell` roster already follow: a re-scrape that marks another spell Permanent gets it for free,
+   * and nothing here has to be hand-maintained. `durationText` is compared verbatim — the scrape
+   * writes the template field unchanged and all 62 rows spell it exactly this way.
+   *
+   * HONEST LIMIT, STATED HERE BECAUSE THIS IS WHERE A READER WILL ASK. The model learns a permanent
+   * buff is up only from its CAST: there is no login roster in the log and a permanent buff prints
+   * no periodic reminder, so one raised before logging began is invisible until the next recast.
+   * Nothing can fix that from the log alone, and the failure is in the safe direction — the window
+   * under-reports rather than inventing a buff. Death is the one event that heals it: it strips your
+   * self buffs, so the model and the game agree again from the next cast onward.
+   */
+  isPermanent(key: string): boolean {
+    return this.db?.byKey.get(key)?.durationText === 'Permanent'
   }
 
   /**
@@ -236,6 +287,27 @@ export class SpellStats {
   }
 
   /**
+   * The most recent {@link RECENT_SAMPLE_WINDOW} CLEAN samples for this (line, caster), newest
+   * first — the same window {@link observedWindowMaxFor} maxes over on the uncensored side, handed
+   * out as a list because the below-floor overrule (JOS-212) asks a question a max cannot answer:
+   * do the observations AGREE?
+   *
+   * Censored samples are absent by construction. They are lower bounds on a duration, not
+   * measurements of one, so they may neither corroborate a cluster nor break one — the same
+   * reasoning that gives them their own window in the max.
+   */
+  cleanWindowFor(key: string, caster: string = SELF_CASTER): number[] {
+    const s = this.samples.get(learnKey(key, caster))
+    if (!s) return []
+    const out: number[] = []
+    for (let i = s.samples.length - 1; i >= 0 && out.length < RECENT_SAMPLE_WINDOW; i--) {
+      const sample = s.samples[i]
+      if (sample.censored !== true) out.push(sample.ms)
+    }
+    return out
+  }
+
+  /**
    * THE ONE ESTIMATOR (JOS-117, ruling 6) — used by the Buffs TAB estimate column, the buff/debuff
    * overlay countdown (buffsView.ts `overlayDurationOf`) AND, since JOS-140, the crowd-control
    * holds. The DB baseline is a FLOOR, the recent observed max is an EXTENSION over it:
@@ -252,19 +324,50 @@ export class SpellStats {
    *     rank's, the only row that exists), observed 44 s at rank VII ⇒ 44 s.
    * With no DB base the observed max stands alone; with neither, null.
    *
-   * THE FLOOR'S ASSUMPTION, stated: the base rank's stated duration is a floor for the upgraded
-   * ranks. That is true of a rank line and is the only assumption being made. A CC spell ever
-   * observed running SHORTER than its DB row is what would need revisiting, and the source label
-   * says 'db' in that case rather than silently averaging.
+   * ─────────────────────────────────────────────────────────────────────────────────────────
+   * WHAT JOS-212 CHANGED — THE FLOOR IS NO LONGER UNFALSIFIABLE (owner ruling 2026-08-12, and the
+   * only sanctioned change to ruling 6's estimator since it was written).
    *
-   * `source` names which WON — 'observed' when a sample beat the floor (the tab/overlay label it
-   * "log"), 'db' when the floor held (Invisibility legitimately stays 'db').
+   * The floor rests on ONE assumption, stated above and stated here again because it is the whole
+   * of the argument: *a beneficial buff's true duration is never below its DB base, because AA and
+   * focus only EXTEND.* That is a claim about the game the wiki describes. The committed
+   * spells.json is a CLASSIC-ERA scrape and EverQuest Legends re-tiered spells, so for a real
+   * population of rows the base is not a floor at all — it is a wrong number, and because the
+   * estimator is a max, no amount of evidence could ever move it. Twenty rows on the owner's log
+   * sit below their floor; a reporter's Shield of Fire drew 15:00 for a spell his own log measured
+   * at 6:48 twice.
+   *
+   * So a below-floor observation may now overrule the floor, but ONLY when it is CORROBORATED:
+   *
+   *   estimate = observed max, source 'cluster'
+   *      when  observed max < DB base
+   *      and   `corroboratedMax(cleanWindowFor(...)) != null`
+   *            — i.e. ≥ {@link BELOW_FLOOR_MIN_SAMPLES} clean samples in the recency window whose
+   *              top three agree within {@link BELOW_FLOOR_MAX_SPREAD}.
+   *
+   * buffsShapes.ts carries the measurement the two constants come from: the clustered spells
+   * (Celerity 0.3% … Tashina 8.6%) and the click-off spells (Quickness 12.2% … Invisibility 161%)
+   * separate cleanly, and the threshold sits in the gap. INVISIBILITY STILL KEEPS ITS FLOOR — the
+   * floor law's own worked counterexample survives the change that relaxes it, which is the test
+   * that the relaxation is honest.
+   *
+   * TWO SMALL EXACTNESSES. (1) The number the overrule returns is the whole window's max, not the
+   * clean cluster's — if a CENSORED sample in the window is longer, the log proved the spell was
+   * still running at that instant and the estimate may never be drawn below a proven lower bound.
+   * It errs long, which is the direction everything in this file errs. (2) The comparison is
+   * strict, so an observation that merely EQUALS the floor changes nothing and stays 'db'.
+   *
+   * `source` names which won — 'observed' when a sample beat the floor, 'cluster' when a
+   * corroborated below-floor cluster removed it, 'db' when the floor held.
    */
-  estimateFor(key: string, caster: string = SELF_CASTER): { ms: number | null; source: 'db' | 'observed' | undefined } {
+  estimateFor(key: string, caster: string = SELF_CASTER): { ms: number | null; source: EstimatorSource | undefined } {
     const dbMs = this.dbDurationFor(key)
     const observedMax = this.observedWindowMaxFor(key, caster)
     if (dbMs != null) {
       if (observedMax != null && observedMax > dbMs) return { ms: observedMax, source: 'observed' }
+      if (observedMax != null && observedMax < dbMs && corroboratedMax(this.cleanWindowFor(key, caster)) != null) {
+        return { ms: observedMax, source: 'cluster' }
+      }
       return { ms: dbMs, source: 'db' }
     }
     if (observedMax != null) return { ms: observedMax, source: 'observed' }
@@ -292,6 +395,22 @@ export class SpellStats {
    */
   classOf(key: string): BuffClass {
     return spellNature(this.db?.byKey.get(key)?.spellType) === 'detrimental' ? 'debuff' : 'buff'
+  }
+
+  /**
+   * DOES THIS SPELL CALM ITS TARGET (JOS-213) — the second, orthogonal question about a spell's
+   * effect, asked at the same seam and answered from the same place.
+   *
+   * `classOf` says whether the spell is a good thing or a bad thing; this says whether the thing
+   * it does happens to an ENEMY. The calm line — Pacify, Soothe, Calm, Lull and the rest of the
+   * family spells.json groups by landing message — is beneficial AND on a mob, which is why one
+   * flag could never carry both and why the timer overlay was showing an aggro clock beside the
+   * player's own buffs. `data/spellDb.ts spellCalmsTarget` holds the roster and the argument;
+   * everything true of `classOf` is true here too, including that it is never resolved by looking
+   * at who the spell landed on.
+   */
+  calmsTarget(key: string): boolean {
+    return spellCalmsTarget(this.db?.byKey.get(key))
   }
 
   /**
@@ -330,53 +449,4 @@ export class SpellStats {
     }
     return stats
   }
-
-  // ---- the checkpoint seam (JOS-208 phase 2) --------------------------------------------------
-  //
-  // THE LEARNER IS GAME KNOWLEDGE AND IT IS THE POINT OF CHECKPOINTING THIS HALF AT ALL. A
-  // duration mined over weeks of play is the single most expensive thing this fold produces, and
-  // it is the one thing a rebirth and a session gap deliberately KEEP (see the module header).
-  // Restoring it wrong shows up as a bar counting down from the DB floor for a spell the app has
-  // watched two hundred times.
-  //
-  // `db` is NOT stored: it is the committed `spells.json` plus the overlay corrections, rebuilt
-  // by the composition root before any module exists, and one of the inputs the shape hash covers
-  // by covering the build. `samples` and `lastSeen` keep their Map order (entries arrays) because
-  // `observedWindowMaxFor` walks a sample list backwards and the ORDER is the recency window.
-
-  static readonly FOLD_SCHEMA: FoldSchema = S.obj({
-    samples: S.arr(
-      S.tuple(
-        S.str,
-        S.obj({
-          spell: S.str,
-          samples: S.arr(S.obj({ ms: S.num, ts: S.num, censored: S.opt(S.bool) }))
-        })
-      )
-    ),
-    everFaded: S.arr(S.str),
-    lastSeen: S.arr(S.tuple(S.str, S.num))
-  })
-
-  serializeFold(): SpellStatsFoldState {
-    const samples: [string, SpellSamples][] = []
-    for (const [key, s] of this.samples) {
-      samples.push([key, { spell: s.spell, samples: s.samples.map((x) => ({ ...x })) }])
-    }
-    return { samples, everFaded: [...this.everFaded], lastSeen: [...this.lastSeen] }
-  }
-
-  /** Adopt a previously serialized learner. Validation is the OWNER's — see `BuffsModule`. */
-  deserializeFold(state: SpellStatsFoldState): void {
-    this.samples = new Map(state.samples)
-    this.everFaded = new Set(state.everFaded)
-    this.lastSeen = new Map(state.lastSeen)
-  }
-}
-
-/** The learner as plain data — the DB deliberately absent (it is rebuilt, not remembered). */
-export interface SpellStatsFoldState {
-  samples: [string, SpellSamples][]
-  everFaded: string[]
-  lastSeen: [string, number][]
 }

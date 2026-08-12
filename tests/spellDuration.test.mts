@@ -106,22 +106,41 @@ test('the clock reading agrees with the DB`s own words for the same span', () =>
 // 2 — THE FILL IS A FILL
 // ---------------------------------------------------------------------------------------------
 
-test('THE WHOLE BLAST RADIUS, by name: 87 nulls filled and ONE stated number corrected', () => {
-  // The pass re-derives rather than merely filling, so this is the guard that says what that costs.
-  // A change to the reader that moves a duration nobody asked it to move fails HERE, with the spell
-  // and both numbers — which is the report needed to decide whether the move was intended.
+test('THE WHOLE BLAST RADIUS: nothing, because the re-scrape wrote what the pass used to fill', () => {
+  // THIS ASSERTION USED TO SAY `87 nulls filled and ONE stated number corrected` (Sicken, `1 min
+  // 24s`, 60 s → 84 s), and the change is JOS-251 rather than a regression: that ticket re-ran the
+  // scrape, the scrape derives `durationMs` through THIS SAME reader (JOS-189's whole point), and
+  // so all 87 rows and Sicken's number are now stated by the committed file itself. The fill pass
+  // finding nothing to do is the end state the JOS-189 header predicted in writing —
+  // "IDEMPOTENT IN BOTH DIRECTIONS … once a re-scrape through the same reader writes the numbers
+  // itself, this pass finds nothing to do".
+  //
+  // AND THE GUARD IS STRONGER NOW, NOT WEAKER. The old numbers said "the reader and the file
+  // disagree in exactly these 88 places"; an empty report says they do not disagree ANYWHERE, so a
+  // change to the reader that moves any committed duration fails here with the spell and both
+  // numbers attached — which is the report needed to decide whether the move was intended.
   const { spells, report } = applyDerivedDurations(RAW)
   assert.equal(spells.length, RAW.length)
-  assert.equal(report.filled, 87, 'the rows the old reader could not read at all')
-  assert.deepEqual(
-    report.corrected,
-    [{ spell: 'Sicken', text: '1 min 24s', from: 60_000, to: 84_000 }],
-    'the ONE stated number that moves: the old reader summed `1 min` and dropped the `24s` beside it'
-  )
+  assert.equal(report.filled, 0, 'the committed scrape now reads every form the reader reads')
+  assert.deepEqual(report.corrected, [], 'and states the same number the reader derives')
   // Nothing loses a duration it had. A reader that stopped understanding a form the scrape did read
   // would show up here rather than as a spell that quietly stopped drawing a bar.
   const lost = spells.filter((s, i) => RAW[i].durationMs != null && s.durationMs == null)
   assert.deepEqual(lost.map((s) => `${s.name}: ${s.durationText}`), [])
+})
+
+test('…and the rows it used to fill are the ones the file now states', () => {
+  // The blast radius, kept as a claim about SPELLS rather than a count. These are the two families
+  // JOS-189 added (single-letter units and the clock) plus the one corrected number, read straight
+  // off the committed file — so "the scrape absorbed the fill" is asserted by name and a re-scrape
+  // that lost the reader again fails here instead of in somebody's buff window.
+  const stated = (name: string): number | null | undefined => RAW.find((s) => s.name === name)?.durationMs
+  assert.equal(stated('Spirit of the Puma'), 60_000, 'the reported defect — `60s`')
+  assert.equal(stated('Form of the Bear'), 8_640_000, '`2h 24m`')
+  assert.equal(stated('Instill'), 96_000, '`1m 36s`')
+  assert.equal(stated('Laceration'), 24_000, 'the clock, `0:00:24`')
+  assert.equal(stated('Sicken'), 84_000, '`1 min 24s` — the one number that MOVED, now stated')
+  assert.equal(stated('Infectious Spores'), null, '`Unlimited` is still no duration at all')
 })
 
 test('…and it is inert on a file the fixed scrape has already written', () => {
@@ -134,11 +153,21 @@ test('…and it is inert on a file the fixed scrape has already written', () => 
   assert.deepEqual(twice.spells, once.spells)
 })
 
-test('the pass never writes through the imported JSON module', () => {
-  const before = RAW.find((s) => s.name === 'Spirit of the Puma')?.durationMs
-  applyDerivedDurations(RAW)
-  assert.equal(before, null, 'the committed scrape still says what the old reader wrote')
-  assert.equal(RAW.find((s) => s.name === 'Spirit of the Puma')?.durationMs, null)
+test('the pass never writes through the entries it is handed', () => {
+  // The non-mutation guarantee, which used to rest on the committed file still carrying a null the
+  // pass would fill. It no longer carries one (see above), so the input is BUILT here — the row as
+  // the pre-JOS-189 scrape wrote it — and the assertion is that the pass hands back a new object
+  // and leaves the caller's untouched. `spellsJson` is an ES-imported module object shared by every
+  // reader in the process, so writing through it would be a cross-module side effect.
+  const row = { name: 'Spirit of the Puma', durationText: '60s', durationMs: null, illusion: false }
+  const { spells } = applyDerivedDurations([row])
+  assert.equal(row.durationMs, null, 'the caller`s entry is untouched')
+  assert.equal(spells[0].durationMs, 60_000, 'and the copy carries the derived number')
+  assert.notEqual(spells[0], row)
+  // …and on the real file, where there is nothing to fill, the entries come back IDENTICAL rather
+  // than merely equal — the pass returns `s` itself when the number already agrees.
+  const again = applyDerivedDurations(RAW)
+  assert.ok(again.spells.every((s, i) => s === RAW[i]), 'an inert pass copies nothing')
 })
 
 test('the loaded DB carries the filled durations, not the file`s nulls', () => {
@@ -190,13 +219,15 @@ test('THE REPORTED DEFECT: a Spirit of the Puma cast plus its landing draws a ba
     ],
     20
   )
-  const row = r.rows.find((x) => x.name === 'Spirit of the Puma VI')
+  const row = r.rows.find((x) => x.name === 'Spirit of the Puma')
   assert.ok(row, `no Puma row: ${r.rows.map((x) => `${x.name}@${x.target ?? 'self'}`).join(', ') || '(none)'}`)
   assert.equal(row.kind, 'buff')
+  // The row is named for the SPELL (JOS-238) and carries the cast line's rank beside it.
+  assert.equal(row.castName, 'Spirit of the Puma VI')
   assert.equal(row.mode, 'countdown', 'a bar with a duration, which is the whole report')
   assert.equal(row.durationMs, 60_000, 'the wiki`s `60s`, which nothing in the tree could read before')
   assert.ok(
-    r.active.some((a) => a.spell === 'Spirit of the Puma VI'),
+    r.active.some((a) => a.spell === 'Spirit of the Puma'),
     `no held instance: ${r.active.map((a) => a.spell).join(', ') || '(none)'}`
   )
 })
@@ -223,14 +254,23 @@ test('…and the fade closes the cycle, so the rank`s real length is learned', (
   assert.equal(stat.estimatorSource, 'observed')
 })
 
-test('…and with the wiki`s unread duration the same sequence opens nothing, which is the defect', () => {
-  // The defect stated the way `spellCorrections.test.mts` states the Allure and Bravura pairs: the
-  // fill is the only thing standing between this test and the two above. `applyMessageBuff` returns
-  // early on `durationMs == null && !illusion`, so the landing produced no instance at all.
+test('…and the defect itself, which is now fixed in TWO places rather than one', () => {
+  // The defect stated the way `spellCorrections.test.mts` states the Allure and Bravura pairs.
+  // `applyMessageBuff` returns early on `durationMs == null && !illusion`, so the landing produced
+  // no instance at all — and the row below, verbatim as the pre-JOS-189 scrape committed it, is
+  // what the reporter's client had.
+  //
+  // BOTH REPAIRS ARE ASSERTED, because the belt and the braces answer different questions. The
+  // FILE now states the number (JOS-251 re-scraped through the fixed reader), and the LOAD PATH
+  // would still derive it if a future scrape regressed — which is the arrangement JOS-189 built,
+  // and it is only load-bearing while nobody can see it working.
+  const asScraped = { name: 'Spirit of the Puma', durationText: '60s', durationMs: null, illusion: false }
+  assert.equal(applyDerivedDurations([asScraped]).spells[0].durationMs, 60_000, 'the load path recovers it')
+
   const puma = RAW.find((s) => s.name === 'Spirit of the Puma')
   assert.ok(puma)
-  assert.equal(puma.durationMs, null, 'the committed scrape states no duration')
-  assert.equal(puma.durationText, '60s', 'even though the wiki states one')
+  assert.equal(puma.durationText, '60s', 'the wiki always stated it')
+  assert.equal(puma.durationMs, 60_000, 'and since JOS-251 the committed scrape does too')
   assert.equal(puma.msgCastOnYou, 'You begin to snarl as your features become feline.', 'the messages were never wrong')
   assert.equal(puma.msgWearsOff, 'The spirit of the puma departs.')
 })

@@ -143,7 +143,13 @@ import { app, ipcMain, type BrowserWindow } from 'electron'
 import electronUpdater from 'electron-updater'
 import { IPC } from '../shared/ipc'
 import type { UpdateChannel, UpdateStatus } from '../shared/types'
-import { MAX_DOWNLOAD_ATTEMPTS, isStaleVersion, nextCheckDelayMs } from '../shared/update'
+import {
+  MAX_DOWNLOAD_ATTEMPTS,
+  describeUpdateFailure,
+  isStaleVersion,
+  nextCheckDelayMs,
+  shouldRetryCheck
+} from '../shared/update'
 import { logInfo } from './errorLog'
 import { getUpdateChannel, getUpdateLastCheckedAt, setUpdateLastCheckedAt } from './store'
 import { classifyFailure, recordEvent } from './telemetry'
@@ -168,6 +174,18 @@ let downloading: string | null = null
  * event already accounted for this failure, so one failure counts exactly once.
  */
 let checkInFlight = false
+/**
+ * Attempts the CURRENT check has already burned (JOS-211). A malformed/empty feed
+ * body buys exactly one more — `shouldRetryCheck` owns that policy.
+ */
+let checkAttempts = 0
+/**
+ * Set when a failure has been classified as retryable and swallowed: no verdict was
+ * pushed, no failure was counted, and `runCheck`'s loop is expected to go round again.
+ * It is the handshake between the 'error' EVENT and the `checkForUpdates()` REJECTION,
+ * which both fire for the same failure — exactly like `checkInFlight`.
+ */
+let retryPending = false
 
 /**
  * Map our channel choice onto electron-updater's settings — which since the tags-only
@@ -208,11 +226,6 @@ function applyChannel(_channel: UpdateChannel): void {
 const noInstallInDev = (): void => {
   /* nothing staged in dev — deliberately does nothing */
 }
-
-/** The exact text these two failure paths have always produced: an object's `message` when it
- *  has one, else the value itself, stringified. */
-const failureText = (e: unknown): string =>
-  String((e as { message?: unknown } | null | undefined)?.message ?? e)
 
 /**
  * THE `updateOutcome` PRODUCER (JOS-39). The schema has carried check/download/apply plus a
@@ -333,13 +346,25 @@ function registerUpdaterEvents(currentVersion: string, { push, checkDone }: Stat
     // NONE of them are shown loudly — the chip keeps rendering "checked …" and
     // only Preferences carries the text. The backoff below stops us from
     // hammering a feed that is refusing us.
-    consecutiveFailures++
+    //
     // WHICH STEP FAILED is `downloading`: electron-updater funnels a failed download through the
     // same 'error' event as a failed check, and the only thing that tells them apart is whether
     // we had a download in flight. Getting it wrong would put CDN failures in the check row.
-    noteUpdate(downloading !== null ? 'download' : 'check', err ?? 'unknown error')
+    const step = downloading !== null ? 'download' : 'check'
     downloading = null
-    checkDone({ state: 'error', message: err == null ? 'unknown error' : failureText(err) })
+    // JOS-211: an unreadable feed body is swallowed ONCE — no verdict, no telemetry, no
+    // backoff tick, because one logical check must produce exactly one of each. `runCheck`
+    // reads `retryPending` and goes round again; the second failure takes the path below.
+    // Downloads are untouched: they have their own bounded retry (MAX_DOWNLOAD_ATTEMPTS).
+    // `checkInFlight` is what makes the swallow safe: only a failure `runCheck` is
+    // waiting on may be withheld, so a stray 'error' can never leave a verdict unpushed.
+    if (step === 'check' && checkInFlight && !retryPending && shouldRetryCheck(err, checkAttempts)) {
+      retryPending = true
+      return
+    }
+    consecutiveFailures++
+    noteUpdate(step, err ?? 'unknown error')
+    checkDone({ state: 'error', message: describeUpdateFailure(err) })
   })
 }
 
@@ -468,19 +493,33 @@ export function initUpdater(getMainWindow: () => BrowserWindow | null): void {
     // reset the chip to "checking" and then to idle. Leave it be.
     if (lastStatus.state === 'ready') return lastStatus
     if (checkInFlight) return lastStatus
-    checkInFlight = true
-    try {
-      await autoUpdater.checkForUpdates()
-    } catch (err) {
-      // checkForUpdates rejects AND emits 'error'. `checkDone` clears the flag,
-      // so a still-set flag here means the event handler did NOT run and this
-      // failure is uncounted — that way one failure counts exactly once.
-      if (checkInFlight) {
-        consecutiveFailures++
-        checkDone({ state: 'error', message: failureText(err) })
+    // ONE logical check, up to two attempts (JOS-211). The loop is bounded by
+    // `shouldRetryCheck`, which only ever says yes on the FIRST attempt.
+    checkAttempts = 0
+    for (;;) {
+      retryPending = false
+      checkInFlight = true
+      try {
+        await autoUpdater.checkForUpdates()
+      } catch (err) {
+        // checkForUpdates rejects AND emits 'error'. `checkDone` clears the flag,
+        // so a still-set flag here means the event handler did NOT run and this
+        // failure is uncounted — that way one failure counts exactly once.
+        // `retryPending` is the same idea for the case where it DID run and
+        // deliberately withheld the verdict.
+        const unaccounted = checkInFlight && !retryPending
+        if (unaccounted && shouldRetryCheck(err, checkAttempts)) {
+          retryPending = true
+        } else if (unaccounted) {
+          consecutiveFailures++
+          checkDone({ state: 'error', message: describeUpdateFailure(err) })
+        }
       }
+      checkInFlight = false
+      checkAttempts++
+      if (!retryPending) break
     }
-    checkInFlight = false
+    retryPending = false
     return lastStatus
   }
 

@@ -23,6 +23,17 @@
  * HERE rather than only in tests/bossLockouts.test.mts: an absent attribute and an empty one are
  * the same value in a unit assertion and are two different tooltips in a real browser.
  *
+ * …and since JOS-237, that the toolbar's "Defeated only" switch answers the question THE VIEW IS
+ * ASKING. It filtered on the all-time killed flag in both modes, so the week view hid nothing a
+ * coordinator wanted hidden; the assertion is an equality between two readings of one screen (the
+ * cards left standing == the cards drawing a green rung), which is why it can live here beside a
+ * real clock. `stepDefeatedOnlyIsThisWeek` carries the argument.
+ *
+ * …and since JOS-239, that the OTHER grouping mounts and that its headers are honest — the
+ * by-loadout switch had never been flipped by anything in this suite, so a whole view of the roster
+ * had zero app-level coverage. `loadoutSectionSteps.mts` carries that argument and the step, out of
+ * this file because it is at the 400-code-line ceiling.
+ *
  * WHAT THIS SPEC DELIBERATELY DOES NOT ASSERT: which rungs are GREEN. "Cleared this week" is a
  * comparison against the real clock, and the committed e2e fixture's kills sit at fixed dates, so
  * any expected colour here would be true only until the next Tuesday 08:00 Pacific and would then
@@ -47,11 +58,15 @@ import {
   countOf,
   dumpArtifacts,
   failures,
+  note,
   reportRun,
   settle,
-  settleGone
+  settleGone,
+  settleStable,
+  waitHydrated
 } from './appHarness.mjs'
 import { launchApp, mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
+import { stepLoadoutSectionsAreHonest } from './loadoutSectionSteps.mjs'
 
 const NAV_BOSSES = '[data-testid="nav-bosses"]'
 const NAV_OVERVIEW = '[data-testid="nav-overview"]'
@@ -64,7 +79,10 @@ const MODE_WEEK = '[data-testid="boss-mode-week"]'
 const KEY = 'eq.bosses.mode'
 const CARD = '[data-testid="boss-card"]'
 const LADDER = '[data-testid="boss-difficulty-ladder"]'
-
+/** The switch JOS-237 is about, and the label beside it (which the mode rewrites). */
+const DEFEATED = '[data-testid="boss-defeated-only"]'
+/** The toolbar's running count — the filter's yardstick, and unmoved by the filter itself. */
+const TALLY = '[data-testid="boss-tally"]'
 /** Which mode the toggle group is showing as selected. `null` when it is not mounted. */
 function modeState(page: Page): Promise<string | null> {
   return page.evaluate((sel) => {
@@ -128,6 +146,234 @@ function cardTails(page: Page): Promise<CardTail> {
     )
     return { cards: cards.length, ladderLast, lockedCaption, rungTitles }
   }, { card: CARD, ladder: LADDER })
+}
+
+/** One card as this spec reads it: which target, and what the card itself says about it. */
+interface CardFact {
+  name: string
+  /** THIS WEEK only: at least one rung under it is green (a lockout taken inside the window). */
+  cleared: boolean
+  /** OVERALL only: the corner chip reads `not defeated`, i.e. no kill is on the record. */
+  undefeated: boolean
+}
+
+/**
+ * ONE RENDER OF THE ROSTER: the switch, the tally, and the cards — read in a single evaluate so
+ * they cannot describe different moments. See `readUnder` for why that matters here.
+ */
+interface FilterView {
+  /** whether the Defeated switch is on; `null` when the control is not mounted */
+  on: boolean | null
+  /**
+   * The toolbar's own count, `N / M` — the numerator is what the CURRENT MODE counts as defeated
+   * (locked this week, or ever) and the denominator is the whole roster. It is derived from the
+   * unfiltered statuses, so it is the filter's own yardstick from the same paint.
+   */
+  tally: { n: number; total: number }
+  cards: CardFact[]
+}
+
+/**
+ * Every card on screen, named by the target its own `title` attribute names, together with the
+ * switch and the tally that produced them. Reading the NAME off each card (rather than counting)
+ * is what lets a filtered view be compared to a SET — the difference between "the switch hid
+ * something" and "the switch hid the right things".
+ */
+function filterView(page: Page): Promise<FilterView> {
+  return page.evaluate((sel) => {
+    const root = document.querySelector(sel.toggle)
+    const input = root instanceof HTMLInputElement ? root : (root?.querySelector('input') ?? null)
+    const counts = /^\s*(\d+)\s*\/\s*(\d+)/.exec(
+      document.querySelector(sel.tally)?.textContent ?? ''
+    )
+    return {
+      on: input instanceof HTMLInputElement ? input.checked : null,
+      tally: { n: Number(counts?.[1] ?? -1), total: Number(counts?.[2] ?? -1) },
+      cards: [...document.querySelectorAll(sel.card)].map((card) => ({
+        name: (card.getAttribute('title') ?? '').split(' - ')[0],
+        cleared: card.querySelector(`${sel.ladder} > [data-cleared="1"]`) !== null,
+        undefeated: (card.textContent ?? '').includes('not defeated')
+      }))
+    }
+  }, { card: CARD, ladder: LADDER, toggle: DEFEATED, tally: TALLY })
+}
+
+/** Whether the Defeated switch is on. `null` when the control is not mounted. */
+async function defeatedOn(page: Page): Promise<boolean | null> {
+  return (await filterView(page)).on
+}
+
+/** Names on screen, sorted — the comparable form of a card set. */
+const names = (cards: CardFact[]): string[] => cards.map((c) => c.name).sort()
+
+/**
+ * The roster as it stands with the switch in a given position — with the switch PROVED to be in
+ * that position, and the tally read, at the moment the cards were read.
+ *
+ * EVERY ASSERTION THIS SPEC MAKES ABOUT THE FILTER IS WITHIN ONE READING, and that is not
+ * fussiness. This spec drives the app against the owner's LIVE log, which moves under it in two
+ * ways that both produced a FALSE FAILURE while this step was being written — a red saying the fix
+ * does not work, with the fix correct in the tree:
+ *
+ *   • THE FOLD LANDS MID-STEP. The roster's cards exist before any kill does (a target draws a
+ *     card whether or not you have killed it), so a reading taken while months of log are still
+ *     folding sees 32 cards and 0 defeated, and one taken a second later sees 31 defeated.
+ *     Comparing the first to the second is comparing two different worlds. Hence `waitHydrated`
+ *     before the step, AND the tally — which comes from the same paint as the cards, so
+ *     "the switch left exactly what the tally counts" is true of either world.
+ *   • A LIVE RE-RENDER CAN REMOUNT THE VIEW (the `viewKey` remount the sky-filters spec argues
+ *     with at length), and `defeatedOnly` is plain component state that a remount resets — it is
+ *     deliberately not persisted. A remount between "the switch reads on" and "here are the cards"
+ *     reports the UNFILTERED roster as the switch's answer. Hence the switch is read in the same
+ *     evaluate, and a reading whose switch is not where we put it is re-taken rather than believed.
+ *
+ * An emptied roster is an ABSENCE, so it is settled by the reading STOPPING rather than by a count
+ * arriving (wave E3): on a week with no lock at all the right answer is zero cards, and no
+ * `settle` predicate would ever fire.
+ */
+async function readUnder(page: Page, on: boolean, attempts = 3): Promise<FilterView | null> {
+  for (let i = 0; i < attempts; i++) {
+    if (!(await setDefeatedOnly(page, on))) continue
+    const seen = await settleStable(() => filterView(page), { timeoutMs: 15_000 })
+    if (seen.on === on) return seen
+  }
+  return null
+}
+
+/** What the switch CALLS itself right now — the mode rewrites it (JOS-237). */
+function defeatedLabel(page: Page): Promise<string> {
+  return page.evaluate((sel) => {
+    const root = document.querySelector(sel)
+    const label = root?.closest('.MuiFormControlLabel-root')?.querySelector('.MuiFormControlLabel-label')
+    return label?.textContent?.trim() ?? ''
+  }, DEFEATED)
+}
+
+/** Flip the switch and wait for the control itself to report the new state. */
+async function setDefeatedOnly(page: Page, on: boolean): Promise<boolean> {
+  if ((await defeatedOn(page)) === on) return true
+  await page.click(DEFEATED, { timeout: 15_000 })
+  return (await settle(() => defeatedOn(page), (v) => v === on, { timeoutMs: 8_000 })) === on
+}
+
+/**
+ * JOS-237: "DEFEATED ONLY" ANSWERS THE QUESTION THE VIEW IS ASKING.
+ *
+ * Owner-reported while release-testing: the switch filtered on the ALL-TIME killed flag in BOTH
+ * modes, so on THIS WEEK it kept every target ever defeated — cards whose five rungs were grey,
+ * under a switch a raid coordinator flips to see what the week has taken.
+ *
+ * WHY THIS IS CLOCK-INDEPENDENT (the header's rule: this spec never says WHICH rung is green,
+ * because the committed fixture's kills are fixed dates and the reset is real time). Nothing below
+ * asserts a count. The claim is an EQUALITY BETWEEN TWO READINGS OF THE SAME SCREEN: the cards the
+ * switch leaves behind are exactly the cards that were drawing a green rung a moment earlier. That
+ * is true on any Tuesday, and it is false under the old code on every week in which the fixture's
+ * ever-defeated set is larger than its locked-this-week set — which is the defect, stated as a
+ * disagreement between the switch and the rungs rather than as a date.
+ */
+async function stepDefeatedOnlyIsThisWeek(page: Page): Promise<void> {
+  // The fold has to be OVER before two readings of this roster describe the same world.
+  await waitHydrated(page)
+  const label = await defeatedLabel(page)
+  check('THE SWITCH SAYS WHICH WEEK IT MEANS on the week view', label === 'Defeated this week', label)
+  if (!check('the switch is off to begin with', (await defeatedOn(page)) === false)) return
+
+  const before = await readUnder(page, false)
+  const shown = await readUnder(page, true)
+  if (!check('the week roster reads cleanly with the switch off and on', before !== null && shown !== null)) return
+  const roster = before as FilterView
+  const kept = shown as FilterView
+  check(
+    'the unfiltered week view is the whole roster',
+    roster.cards.length === roster.tally.total,
+    `${String(roster.cards.length)} cards / ${String(roster.tally.total)} targets`
+  )
+
+  check(
+    'DEFEATED ONLY, ON THIS WEEK, IS THIS WEEK - it leaves exactly what the tally calls locked',
+    kept.cards.length === kept.tally.n,
+    `${String(kept.cards.length)} shown / ${String(kept.tally.n)} locked of ${String(kept.tally.total)}`
+  )
+  check(
+    'every card that survived the filter is showing a green rung',
+    kept.cards.every((c) => c.cleared),
+    `${String(kept.cards.length)} cards`
+  )
+  // …and they are the same cards the UNFILTERED view drew green. Only comparable when the two
+  // readings agree about the week; the live log is allowed to move between them, and a kill
+  // landing mid-step is a different world, not a broken filter.
+  const green = names(roster.cards.filter((c) => c.cleared))
+  if (roster.tally.n === kept.tally.n) {
+    check(
+      '…and they are the cards the unfiltered view drew green, one for one',
+      names(kept.cards).join('|') === green.join('|'),
+      `${String(kept.cards.length)} shown / ${String(green.length)} green`
+    )
+  } else {
+    note(`bosses-week: the week moved between readings (${String(roster.tally.n)} then ${String(kept.tally.n)} locked) - set comparison skipped`)
+  }
+
+  // The other mode measures the set this switch USED to show here, so the two can be compared.
+  const everDefeated = await stepDefeatedOnlyIsAllTime(page)
+  if (everDefeated === kept.tally.n) {
+    note(
+      `bosses-week: this week's locks and the whole kill history are the same size (${String(everDefeated)}), so the all-time/this-week split is not separable on this run`
+    )
+  } else {
+    check(
+      '…and the week view showed THIS WEEK rather than the all-time roster it used to',
+      kept.cards.length !== everDefeated,
+      `${String(kept.cards.length)} shown this week vs ${String(everDefeated)} ever defeated`
+    )
+  }
+
+  const back = await settle(() => countOf(page, CARD), (n) => n === roster.tally.total, { timeoutMs: 15_000 })
+  check('…and with the switch off the whole roster is back', back === roster.tally.total, `${String(back)} / ${String(roster.tally.total)}`)
+}
+
+/**
+ * The other mode, and the half that must NOT have changed: on OVERALL the switch is still the
+ * all-time filter it has always been, and still calls itself that. It is entered from the week
+ * view with the switch already ON, because a mode change that silently dropped the filter would
+ * pass every assertion made one mode at a time.
+ *
+ * Returns how many targets are defeated ALL-TIME — measured here, with the filter off, because
+ * `not defeated` is a thing only the overall chip ever says (the week chip says `open`, which is
+ * a different sentence). It leaves the view back on This week with the switch off.
+ */
+async function stepDefeatedOnlyIsAllTime(page: Page): Promise<number> {
+  const picked = await setMode(page, MODE_OVERALL, 'overall')
+  if (!check('switching to Overall with the filter still on', picked === 'overall', String(picked))) return -1
+  const label = await defeatedLabel(page)
+  check('THE LABEL GOES BACK to the all-time wording', label === 'Defeated only', label)
+
+  const filtered = await readUnder(page, true)
+  const all = await readUnder(page, false)
+  if (!check('the overall roster reads cleanly with the switch on and off', filtered !== null && all !== null)) {
+    return -1
+  }
+  const kept = filtered as FilterView
+  const roster = all as FilterView
+  const everDefeated = kept.tally.n
+  check(
+    'DEFEATED ONLY, ON OVERALL, IS STILL EVER-DEFEATED - the tally its own view states',
+    kept.cards.length === everDefeated,
+    `${String(kept.cards.length)} shown / ${String(everDefeated)} defeated of ${String(kept.tally.total)} targets`
+  )
+  check(
+    '…so no `not defeated` card survives it',
+    kept.cards.every((c) => !c.undefeated),
+    `${String(kept.cards.filter((c) => c.undefeated).length)} undefeated of ${String(kept.cards.length)}`
+  )
+  check(
+    '…and switching it off puts every target back',
+    roster.cards.length === roster.tally.total,
+    `${String(roster.cards.length)} cards / ${String(roster.tally.total)} targets`
+  )
+
+  const week = await setMode(page, MODE_WEEK, 'week')
+  check('…and This week comes back for the rest of the spec', week === 'week', String(week))
+  return everDefeated
 }
 
 /** Open the Bosses tab and wait for its toolbar. Safe when the tab is already the open one. */
@@ -321,6 +567,7 @@ async function stepWeekSticksAcrossTabs(page: Page): Promise<void> {
   check(`the choice is stored under ${KEY}`, stored === 'week', `stored ${String(stored)}`)
 
   await stepLadder(page)
+  await stepDefeatedOnlyIsThisWeek(page)
 
   if (!(await awayAndBack(page))) return
   const after = await settle(() => modeState(page), (v) => v !== null, { timeoutMs: 8_000 })
@@ -382,6 +629,7 @@ async function main(): Promise<void> {
       await stepDefault(page)
       await stepWeekSticksAcrossTabs(page)
       await stepOverallSticksToo(page)
+      await stepLoadoutSectionsAreHonest(page)
       await stepArmRestart(page)
       if (failures.length) await dumpArtifacts(page, 'bosses-week-FAIL')
     } finally {

@@ -35,6 +35,31 @@
 // scripts/gen-message-overlay.ts from the full log) ships so fresh installs benefit from
 // day one. On startup the baseline is loaded, then the persisted user overlay is merged on
 // top (user observations add to the baseline counts).
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// EVERY COUNT IS FILED UNDER THE SOURCE THAT PRODUCED IT, AND RE-FOLDING A SOURCE REPLACES
+// ITS FILING (JOS-231). The mining is a FOLD — it runs over the whole log at every launch and
+// produces exactly the same counts from the same bytes. What it is seeded with used to be a
+// single flat pile: the committed baseline PLUS `<userData>/message-overlay.json`, which is what
+// the last session's identical fold had already written. So each cold launch added the log's
+// observations to a snapshot that already contained them: MEASURED 22 -> 44 -> 88 across three
+// launches, doubling forever, and every derived verdict (n>=2 is VERIFIED) resting on counts that
+// describe the number of times the app has STARTED rather than what the log says.
+//
+// The fix is bookkeeping, not a filter. `sources` is a bucket per origin — `merge()` files an
+// import (the baseline, a persisted bucket) under its key, `beginSource(key)` DISCARDS that key's
+// bucket and points subsequent observations at it, and `build()` sums the buckets. A re-fold of a
+// log therefore REPLACES that log's contribution instead of adding to it, which makes mining
+// idempotent by construction: fold the same bytes any number of times, get the same counts
+// (`tests/messageOverlayIdempotence.test.mts` folds three simulated cold launches and demands
+// byte-identical output).
+//
+// Two things it deliberately does NOT do. It does not drop the persisted seed — a bucket for a
+// character you are not folding right now is knowledge nothing else can re-derive, and the seed is
+// also the ONLY channel by which a user's own mined messages ever become parser corrections
+// (`effectiveSpellDb` derives them from the seed, before the fold). And it does not dedupe by log
+// position — an identity per observation would persist thousands of offsets to answer a question
+// "which log was this from" already answers.
 
 import type {
   MessageOverlay,
@@ -42,11 +67,65 @@ import type {
   OverlayVerdict,
   SpellEntry
 } from '../../shared/types'
-import { S, type FoldSchema } from '../foldCache/schema'
 import { castOnOtherSuffix } from './spellDb'
 
 /** Overlay schema version — bump to invalidate a stale on-disk snapshot. */
 export const OVERLAY_VERSION = 1
+
+/**
+ * The bucket observations land in when nobody named a source. The app always names one
+ * (`session.ts` calls `beginOverlaySource(characterId(ref))` before each character's fold);
+ * this is for the generator script and the unit tests, which fold one log and never switch.
+ */
+export const DEFAULT_SOURCE = 'log'
+
+/**
+ * The bucket the COMMITTED baseline's counts are filed under. Lives here rather than in
+ * `overlayPersistence.ts` because it is a source key like any other, and because that file needs
+ * Electron — a Node test asserting what does and does not get persisted has to be able to name it.
+ * Never a character id: a real one is `<Name>@<server>`.
+ */
+export const BASELINE_SOURCE = 'baseline'
+
+/**
+ * Anything the miner can absorb counts from — the committed baseline (a full `MessageOverlay`,
+ * verdicts and all) or one persisted bucket. Only these three fields are ever read: a verdict is
+ * DERIVED, never imported.
+ */
+export interface OverlayCounts {
+  messages: readonly {
+    text: string
+    role: 'landing' | 'wearsOff'
+    spells: readonly { spell: string; count: number }[]
+  }[]
+}
+
+/** One source's raw counts — the REGISTER that is persisted, not the view that is served. */
+export interface OverlaySourceCounts {
+  /** Which origin produced these counts: a character id, or the committed baseline's key. */
+  key: string
+  messages: { text: string; role: 'landing' | 'wearsOff'; spells: { spell: string; count: number }[] }[]
+}
+
+/** The whole register: every bucket, plus the log instant the miner has observed through. */
+export interface OverlayRegister {
+  updatedAt: string
+  sources: OverlaySourceCounts[]
+}
+
+/** One seed handed to a miner at construction: counts, and the source key they are filed under. */
+export interface OverlaySeed {
+  key: string
+  counts: OverlayCounts | null | undefined
+}
+
+/**
+ * The buckets worth writing to userData: everything except the committed baseline, which is
+ * re-seeded from the bundle on every launch (persisting it would only make a staler second copy).
+ */
+export function persistableSources(register: OverlayRegister): OverlaySourceCounts[] {
+  return register.sources.filter((s) => s.key !== BASELINE_SOURCE)
+}
 
 /** How long after a cast a message line is attributed to it (ms). Mirrors the landing window. */
 const ASSOCIATION_WINDOW_MS = 6_000
@@ -87,6 +166,32 @@ function messageMatchesOtherSuffix(text: string, suffix: string): boolean {
   return text.endsWith(tail) && text.length > tail.length
 }
 
+/**
+ * Add per-spell counts into a record, keyed canonically. The ONE place counts are combined —
+ * imports (`merge`) and the cross-bucket sum (`aggregate`) share it so they can never drift.
+ */
+function addCounts(rec: MessageRecord, spells: readonly { spell: string; count: number }[]): void {
+  for (const sp of spells) {
+    const key = canonKey(sp.spell)
+    const cur = rec.bySpell.get(key)
+    if (cur) cur.count += sp.count
+    else rec.bySpell.set(key, { display: sp.spell, count: sp.count })
+  }
+}
+
+/** One bucket's records as persistable counts, sorted so the file is stable and diffable. */
+function bucketCounts(bucket: Map<string, MessageRecord>): OverlaySourceCounts['messages'] {
+  return [...bucket.values()]
+    .map((rec) => ({
+      text: rec.text,
+      role: rec.role,
+      spells: [...rec.bySpell.values()]
+        .map((s) => ({ spell: s.display, count: s.count }))
+        .sort((a, b) => a.spell.localeCompare(b.spell))
+    }))
+    .sort((a, b) => a.text.localeCompare(b.text))
+}
+
 /** A derived verdict for one message, plus the wiki disagreement when there is one. */
 interface VerdictResult {
   verdict: OverlayVerdict
@@ -124,17 +229,24 @@ function landingVerdict(rec: MessageRecord, spellDisplay: string, dbSpell: Spell
  * module. `spellsByKey` (from the DB) is used ONLY to detect wiki contradictions.
  */
 export class MessageOverlayMiner {
-  /** messageText → record. */
-  private records = new Map<string, MessageRecord>()
+  /**
+   * sourceKey → (messageText → record). ONE BUCKET PER ORIGIN (JOS-231): imports keep the key
+   * they were merged under, the fold writes into the key `beginSource` named, and `build()` sums
+   * them. Insertion order is merge order then fold order, and every serialization sorts, so two
+   * runs over the same inputs produce byte-identical output.
+   */
+  private sources = new Map<string, Map<string, MessageRecord>>()
+  /** Which bucket `observeMessage` writes into — the log currently being folded. */
+  private current = DEFAULT_SOURCE
   /** The most-recent cast(s) still inside the association window (newest last). */
   private recentCasts: RecentCast[] = []
   /**
-   * THE NEWEST LOG INSTANT THIS MINER HAS OBSERVED, and the overlay's `updatedAt` (JOS-208
-   * phase 2). It used to be `new Date().toISOString()` — a WALL-CLOCK read inside a published
-   * fold snapshot, which the differential harness caught the moment the buffs module joined the
-   * matrix: two arms folding the identical bytes built their overlay milliseconds apart and
-   * disagreed on every split point of every fixture, for a field that describes nothing about the
-   * two folds being compared.
+   * THE NEWEST LOG INSTANT THIS MINER HAS OBSERVED, and the overlay's `updatedAt`. It used to be
+   * `new Date().toISOString()` — a WALL-CLOCK read inside a PUBLISHED fold snapshot, found by
+   * folding the identical bytes twice and diffing the results (JOS-208, whose checkpoint JOS-230
+   * later removed; `tests/foldDeterminism.test.mts` is the audit that survives it): the two runs
+   * built their overlay milliseconds apart and disagreed on every fixture, over a field that
+   * describes nothing about either fold.
    *
    * It is now what it should always have been: the LOG's own clock. "Current as of this instant
    * in the log" is a statement about the observations the overlay is made of; "current as of when
@@ -149,6 +261,34 @@ export class MessageOverlayMiner {
 
   constructor(spellsByKey?: Map<string, SpellEntry>) {
     this.spellsByKey = spellsByKey
+  }
+
+  /** The bucket for `key`, created empty on first use. */
+  private bucket(key: string): Map<string, MessageRecord> {
+    let b = this.sources.get(key)
+    if (!b) {
+      b = new Map()
+      this.sources.set(key, b)
+    }
+    return b
+  }
+
+  /**
+   * START FOLDING `key`'s LOG — the whole of it, from the first byte (JOS-231).
+   *
+   * Whatever this source contributed before (a bucket restored from `<userData>` at startup, or
+   * an earlier fold of the same log in this process) is DISCARDED here, because the fold that
+   * follows is about to state it again. That is the entire idempotence argument: the counts a
+   * source contributes are the counts its most recent complete fold produced, never a running
+   * total of how many times we have read it.
+   *
+   * `Map.set` keeps an existing key's insertion position, so re-folding a seeded source does not
+   * reorder the register. The open cast anchor is dropped too — a new log begins with no anchor.
+   */
+  beginSource(key: string): void {
+    this.sources.set(key, new Map())
+    this.current = key
+    this.recentCasts = []
   }
 
   /** Record that the player began casting a spell (the association anchor). */
@@ -175,10 +315,11 @@ export class MessageOverlayMiner {
     const distinct = new Set(this.recentCasts.map((c) => c.spellKey))
     if (distinct.size !== 1) return
     const cast = this.recentCasts[this.recentCasts.length - 1]
-    let rec = this.records.get(text)
+    const into = this.bucket(this.current)
+    let rec = into.get(text)
     if (!rec) {
       rec = { text, role, bySpell: new Map() }
-      this.records.set(text, rec)
+      into.set(text, rec)
     }
     const s = rec.bySpell.get(cast.spellKey)
     if (s) s.count++
@@ -191,22 +332,46 @@ export class MessageOverlayMiner {
     this.recentCasts = this.recentCasts.filter((c) => now - c.ts <= ASSOCIATION_WINDOW_MS)
   }
 
-  /** Merge a persisted/baseline overlay's counts INTO this miner (additive). */
-  merge(overlay: MessageOverlay | null | undefined): void {
-    if (!overlay) return
-    for (const m of overlay.messages) {
-      let rec = this.records.get(m.text)
+  /**
+   * Merge imported counts INTO one bucket (additive WITHIN that bucket). `sourceKey` says where
+   * they came from, and is what `beginSource` needs in order to replace them when that same
+   * origin is folded again — merging the baseline and a persisted character under one key would
+   * put the fold's own output back in the pile it is seeded from, which is the JOS-231 defect.
+   */
+  merge(counts: OverlayCounts | null | undefined, sourceKey: string): void {
+    if (!counts) return
+    const into = this.bucket(sourceKey)
+    for (const m of counts.messages) {
+      let rec = into.get(m.text)
       if (!rec) {
         rec = { text: m.text, role: m.role, bySpell: new Map() }
-        this.records.set(m.text, rec)
+        into.set(m.text, rec)
       }
-      for (const sp of m.spells) {
-        const key = canonKey(sp.spell)
-        const cur = rec.bySpell.get(key)
-        if (cur) cur.count += sp.count
-        else rec.bySpell.set(key, { display: sp.spell, count: sp.count })
+      addCounts(rec, m.spells)
+    }
+  }
+
+  /** Every bucket's counts, sorted — what persistence writes and re-seeds from. */
+  register(): OverlayRegister {
+    const sources: OverlaySourceCounts[] = []
+    for (const [key, bucket] of this.sources) sources.push({ key, messages: bucketCounts(bucket) })
+    return { updatedAt: new Date(this.lastObservedTs).toISOString(), sources }
+  }
+
+  /** All buckets summed into one accumulator — the view every verdict is derived from. */
+  private aggregate(): Map<string, MessageRecord> {
+    const out = new Map<string, MessageRecord>()
+    for (const bucket of this.sources.values()) {
+      for (const rec of bucket.values()) {
+        let agg = out.get(rec.text)
+        if (!agg) {
+          agg = { text: rec.text, role: rec.role, bySpell: new Map() }
+          out.set(rec.text, agg)
+        }
+        addCounts(agg, [...rec.bySpell.values()].map((s) => ({ spell: s.display, count: s.count })))
       }
     }
+    return out
   }
 
   /** Derive a message's verdict from its per-spell counts + the DB (for contradictions). */
@@ -235,7 +400,7 @@ export class MessageOverlayMiner {
   build(): MessageOverlay {
     const messages: OverlayMessage[] = []
     const stats = { verified: 0, shared: 0, contradictions: 0, unknown: 0 }
-    for (const rec of this.records.values()) {
+    for (const rec of this.aggregate().values()) {
       const spells = [...rec.bySpell.values()]
         .map((s) => ({ spell: s.display, count: s.count }))
         .sort((a, b) => b.count - a.count || a.spell.localeCompare(b.spell))
@@ -292,61 +457,6 @@ export class MessageOverlayMiner {
     return out
   }
 
-  // ---- the checkpoint seam (JOS-208 phase 2) --------------------------------------------------
-  //
-  // THE SECOND NAMED DEBT, PAID. attach.ts listed this miner as outside the container, and it is
-  // fold state twice over: the `buffs` snapshot PUBLISHES what it builds (`BuffsSnap.overlay`),
-  // and the registry it accretes is what a cold replay of the same bytes rebuilds line by line.
-  //
-  // WHAT TRAVELS IS THE WHOLE ACCUMULATOR, seeded counts included, and that needs saying because
-  // the seed is store-derived. `merge()` folds the committed baseline and the user's persisted
-  // overlay INTO the same per-message counts the log's own observations land in, and the two are
-  // not separable afterwards — by construction, since a merge is an addition. The one-truth rule
-  // is not broken by that: the composition root seeds a FRESH miner from the same two sources on
-  // every launch, and a restore then replaces the whole object, so the restored counts are
-  // (baseline + user overlay + everything the log taught up to B) — exactly what the cold arm
-  // holds at B. What must never happen is a restore that lands ON TOP of a seeded miner, which
-  // would double the baseline; `deserializeFold` REPLACES rather than merges, which is the
-  // difference.
-  //
-  // `spellsByKey` is not stored: it is the effective DB, rebuilt before any module exists.
-
-  static readonly FOLD_SCHEMA: FoldSchema = S.obj({
-    records: S.arr(
-      S.tuple(
-        S.str,
-        S.obj({
-          text: S.str,
-          role: S.enum('landing', 'wearsOff'),
-          bySpell: S.arr(S.tuple(S.str, S.obj({ display: S.str, count: S.num })))
-        })
-      )
-    ),
-    recentCasts: S.arr(S.obj({ spellKey: S.str, spellDisplay: S.str, ts: S.num })),
-    lastObservedTs: S.num
-  })
-
-  serializeFold(): OverlayMinerFoldState {
-    const records: OverlayMinerFoldState['records'] = []
-    for (const [text, rec] of this.records) {
-      records.push([text, { text: rec.text, role: rec.role, bySpell: [...rec.bySpell].map(([k, v]) => [k, { ...v }]) }])
-    }
-    return {
-      records,
-      recentCasts: this.recentCasts.map((c) => ({ ...c })),
-      lastObservedTs: this.lastObservedTs
-    }
-  }
-
-  /** REPLACE the accumulator (never merge — see the seam's note). Validated by `BuffsModule`. */
-  deserializeFold(state: OverlayMinerFoldState): void {
-    this.records = new Map(
-      state.records.map(([text, rec]) => [text, { text: rec.text, role: rec.role, bySpell: new Map(rec.bySpell) }])
-    )
-    this.recentCasts = state.recentCasts
-    this.lastObservedTs = state.lastObservedTs
-  }
-
   /** True when a line ends with ANY DB cast-on-other suffix (⇒ it names a mob, not self). */
   private looksCastOnOther(text: string): boolean {
     if (!this.spellsByKey) return false
@@ -357,11 +467,4 @@ export class MessageOverlayMiner {
     }
     return false
   }
-}
-
-/** The miner's accumulator as plain data — the effective DB deliberately absent. */
-export interface OverlayMinerFoldState {
-  records: [string, { text: string; role: 'landing' | 'wearsOff'; bySpell: [string, { display: string; count: number }][] }][]
-  recentCasts: RecentCast[]
-  lastObservedTs: number
 }

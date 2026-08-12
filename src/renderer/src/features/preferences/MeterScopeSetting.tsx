@@ -13,10 +13,12 @@
 //
 // The DESCRIPTION under it is the selected scope's own sentence out of shared/roster.ts — the one
 // phrasing every surface's tooltip already uses, so this card cannot drift from what the meters
-// say about themselves. The Group row carries one extra line, because Group is the default and its
-// no-roster fallback is the single thing about this setting a user is most likely to be confused
-// by: an empty roster makes Group render as Everyone (law 1 — unknown must never hide people), and
-// the meters label themselves `Group (no roster yet)` while it does.
+// say about themselves. The Group row carries one extra line, because its no-roster fallback is
+// the single thing about this setting a user is most likely to be confused by: an empty roster
+// makes Group render as Everyone (law 1 — unknown must never hide people), and the meters label
+// themselves `Group (no roster yet)` while it does. That line matters MORE since JOS-229 made
+// Everyone the default, not less: Group is now something a user reaches for deliberately, and the
+// sentence explains why the meter they just narrowed may not look narrowed yet.
 //
 // It is a SEPARATE FILE from PreferencesView.tsx for the reason PerfSetting and GraphicsSetting
 // are: that file sits at the 400-code-line factoring ceiling, and the answer there is to split.

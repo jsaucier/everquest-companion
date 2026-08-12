@@ -25,29 +25,13 @@
 // history accumulate on top of the dump, which is exactly what a stale dump deserves.
 
 import type { EqModule } from './types'
-import { S, validate, type FoldSchema } from '../foldCache/schema'
-import type { FoldCheckpointable } from '../foldCache/serialize'
 import type { LogEvent } from '../../shared/logEvents'
 import { baseName } from '../../shared/outputs/baseline'
 
 /** The state this module holds: dump file name (lowercased) → epoch ms of its newest write. */
 export type OutputFilesSnap = Record<string, number>
 
-/**
- * THE CHECKPOINT DECLARATION (JOS-208 phase 2). A `record` rather than an entries array because
- * the live Map's ORDER carries nothing here — newest-wins is decided per key by comparing
- * timestamps, so nothing reads the iteration order and a record is the honest shape. It is also
- * exactly what `snapshot()` already publishes.
- */
-const OUTPUT_FILES_FOLD_SCHEMA: FoldSchema = S.obj({ written: S.rec(S.num), seq: S.num })
-
-/** The output-file module's complete event-derived state. */
-export interface OutputFilesFoldState {
-  written: OutputFilesSnap
-  seq: number
-}
-
-export class OutputFilesModule implements EqModule<OutputFilesSnap, never>, FoldCheckpointable<OutputFilesFoldState> {
+export class OutputFilesModule implements EqModule<OutputFilesSnap, never> {
   readonly id = 'outputFiles'
   private written = new Map<string, number>()
   private seq = 0
@@ -85,22 +69,6 @@ export class OutputFilesModule implements EqModule<OutputFilesSnap, never>, Fold
 
   flushDelta(): null {
     return null
-  }
-
-  // ---- the checkpoint seam (JOS-208) ---------------------------------------------------------
-
-  readonly foldSchema = OUTPUT_FILES_FOLD_SCHEMA
-
-  serializeFold(): OutputFilesFoldState {
-    return { written: Object.fromEntries(this.written), seq: this.seq }
-  }
-
-  deserializeFold(state: unknown): boolean {
-    if (!validate(OUTPUT_FILES_FOLD_SCHEMA, state).ok) return false
-    const s = state as OutputFilesFoldState
-    this.written = new Map(Object.entries(s.written))
-    this.seq = s.seq
-    return true
   }
 }
 

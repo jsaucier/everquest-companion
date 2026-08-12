@@ -21,6 +21,7 @@ import RuleFolderIcon from '@mui/icons-material/RuleFolder'
 import AccountBoxIcon from '@mui/icons-material/AccountBox'
 import UpdateChip from './UpdateChip'
 import { OWNER_TOOLS, UNRELEASED } from '../devFlags'
+import type { PrefsRouting } from '../appRouting'
 import { VIEW_LABELS, type View } from '../appViews'
 
 export const DRAWER_WIDTH = 220
@@ -108,13 +109,19 @@ function NavRowButton({
 export default function NavDrawer({
   view,
   onSelect,
-  onSendFeedback
+  onSendFeedback,
+  prefs
 }: {
   view: View
   onSelect: (v: View) => void
   /** Opens the feedback DIALOG (Task #65). Feedback is not a view — appViews.ts is untouched —
    *  so this row carries a callback instead of a `View`, and never shows a selected state. */
   onSendFeedback: () => void
+  /** The Preferences SECTION router (JOS-254), for the patch-notes icon beside the version
+   *  number in the chip below. A section is not a view, so it cannot travel through `onSelect`
+   *  — and the drawer names its own destination the way `BottomStrips` does in App.tsx rather
+   *  than taking one opaque callback per section a future row might want. */
+  prefs: PrefsRouting
 }): JSX.Element {
   return (
     <Drawer
@@ -207,8 +214,10 @@ export default function NavDrawer({
         {/* …and directly beneath it, the AMBIENT update affordance (Task #60):
             a gold "Restart to update" chip when a build is downloaded and
             staged, otherwise a muted "checked 2h ago" line. Never a nag —
-            ignoring it just means apply-on-quit does the work silently. */}
-        <UpdateChip />
+            ignoring it just means apply-on-quit does the work silently.
+            That muted line is also where the app states the version you are
+            running, so it carries the patch-notes icon (JOS-254). */}
+        <UpdateChip onWhatsNew={() => prefs.openSection('whatsnew')} />
       </Box>
     </Drawer>
   )

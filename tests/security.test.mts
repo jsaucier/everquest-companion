@@ -51,6 +51,25 @@ test('allowedExternalUrl accepts exactly the links the app produces today', () =
   // An explicit :443 is redundant — WHATWG strips it, so this is the default port, not a
   // different service.
   assert.equal(allowedExternalUrl('https://eqlwiki.com:443/x'), 'https://eqlwiki.com/x')
+  // The What's new panel's way out to the full history (JOS-254). A constant in the renderer,
+  // not scraped text — but it travels the same door as every other link, so it is pinned here.
+  assert.equal(
+    allowedExternalUrl('https://github.com/jmoyers/everquest-companion/releases'),
+    'https://github.com/jmoyers/everquest-companion/releases'
+  )
+})
+
+test('widening the allowlist for github.com widened nothing else (JOS-254)', () => {
+  // The host is EXACT, so every neighbour of the new entry stays shut — the same guarantee the
+  // wiki hosts get, restated for the entry that let renderer text name github at all.
+  assert.equal(allowedExternalUrl('https://github.com.evil.com/jmoyers'), null)
+  assert.equal(allowedExternalUrl('https://evil-github.com/jmoyers'), null)
+  assert.equal(allowedExternalUrl('https://raw.githubusercontent.com/jmoyers/x/main/y'), null)
+  assert.equal(allowedExternalUrl('https://api.github.com/repos/jmoyers/everquest-companion'), null)
+  assert.equal(allowedExternalUrl('https://github.com@evil.com/x'), null)
+  // …and it is still https-only, so the OS can never be asked to run a downloaded release.
+  assert.equal(allowedExternalUrl('http://github.com/jmoyers'), null)
+  assert.equal(allowedExternalUrl('file://github.com/x.exe'), null)
 })
 
 test('allowedExternalUrl refuses every scheme but https — the RCE-adjacent shapes', () => {

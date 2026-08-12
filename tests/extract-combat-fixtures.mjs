@@ -250,6 +250,63 @@ slice(1256800, 1259658, 'w44-foreign-charm-player-hostile.log')
 //             owner as PET damage, which is exactly what must survive the gating.
 slice(213988, 214240, 'w45-owner-charm-bind.log')
 
+// ---------------------------------------------------------------------------
+// ALLY CHARM (JOS-250) — the three windows behind "whose pet is that, when it is not yours?"
+//
+// W44 above is the fourth, and it is the one that changed meaning: `Scooba begins casting
+// Allure VII.` was already in it, one second before each broadcast, and JOS-250 is what finally
+// reads it. These three are the shapes W44 does not carry — a clean credit, a same-named twin,
+// and a two-caster tie — cut from the same real log at the three instants the whole-log sweep
+// found them. Whole-log measurement (1,608,483 lines, 2026-08-12, through the SHIPPED roster and
+// arm window): 456 charm broadcasts, 441 the owner's own, 15 a NAMED third party's, 0 unmatched,
+// 0 resolving both.
+// ---------------------------------------------------------------------------
+
+// W66 AN ALLY'S CHARM PET IS CREDITED, THEN PROVES ITS OWN BREAK (Fri Jul 31 20:05:40 →
+// 20:06:35, raw 741548..741690). The cleanest of the fifteen, and it carries three of the four
+// bind/unbind ends in fifty seconds:
+//   20:05:57  `Gordon begins casting Cajoling Whispers III.`  (DB cast time 5,500 ms)
+//   20:05:58  `an imp protector has been charmed.`   → +1s, inside the arm: BIND to Gordon.
+//   20:05:59→ the imp fights `a lava guardian` — the mob-vs-mob damage the meter has always
+//             dropped, now Gordon's row.
+//   20:06:05  `An imp protector hits Gordon for 8 points of damage.` — SOFT-HOSTILE PROOF. The
+//             pet turned on its own charmer, so the charm is over at that instant and nothing
+//             after it is credited. (Its swing-and-miss at Gordon in the same second is the
+//             same proof; whichever the model reads first ends the bind.)
+//   20:06:12  `Gordon begins casting Cajoling Whispers III.` again
+//   20:06:14  `an imp protector has been charmed.`   → RE-CHARM: the same name, the same
+//             charmer, a fresh bind and a fresh hold, and the crediting resumes.
+// The owner is not fighting in this window at all, which is the point of choosing it: every
+// number in it belongs to somebody else and none of it may touch his.
+slice(741548, 741690, 'w66-ally-charm-credited-and-broken.log')
+
+// W67 A SAME-NAMED TWIN MAKES THE NAME UNREADABLE (Thu Jul 30 18:27:08 → 18:27:36, raw
+// 508140..508430) — the rock-golem episode the investigation named, and the canonical fixture
+// for the twin refusal:
+//   18:27:12  `Enzee begins singing Solon's Bewitching Bravura III.`  — a BARD charm, whose
+//             landing sentence is `Someone 's eyes glaze over.` and which therefore cannot be
+//             what a `has been charmed.` broadcast resolved (JOS-200's standing cost). It must
+//             not arm the join, or every enchanter binding beside a bard becomes a tie.
+//   18:27:12  `President begins casting Cajoling Whispers V.`
+//   18:27:15  `A rock golem cleaves a rock golem for 128 points of damage.` — the twin is
+//             ALREADY swinging, one second before the broadcast.
+//   18:27:16  `a rock golem has been charmed.`   → binds to President (the only eligible cast)
+//   18:27:17  `A rock golem pierces a rock golem for 102 points of damage.` — and the name is
+//             ambiguous from that line forward. The window continues that way for its whole
+//             length, so the honest credit is ZERO.
+slice(508140, 508430, 'w67-ally-charm-same-named-twin.log')
+
+// W68 TWO CASTERS, ONE MOB, ONE SECOND APART (Fri Jul 31 21:13:09 → 21:13:20, raw
+// 747240..747300) — the ONLY multi-caster tie in the whole log, and therefore the only sample
+// the refusal has:
+//   21:13:12  `Paladrial begins casting Cajoling Whispers III.`
+//   21:13:13  `Satya begins casting Cajoling Whispers III.`     — same spell, same target
+//   21:13:14  `a lava duct crawler has been charmed.`  → BOTH arms contain it, and nothing in
+//             the log separates them. REFUSE: a coin flip credited to a named person is worse
+//             than silence. The crawler then fights a sonic bat for the rest of the window,
+//             which is exactly the damage a guess would have handed to whichever name won.
+slice(747240, 747300, 'w68-ally-charm-multi-caster-tie.log')
+
 // W37 DISPEL VARIANTS ARE NOT A ROGUE PROC (Mon Aug 03 00:38:18 → 00:40:02, raw
 // 1095620..1096030) — the Efreeti Lord Djarn kill, cut because it is the densest dispel
 // window in the log and because it sits BEFORE the poison session (the first coat is at

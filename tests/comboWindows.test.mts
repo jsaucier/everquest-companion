@@ -138,10 +138,20 @@ test('CW1: the four /who anchors each get their own interval, stated not inferre
   // 17:00:36), and the old model stated `ROG` over all of it because a `/who` anywhere in a slice
   // relabelled the whole slice. The row now cuts at itself, the span in front of it keeps what the
   // log actually showed, and the four ANCHORED intervals below are unchanged in every respect.
+  //
+  // AND THE EXCURSION HOLDS THREE SLOTS, NOT TWO (JOS-239). `levelAt` used to let ANY earlier
+  // `/who` row overwrite every level ding after it — the two loops ran one after the other with the
+  // row pass writing unconditionally — so the level in force when this span opened was read off the
+  // `[7 PAL/ENC]` row at 14:14:48 rather than off the `Welcome to level 11!` ding at 16:46:22 that
+  // OPENS it, 2.5 hours and four dings later. Level 7 is below the tertiary unlock, so the span was
+  // given two slots. The game settles it 39 minutes later: `[10 PAL/ROG/ENC]` at 17:25:15 names
+  // THREE classes, which a two-slot span cannot hold. The third slot is honestly unresolved
+  // (`BRD|ROG` — the model knows the set and not the member, and ROG is in it), which is the state
+  // the design calls "2 of 3 known" and not a regression from naming two.
   const snap = replay(readFixture('cw1-who-anchored.log'))
   assert.deepEqual(
     snap.intervals.map(combo),
-    ['CLR/BER', 'PAL/ENC', 'ENC/MNK', 'PAL/ROG/ENC', 'PAL/MNK/ENC'],
+    ['CLR/BER', 'PAL/ENC', 'ENC/MNK/BRD|ROG', 'PAL/ROG/ENC', 'PAL/MNK/ENC'],
     'each stated loadout owns exactly one interval, in order'
   )
   // The four /who-anchored ones. `ENC/MNK` is the inferred span between the ding and the row and
@@ -160,13 +170,15 @@ test('CW1: the four /who anchors each get their own interval, stated not inferre
   }
   assert.deepEqual(
     snap.intervals.map((i) => i.expectedSlots),
-    [2, 2, 2, 3, 3],
+    [2, 2, 3, 3, 3],
     'the tertiary slot unlocks once and never closes again'
   )
   // The Jul 28 rogue excursion is dated by the REPEAT level ding (11 → 11, which a
   // strict-descent predicate misses) rather than by the three-hour /who gap around it.
   const excursion = snap.intervals[2]
   assert.equal(excursion.startReason, 'levelDrop')
+  // The ding that opens it is what states the level, not the row two and a half hours behind it.
+  assert.equal(excursion.levelLo, 11, 'the level in force here is the ding at 16:46:22')
   assert.equal(excursion.startLo, at('Tue Jul 28 15:51:40 2026'))
   assert.equal(excursion.startHi, at('Tue Jul 28 16:46:22 2026'))
 })

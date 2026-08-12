@@ -72,18 +72,16 @@
 //   3. the SPLIT WINDOW (buffsStats.ts `observedWindowMaxFor`) — where a censored sample is kept as
 //      a lower bound but can no longer evict a full-length one. The rule is written there.
 
-import type { LogEvent } from '../../shared/logEvents'
+import type { CcVerb, LogEvent } from '../../shared/logEvents'
 import type { BuffTimersDelta, BuffTimersSnap, CcEnd, CcHold } from '../../shared/buffTimers'
+import type { EstimatorSource } from '../../shared/buffTypes'
 import { statedDuration } from '../../shared/buffTimers'
 import { SELF_CASTER } from '../../shared/buffTrust'
 import { idKey } from '../log/parseCommon'
 import { CastAnchors } from './buffAnchors'
 import { HoldGroup } from './buffRounds'
-import { BUFF_TIMERS_FOLD_SCHEMA, packHeld, unpackHeld, type BuffTimersFoldState } from './buffTimersFold'
 import { learningRecordCapMs, MAX_SAMPLE_MS, SESSION_GAP_MS, spellKey, unwitnessedTimeoutMs } from './buffsShapes'
 import { SpellStats } from './buffsStats'
-import { validate } from '../foldCache/schema'
-import type { FoldCheckpointable } from '../foldCache/serialize'
 import type { EqModule } from './types'
 
 /**
@@ -136,6 +134,25 @@ export const WAKE_CENSOR_MS = 1_000
  */
 export const CC_UNKNOWN_CAP_MS = 660_000
 
+/**
+ * THE HOLDS A CORPSE CANNOT BE ABOUT (JOS-228) — the three landing verbs whose hold ANY damage
+ * breaks.
+ *
+ * A mesmerized mob cannot be killed while it is mesmerized: the first point of damage wakes it,
+ * and the log SAYS SO before the corpse ever appears. Measured on the owner's whole log for
+ * {@link WAKE_CENSOR_MS}: of 1,518 `<mob> has been awakened by <name>.` lines, 1,472 share the
+ * exact second of that mob's own `Your <S> spell has worn off of <mob>.` — and in all 1,472 the
+ * wear-off comes FIRST. So a mez that is killed is a mez whose BREAK line closed the landing
+ * already, and a death line arriving while the hold still stands is, by construction, about
+ * ANOTHER mob of that name.
+ *
+ * `ensnared` is deliberately not a member and is the reason this is a set rather than "every CC
+ * hold": a snare is a movement debuff that does nothing to stop you killing what it is on, so a
+ * corpse genuinely is that hold ending. Charm is the same story from the other side — a charmed
+ * pet dies as often as anything else — and reaches this module with no verb at all.
+ */
+const DAMAGE_BREAKS: ReadonlySet<CcVerb> = new Set<CcVerb>(['mesmerized', 'enthralled', 'entranced'])
+
 /** A candidate spell as the `cc` (or `charm`) broadcast carries it. */
 interface CcCandidate {
   name: string
@@ -176,7 +193,12 @@ interface Held {
   /** Whose cast: 'self' or an allowlisted external. */
   caster: string
   durationMs: number | null
-  source?: 'db' | 'observed'
+  source?: EstimatorSource
+  /**
+   * True when the landing sentence was one of {@link DAMAGE_BREAKS} — i.e. a hold whose mob cannot
+   * be damaged without waking it, so no death line may close a landing of this row.
+   */
+  mez: boolean
   group: HoldGroup
 }
 
@@ -238,19 +260,14 @@ interface RecentMint {
 
 /** Write the estimator's answer onto a hold. The absent `source` is deleted, never set to
  *  undefined, so the snapshot's optional field stays absent rather than explicitly nothing. */
-function setDuration(held: Held, est: { ms: number | null; source?: 'db' | 'observed' }): void {
+function setDuration(held: Held, est: { ms: number | null; source?: EstimatorSource }): void {
   held.durationMs = est.ms
   if (est.source) held.source = est.source
   else delete held.source
 }
 
-// THE CHECKPOINT DECLARATION (JOS-208 phase 2) is `BUFF_TIMERS_FOLD_SCHEMA`, in
-// `buffTimersFold.ts` — this file is at the repo's line ceiling. Read it for what this half
-// stores, and above all for what it does NOT: the two halves it SHARES with the buffs module (the
-// cast anchors and the duration learner) are checkpointed exactly once, by their owner.
-
 export class BuffTimersModule
-  implements EqModule<BuffTimersSnap, BuffTimersDelta>, FoldCheckpointable<BuffTimersFoldState>
+  implements EqModule<BuffTimersSnap, BuffTimersDelta>
 {
   readonly id = 'buffTimers'
 
@@ -326,7 +343,7 @@ export class BuffTimersModule
     switch (ev.kind) {
       case 'cc':
         if (ev.refresh === true) this.end(idKey(ev.mob), ev.ts, ev.spell)
-        else this.apply(ev.mob, ev.ts, ev.candidates)
+        else this.apply(ev.mob, ev.ts, ev.verb, ev.candidates)
         break
       case 'charm':
         // CHARM IS A DETRIMENTAL HOLD, IN THE SAME SHAPE AS A MEZ (JOS-140, owner amendment
@@ -340,8 +357,12 @@ export class BuffTimersModule
         // and simultaneously carries this detrimental hold, so it legitimately appears in BOTH
         // windows — a Tashani and a charm bar under DEBUFFS, a pet haste under BUFFS, one name.
         // Nothing routes by target (shared/buffTimers.ts `timerRowSurface` reads the row's kind,
-        // and the kind reads the spell's nature).
-        this.apply(ev.mob, ev.ts, ev.candidates)
+        // and the kind reads the spell's nature). JOS-213 added ONE more question and it is a
+        // question about the spell too — does it CALM its target — so the pet haste above is still
+        // a buff, on the buffs window, on a mob's name. Routing it by the target instead is the
+        // cut of JOS-213 that two committed goldens rejected; the header of `timerRowSurface`
+        // names them.
+        this.apply(ev.mob, ev.ts, undefined, ev.candidates)
         break
       case 'ccWake':
         // THE BREAK ANNOTATION (JOS-180). It ENDS NOTHING — the wear-off line that precedes it in
@@ -361,7 +382,7 @@ export class BuffTimersModule
         // EVERY death shape, on the name that DIED and never on the killer (JOS-156). The
         // parser already unified `You have slain <X>!`, `<X> has been slain by <Y>!` and the
         // killerless `<X> died.` into one event, so there is nothing to branch on here.
-        this.end(idKey(ev.name), ev.ts, undefined, false)
+        this.onMobDeath(idKey(ev.name), ev.ts)
         break
       case 'zone':
         // You left them behind (world-model law 4's censor).
@@ -389,7 +410,7 @@ export class BuffTimersModule
    * More than one, or none ⇒ the row stays a FAMILY and states a duration only if every candidate
    * agrees on one.
    */
-  private apply(mob: string, ts: number, candidates?: CcCandidate[]): void {
+  private apply(mob: string, ts: number, verb?: CcVerb, candidates?: CcCandidate[]): void {
     const cands = candidates ?? []
     // No DB (so no candidates at all) means we cannot tell our own mez from a stranger's, and the
     // honest answer to "whose is it?" is not to guess. No anchored cast means the same thing.
@@ -403,6 +424,9 @@ export class BuffTimersModule
     // belongs to the live hold rather than to a landing the cull already gave up on.
     if (id.lineKey !== '') this.culled.delete(`${idKey(mob)}|${id.lineKey}`)
     const held = this.ensureHold(mob, id, cands, own)
+    // The row remembers the strongest thing any of its landings said (`mez` never goes back to
+    // false): if one sentence in this family stated a hold damage breaks, a corpse cannot be it.
+    if (verb != null && DAMAGE_BREAKS.has(verb)) held.mez = true
 
     // The Buffs TAB lists every line the model has knowledge about, and a mez is now one of them —
     // JOS-126's reporter could not see the learned number anywhere, because the CC path never
@@ -465,6 +489,7 @@ export class BuffTimersModule
       candidates: id.resolved ? shown : own.map((c) => c.name).sort((a, b) => a.localeCompare(b)),
       caster: id.caster,
       durationMs: null,
+      mez: false,
       // NEVER a singleton: a mob is a NAME the world hands out more than once, and separating
       // two of them is one of world-model law 6's documented non-distinguishables.
       group: new HoldGroup(false)
@@ -474,57 +499,90 @@ export class BuffTimersModule
   }
 
   /**
-   * A line said one of these ended — a break/wear-off, a charm break, or the mob dying.
+   * A BREAK LINE said one of these ended — a mez/root wear-off, or a charm break.
    *
    * It closes the OLDEST landing of that (mob, spell) — see buffRounds.ts for why oldest-first is
    * the only honest choice — and MINTS a duration sample when that landing was a clean cycle. The
    * row survives with one fewer on its count chip; only an empty group removes it.
    *
-   * `mint` is false for a DEATH (JOS-156). A break line is the hold ending on its own schedule and
-   * is worth learning from; a corpse is the hold being cut short, and the land-to-death span is
-   * not a duration at all. buffRounds.ts's ruling 5 already listed a death among the contaminating
-   * events — this is that sentence enforced on the one path that was quietly ignoring it.
+   * A DEATH NO LONGER COMES HERE (JOS-228). It is not a break line at all: it names a mob that
+   * stopped existing rather than a hold that ended, and everything a corpse is allowed to do to
+   * this model is stated in {@link onMobDeath}.
    */
-  private end(entityKey: string, ts: number, spell?: string, mint = true): void {
+  private end(entityKey: string, ts: number, spell?: string): void {
     const line = spell != null ? spellKey(spell) : null
-    const closedAny = this.closeLive(entityKey, line, ts, mint)
-    if (mint) {
-      // THE LATE JOIN (JOS-180). Only when NOTHING live was closed — a live hold is always the
-      // better answer, and preferring it is what keeps this from ever competing with the ordinary
-      // path. Only for a break line that NAMES its spell, because a landing has to be identified
-      // to be measured; an anonymous ending (a death) is handled below by forgetting instead.
-      if (!closedAny && line != null) this.lateJoin(entityKey, line, ts)
-    } else {
-      // A CORPSE ENDS THE MEMORY TOO. `mint:false` is a death, and land-to-death is not a duration
-      // (JOS-156's ruling, applied to the remembered landing for the same reason it applies to a
-      // live one). Forget every line we were still holding open for this mob.
-      this.forgetCulled(entityKey)
-    }
-    // A death line for a mob we were never holding ends nothing and is not recorded: the buffs
-    // model already censors that mob's debuff instances itself (`onEntityDeath`), so an end
-    // here would be a second opinion about a fact already
-    // settled — and one that would churn the snapshot on every kill in the zone.
-    if (!closedAny && spell == null) return
-    // Recorded even when we held nothing, IF the line named a spell: that is a real CC break,
-    // and the projection uses it to retire an ActiveBuff the buffs model does not clear (see
-    // shared/buffTimers.ts `endedByCc`), which can exist without a hold beside it.
+    const closedAny = this.closeLive(entityKey, line, ts)
+    // THE LATE JOIN (JOS-180). Only when NOTHING live was closed — a live hold is always the
+    // better answer, and preferring it is what keeps this from ever competing with the ordinary
+    // path. Only for a break line that NAMES its spell, because a landing has to be identified
+    // to be measured.
+    if (!closedAny && line != null) this.lateJoin(entityKey, line, ts)
+    // Recorded even when we held nothing: that is a real CC break, and the projection uses it to
+    // retire an ActiveBuff the buffs model does not clear (see shared/buffTimers.ts `endedByCc`),
+    // which can exist without a hold beside it.
     this.ends.push({ key: entityKey, ts, ...(spell != null ? { spell } : {}) })
     this.dirty = true
     this.rev += 1
   }
 
   /**
+   * A MOB OF THIS NAME DIED — and the honest answer to "which one?" is a per-hold ruling (JOS-228).
+   *
+   * THE DEFECT, owner-reported and urgent: mez one mob, kill the one standing next to it that
+   * happens to share its name, and the mez bar vanished — at the exact moment a chain-mezzing
+   * player needs it. The name is all the log gives, so the death line and the hold line are
+   * indistinguishable strings, and this module closed a landing on the strength of that alone.
+   *
+   * WHAT DECIDES IT IS THE LANDING VERB ({@link DAMAGE_BREAKS}), which is evidence rather than
+   * taste: a mesmerized mob cannot be damaged without waking up, and the wake prints its own
+   * wear-off FIRST, so a death arriving while a mez hold still stands is about another mob of
+   * that name. A snare or a charm has no such protection and a corpse genuinely does end it, so
+   * those keep the count-chip rule exactly as JOS-140 ruling 7 wrote it: ONE landing closes, the
+   * oldest, and only an empty group removes the row.
+   *
+   * TWO THINGS A DEATH STILL DOES TO A MEZ ROW, both unchanged rulings:
+   *   • IT CONTAMINATES THE WHOLE GROUP (JOS-156, buffRounds.ts ruling 5). A same-named death
+   *     means the group has lost track of which mob of that name is which, so nothing standing in
+   *     it may ever be minted as a duration sample. This fix is about DISPLAY, never about
+   *     learning — a land-to-death span was never a duration and still is not one.
+   *   • IT FORGETS THE CULLED MEMORIES (JOS-180's late join) for that name, for the same reason.
+   *
+   * AND IT RECORDS NO `CcEnd`. An end with no spell on it matches EVERY `ActiveBuff` on that
+   * entity in the projection (shared/buffTimers.ts `endedByCc`), so a death that closed a snare
+   * used to blank the slow row the buffs model had deliberately kept standing at one fewer on its
+   * own count chip — one model overruling the other about a fact the other had already settled
+   * correctly (`buffsInstances.ts onEntityDeath`). The buffs half censors deaths itself; this half
+   * has nothing to add.
+   */
+  private onMobDeath(entityKey: string, ts: number): void {
+    let changed = false
+    for (const [key, held] of [...this.holds]) {
+      if (held.entityKey !== entityKey) continue
+      held.group.contaminateAll()
+      if (held.mez) continue
+      held.group.closeOldest(ts)
+      if (held.group.empty) this.holds.delete(key)
+      changed = true
+    }
+    this.forgetCulled(entityKey)
+    if (changed) {
+      this.dirty = true
+      this.rev += 1
+    }
+  }
+
+  /**
    * Close the LIVE holds this ending applies to. Returns whether it found any — which is what
    * decides between the ordinary path and the late join.
    */
-  private closeLive(entityKey: string, line: string | null, ts: number, mint: boolean): boolean {
+  private closeLive(entityKey: string, line: string | null, ts: number): boolean {
     let closedAny = false
     for (const [key, held] of [...this.holds]) {
       if (held.entityKey !== entityKey) continue
-      // A named break line closes only the matching LINE; an anonymous one (a death, a charm
-      // break) closes every hold on that mob, because the mob itself is gone.
+      // A named break line closes only the matching LINE; an anonymous one (a charm break with no
+      // spell on it) closes every hold on that mob.
       if (line != null && held.lineKey !== '' && held.lineKey !== line) continue
-      this.closeOne(held, ts, mint)
+      this.closeOne(held, ts)
       closedAny = true
       if (held.group.empty) this.holds.delete(key)
       this.dirty = true
@@ -534,14 +592,12 @@ export class BuffTimersModule
   }
 
   /**
-   * Close this hold's OLDEST landing, minting a sample when that landing was a clean cycle — and
-   * when the line that ended it is one a duration may be learned from at all. `mint: false` (a
-   * death) contaminates the whole group first, so neither this landing nor the ones still standing
-   * behind it can ever be measured: the group has just lost track of which mob of that name is
-   * which, which is the state buffRounds.ts's ruling 5 refuses to learn from.
+   * Close this hold's OLDEST landing, minting a sample when that landing was a clean cycle. Only a
+   * break line reaches here since JOS-228, so the caller no longer has to say whether the ending
+   * was one a duration may be learned from — a death takes {@link onMobDeath} instead, and what it
+   * does to this group's measurability is stated there.
    */
-  private closeOne(held: Held, ts: number, mint: boolean): void {
-    if (!mint) held.group.contaminateAll()
+  private closeOne(held: Held, ts: number): void {
     const closed = held.group.closeOldest(ts)
     const sample = closed?.sampleMs
     if (sample == null || sample <= 0 || sample > MAX_SAMPLE_MS) return
@@ -744,33 +800,5 @@ export class BuffTimersModule
     if (!this.dirty) return null
     this.dirty = false
     return { seq: this.rev, delta: this.buildSnap() }
-  }
-
-  // ---- the checkpoint seam (JOS-208) ---------------------------------------------------------
-
-  readonly foldSchema = BUFF_TIMERS_FOLD_SCHEMA
-
-  serializeFold(): BuffTimersFoldState {
-    return {
-      holds: [...this.holds].map(([key, h]) => [key, packHeld(h)]),
-      ends: this.ends.map((e) => ({ ...e })),
-      culled: [...this.culled].map(([key, c]) => [key, { ...c }]),
-      recentMints: this.recentMints.map((m) => ({ ...m })),
-      lastEventTs: this.lastEventTs,
-      rev: this.rev
-    }
-  }
-
-  deserializeFold(state: unknown): boolean {
-    if (!validate(BUFF_TIMERS_FOLD_SCHEMA, state).ok) return false
-    const s = state as BuffTimersFoldState
-    this.holds = new Map(s.holds.map(([key, h]) => [key, unpackHeld(h)]))
-    this.ends = s.ends
-    this.culled = new Map(s.culled)
-    this.recentMints = s.recentMints
-    this.lastEventTs = s.lastEventTs
-    this.rev = s.rev
-    this.dirty = true
-    return true
   }
 }

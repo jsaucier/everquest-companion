@@ -201,54 +201,6 @@ async function stepStartupPane(page: Page): Promise<void> {
 }
 
 /**
- * THE FASTER-START SWITCH (JOS-208, owner addition) — the checkpoint's user-facing preference,
- * driven the only way it can honestly be: through the real Preferences pane, in the real app.
- *
- * IT LIVES IN THIS SPEC because it is an item of the SAME Performance section, and because the
- * three seams it crosses are the ones a unit test cannot: a React switch, an IPC handler, and a
- * store write in main. What is asserted is what the owner asked for — the switch, not the
- * environment variable, is what a person sets — plus the two things that make it honest: it is
- * OFF on a fresh install, and main's own answer agrees with the switch immediately afterwards.
- *
- * IT DOES NOT ASSERT A FASTER LAUNCH. Flipping it changes the NEXT launch, and proving that end
- * to end is phase 3's restart-compare spec; claiming it here would be a test measuring its own
- * patience.
- */
-async function stepFasterStartSwitch(page: Page): Promise<void> {
-  const pane = '[data-testid="pref-fold-cache"]'
-  const toggle = '[data-testid="pref-fold-cache-enabled"] input'
-  const read = (): Promise<{ stored: boolean; active: boolean } | null> =>
-    page
-      .evaluate(() =>
-        (window as unknown as { eq: { getFoldCache: () => Promise<{ stored: boolean; active: boolean }> } }).eq.getFoldCache()
-      )
-      .catch(() => null)
-
-  await page.waitForSelector(pane, { timeout: 15_000 })
-  check('Preferences carries the faster-start switch beside the startup breakdown', (await countOf(page, pane)) === 1)
-
-  const before = await read()
-  check('a fresh install has it OFF, and main says so', before?.stored === false, JSON.stringify(before))
-  const shown = await page.evaluate(
-    (sel) => (document.querySelector(sel) as HTMLInputElement | null)?.checked,
-    toggle
-  )
-  check('…and the switch shows what is stored', shown === false, String(shown))
-
-  await page.click(toggle)
-  const after = await settle(read, (s) => s?.stored === true, { timeoutMs: 8_000 })
-  check('turning it on is written to the preference, not to an environment variable', after?.stored === true,
-    JSON.stringify(after))
-  // The caption is the thing a person actually reads, and it must not promise this launch.
-  const caption = (await textOf(page, '[data-testid="pref-fold-cache-caption"]')).replace(/\s+/g, ' ').trim()
-  check('…and the copy says WHEN it applies', /next launch/i.test(caption), caption.slice(0, 140))
-
-  // Put it back, so the second launch in this spec is still measuring the ordinary cold path.
-  await page.click(toggle)
-  check('turning it off again is stored too', (await settle(read, (s) => s?.stored === false, { timeoutMs: 8_000 }))?.stored === false)
-}
-
-/**
  * WHAT A RELOAD AND A WARNING COST IN errors.log — JOS-99, asserted against the bytes a real
  * launch wrote.
  *
@@ -378,9 +330,6 @@ async function main(): Promise<void> {
       await stepPopover(page)
     }
     await stepStartupPane(page)
-    // After the startup pane, because it is the item directly below it and the rail is already
-    // standing on Performance.
-    await stepFasterStartSwitch(page)
     // LAST, because it reloads the window: everything above measures the launch that is already
     // running, and a reload would put those steps' subjects back through a fresh mount.
     await stepReloadIsNotAnError(page, userData)

@@ -1,5 +1,20 @@
 import { DEFAULT_PROFILE } from '../../shared/profiles'
 import type { SpellDb } from '../data/spellDb'
+// THE DERIVED ROSTER (JOS-251). `charmRoster` reads the wiki EFFECT LINES the scrape now captures
+// and answers "does this spell charm?" from data instead of from the stem alternation below. The
+// import is one-way at runtime: spellEffectClass.ts reaches back here for nothing, and its own
+// import of parseCommon.ts is `spellCanonKey`, which imports this file for a TYPE only.
+import { charmRoster } from '../data/spellEffectClass'
+import { spellCanonKey } from './parseCommon'
+
+/**
+ * WHAT A ROSTER HAS TO BE ABLE TO DO: answer, for one spell name off a log line, whether it is a
+ * member. A `RegExp` satisfies this structurally, which is what lets the derived sets below slide
+ * in under every existing `cfg.charmSpell.test(name)` call site without one of them changing.
+ */
+export interface SpellRoster {
+  test(name: string): boolean
+}
 
 /**
  * Per-profile parser configuration. Different EQ servers/emulators can differ in
@@ -35,20 +50,29 @@ export interface ParserConfig {
    * decide whether it un-charms a pet. True charm spells only — MEZ spells also
    * wear off but must NOT uncharm. Stems audited against real worn-off lines, and
    * completed against the spell DB's own charm rosters (see below).
+   *
+   * SINCE JOS-251 THIS IS A DERIVED SET once a spell DB is installed — every spell whose wiki
+   * EFFECT LIST says it charms — with `CHARM_STEMS` demoted to the fallback for a name the catalog
+   * does not carry. It is still typed as a roster rather than a regex for exactly that reason.
    */
-  charmSpell: RegExp
+  charmSpell: SpellRoster
   /**
    * Matches the spell name from "Your <spell> spell has worn off of <mob>." to
    * decide whether it is a CROWD-CONTROL (mez/root) spell — as opposed to a charm
    * spell (handled by charmSpell) or an unrelated buff/debuff. A CC spell wearing
    * off means the mob was mez'd/rooted right up to that moment, so the engine treats
    * it as a keep-alive CC refresh. Stems audited against real worn-off lines:
-   * Mesmerization/Mesmerize/Enthrall/Entrance/Dazzle (mez), Largo's Melodic Binding
-   * & Screaming Terror (bard/enchanter mez), Ensnare/Immobilize/Suffocate (root).
-   * Deliberately EXCLUDES pacify/lull/calm (aggro-reduction, not a hold) and the
-   * Selo's snare line (a movement slow, not a hold).
+   * Mesmerization/Mesmerize/Enthrall/Entrance/Dazzle (mez), Screaming Terror and the
+   * bard mez ladder, Ensnare/Immobilize/Suffocate (root).
+   * Deliberately EXCLUDES pacify/lull/calm (aggro-reduction, not a hold), the
+   * Selo's snare line (a movement slow, not a hold) — and, since JOS-225, the two
+   * Largo's BINDING songs, which are that same movement debuff and were the one
+   * member of this roster the log never once shows holding anything (see "NOT A
+   * HOLD" below).
+   *
+   * STILL A STEM SET, DELIBERATELY (JOS-251 — see THE HALF-SWAP below the stems).
    */
-  ccSpell: RegExp
+  ccSpell: SpellRoster
 }
 
 /**
@@ -68,22 +92,27 @@ export interface ParserConfig {
  *
  *   "Someone 's head nods."                          Kelin's Lucid Lullaby        Bard 15
  *   "Someone is bound in strands of solid music."    Largo's Melodic Binding      Bard 20  (was covered)
- *   "Someone 's eyes glaze over."                    Solon's Song of the Sirens   Bard 27
+ *   "Someone 's eyes glaze over."                    Solon's Song of the Sirens   Bard 27  (a CHARM — owner, 2026-08-12)
  *   "Someone 's eyes glaze over."                    Crission's Pixie Strike      Bard 28
- *   "Someone 's eyes glaze over."                    Solon's Bewitching Bravura   Bard 39
+ *   "Someone 's eyes glaze over."                    Solon's Bewitching Bravura   Bard 39  (a CHARM — JOS-200)
  *   "Target's eyes glaze over."                      Sionachie's Dreams           Bard 40
  *   "Someone is bound by strands of solid music."    Largo's Assonant Binding     Bard 51
  *
  * Largo's Assonant Binding is the tell: it is the DIRECT UPGRADE of the one song the list had,
  * one word apart, and it was missing — the level-up failure the roster law exists to prevent.
+ * (Both Largo's songs have since LEFT this roster — see "NOT A HOLD" below — but the pairing
+ * argument is why they left together: whatever is true of the level-20 song is true of the
+ * level-51 one, in either direction.)
  *
  * AND THE BARD'S SONG IS A CHARM AFTER ALL (JOS-200) — the one call JOS-84 got wrong, corrected
  * here rather than quietly patched, because the WAY it was wrong is the reusable lesson.
  *
  * JOS-84 read `Solon's Bewitching Bravura` as a mez off the LANDING-MESSAGE FAMILY: spells.json
  * files it under `Someone 's eyes glaze over.` beside Solon's Song of the Sirens, Crission's Pixie
- * Strike and Sionachie's Dreams, which are genuine mezzes, so the roster oracle below put it in
- * `ccSpell`. But **spells.json has no effect column** — `spellType` is only Beneficial/Detrimental
+ * Strike and Sionachie's Dreams, which it took for genuine mezzes, so the roster oracle below put
+ * it in `ccSpell`. (Sirens has since gone the same way — see the second Solon ruling below, which
+ * makes the family two charms and two mezzes rather than one and three.)
+ * But **spells.json has no effect column** — `spellType` is only Beneficial/Detrimental
  * — and the game reuses one sentence for two effects. A message family is not an effect family.
  * That substitution is the whole of the error, and the oracle in tests/charmCcRoster.test.mts now
  * says so out loud.
@@ -119,13 +148,123 @@ export interface ParserConfig {
  * name, `buffs.onUncharm` is keyed on the charmed slot, `ingest`'s release path is idempotent), so
  * an `uncharm` with no preceding `charm` costs nothing beyond the alert it exists to fire.
  *
+ * NOT A HOLD — THE TWO LARGO'S BINDING SONGS LEAVE `ccSpell` (JOS-225), and this is the OTHER
+ * direction of the same mistake. JOS-200 removed a spell the message oracle wrongly called a mez;
+ * this removes two the ORIGINAL hand-audited stem list called "bard/enchanter mez" in 2026-07 and
+ * that JOS-84's ladder then completed without ever re-checking the effect. Same failure, one layer
+ * up: the roster oracle is very good at "who else prints this sentence" and says nothing at all
+ * about what the sentence DOES.
+ *
+ * THE REPORT (JOS-225): a bard — the same install as JOS-214, feedback report
+ * 01KZSH65ZX4Z74AK1CSZWQ42VK, read-only, never committed — hears the "Mez / root broke" alert
+ * every time `Largo's Melodic Binding` lapses. Replaying that slice through the real parser and
+ * the real alerts module: `group:cc:broke` fires FOUR times and all four are Largo's. There is not
+ * one genuine mez in the slice.
+ *
+ * THE EFFECT EVIDENCE, and it is mechanical rather than lexical:
+ *
+ *   1. THE MOB FIGHTS THROUGH IT. In the slice the song's target is trading melee blows in the
+ *      same second the wear-off prints — landing hits and taking them. A mesmerized mob does
+ *      neither; the first point of damage wakes it and the log SAYS SO (JOS-180's line).
+ *   2. NO WAKE LINE, EVER, over the owner's whole log (1,593,491 lines, measured read-only
+ *      2026-08-11). `<mob> has been awakened by <name>.` lands in the same or next second as the
+ *      mob's own wear-off for 1,252 of 1,848 Mesmerization breaks (67.7%), 75 of 95 Enthrall
+ *      (78.9%), 73 of 85 Dazzle (85.9%), 58 of 69 Entrance (84.1%) — and 0 of 81 Largo's Melodic
+ *      Binding (0.0%). Every mez in the roster is broken by damage most of the time it is cast;
+ *      this one never is, because there is nothing to break.
+ *   3. IT NEVER APPLIES A HOLD. The four sentences `classifyCcApply` reads — `<mob> has been
+ *      mesmerized/enthralled/entranced/ensnared.` — occur 3,116 times in that log (mesmerized
+ *      2,889, enthralled 128, entranced 87, ensnared 12) and Largo's cannot be any of them: the
+ *      committed DB records its landing as `<mob> is bound in strands of solid music.`, which is
+ *      a `buffApply`. So the "hold" this roster claimed to keep alive has no application event
+ *      anywhere in the corpus — the wear-off was the only evidence it ever existed, and a
+ *      wear-off is what every debuff prints.
+ *   4. IT IS A `PB AE` in the committed DB, sung on a 6-second pulse (the slice re-lands it every
+ *      6-7 s for minutes) against an 18-second duration. A bard AE-holding every mob adjacent to
+ *      themselves while the group melees those same mobs is not a thing the slice shows happening;
+ *      what it shows is the group killing them.
+ *
+ * ONE ROSTER, TWO SONGS, and both go — Melodic 20 and Assonant 51 — for exactly the reason JOS-84
+ * added the second: a fix that leaves the level-51 upgrade behind hands the same false positive
+ * back to the same bard thirty levels later.
+ *
+ * FALLING OUT OF BOTH ROSTERS IS THE CORRECT FILING HERE, which is the one thing R1b in
+ * tests/charmCcRoster.test.mts warns against — for a HOLD. A hold that lands in `buffFade` fires
+ * nothing and that is JOS-84's defect. A movement debuff that lands in `buffFade` is a debuff
+ * filed as a debuff: the Buffs tab still draws its bar off the landing emote and its fade off this
+ * very sentence, and the alert that should not fire does not. The slice settles it from the inside
+ * — that bard also sings `Selo's Consonant Chain`, the level-23 song of the same binding line,
+ * which this roster has ALWAYS excluded; its three wear-offs in the slice are silent `buffFade`s
+ * while Largo's four scream. Two songs, one effect, opposite behaviour, in one pull.
+ *
+ * AND `buffFade` IS WHERE THE SLOW GROUP PICKS THEM UP (JOS-233, owner ruling 2026-08-12). Nothing
+ * in THIS file changes — both songs stay out of both parser rosters, exactly as above, and their
+ * break is still an ordinary `buffFade`. What changed is downstream: shared/alertGroups.ts's slow
+ * roster now claims them by NAME on the mob side, because the owner ruled the binding is an
+ * attack-speed debuff as well as a snare and its expiry is the quiet loss the slow group exists
+ * for. So JOS-225's silence was the correct middle step and not the destination: the alert that
+ * fires is "Slow wore off a mob", never "Mez / root broke", and R1c/R1d below pin exactly that.
+ * The wider binding line (`Selo's Consonant Chain` 23, `Selo's Chords of Cessation` 48,
+ * `Selo's Assonant Strain` 54) is EXPLICITLY UNRULED and stays silent in every roster.
+ *
  * THE CHARM SIDE gets the same completion, from the DB's other roster: five Necromancer
  * charm-undead spells share the landing message "Someone moans." — Dominate Undead 18, Beguile
  * Undead 31, Cajole Undead 47, Thrall of Bones 54, Enslave Death 60 — and the stems covered the
  * first three by accident (dominate / beguile / cajol) while a necro who reached 54 lost their
- * charm break. The Enchanter ladder (Charm 11, Beguile 23, Cajoling Whispers 37, Allure 46,
- * Boltran's Agacerie 53, Dictate 60) and the Druid/Shaman pair (Charm Animals, Allure of the
- * Wild) were already complete and are unchanged.
+ * charm break.
+ *
+ * …AND THE DRUID/SHAMAN SIDE WAS NEVER A PAIR (JOS-250 charm roster research 2026-08-12). This
+ * paragraph used to say "the Druid/Shaman pair (Charm Animals, Allure of the Wild) were already
+ * complete", and that was FALSE. `Someone blinks.` is a SEVEN-member ladder in the committed
+ * spells.json, every one of them castable and Detrimental: Befriend Animal (Druid 13 / Shaman 25),
+ * Charm Animals (Druid 23 / Shaman 32), Beguile Plants (Druid 28), Beguile Animals (Druid 33),
+ * Allure of the Wild (Druid 43), Call of Karana (Druid 52), Tunare`s Request (Druid 55). Three of
+ * the seven — Befriend Animal, Call of Karana, Tunare`s Request — matched no stem at all, so the
+ * druid's FIRST charm and their last two both lost their break line. The same "one word apart"
+ * failure JOS-84 caught for Largo's, at the two ends of a different ladder.
+ *
+ * `tunare.s request` carries the same apostrophe/backtick dot the bard stems do, and here it is
+ * load-bearing rather than defensive: the committed DB row spells it with a BACKTICK
+ * (``Tunare`s Request``) while the log prints an apostrophe, so a stem written either way alone
+ * would satisfy one of the two readers and fail the other.
+ *
+ * FOUR FALSE POSITIVES LEFT AT THE SAME TIME, and one of them was dangerous rather than untidy:
+ *   * `\bcharm\b(?! of )` drops the two ITEM focus effects `Naki's Charm of Pernicity` and
+ *     `Tavee's Charm of Diuturnity` — a charm is a trinket as well as a spell in this game.
+ *   * `\ballure\b(?! of death)` drops `Allure of Death`, a Beneficial NECRO SELF-BUFF.
+ *   * the `boltran` stem is DELETED outright. `agacerie` already matches `Boltran's Agacerie`
+ *     uniquely, so the stem bought nothing — while it also matched `Boltran's Animation`, a
+ *     Beneficial PET SUMMON with a 9,000 ms cast time. That is not a cosmetic miss: JOS-250 arms
+ *     a charm-attribution window of `castTime + slack` on a matching cast, so the stem was
+ *     handing a pet-summoning magician a 10.5-second window in which the next caster-less charm
+ *     broadcast in the zone would be attributed to them. The exact adoption the ownership model
+ *     exists to prevent, reached through the roster's back door.
+ * `alluring whispers` is added for completeness (NPC-only, so no `Your … has worn off of` line can
+ * ever name it, but it is a member of the enchanter landing family and the oracle walks members).
+ *
+ * AND THE SECOND SOLON SONG IS A CHARM TOO (owner ruling 2026-08-12, on the wiki evidence). This
+ * paragraph said `song of the sirens` was contested and staying in `CC_STEMS`; the ruling settled
+ * it, and the citation is the wiki page's own EFFECT line — **"1: Charm up to level 37"**, which
+ * is the column spells.json does not carry and the column JOS-84's message-family walk had to
+ * guess at. So BOTH of Solon's songs are the bard charm line: `Solon's Song of the Sirens` 27 and
+ * `Solon's Bewitching Bravura` 39, one stem alternation, one roster.
+ *
+ * IT MOVES ROSTERS RATHER THAN JOINING ONE. Leaving it in `CC_STEMS` as well would make it the
+ * only spell in the tree that satisfies both, which `isCcSpell`'s charm-wins overlap rule would
+ * quietly paper over and which the roster oracle refuses outright — a spell has one effect. Its
+ * wear-off is an `uncharm` and fires charm-break from here on, never the mez group.
+ *
+ * THE LANDING IS UNCHANGED and stays impure: `Someone 's eyes glaze over.` is now two charms
+ * (Sirens 27, Bravura 39) and two real mezzes (Crission's Pixie Strike 28, Sionachie's Dreams 40),
+ * so the sentence still cannot be routed and still resolves through the arm — exactly the
+ * `goes berserk.` pattern charmModel.ts already runs on. That is JOS-200's standing cost, paid
+ * once more rather than relitigated.
+ *
+ * FIELD CORROBORATION IS STILL OUTSTANDING, and it is named rather than implied: JOS-200 proved
+ * Bravura a charm from a reporter's slice (`You lose control of yourself!` at T+3 s, against nine
+ * `You are stunned!` episodes in the same slice), and no slice in hand shows Sirens doing the same
+ * thing. The wiki effect line is the evidence this ruling rests on; a slice that shows the
+ * lose-control pair for Sirens would upgrade it from stated to measured.
  *
  * NOTHING HERE IS INVENTED. Every added name is a spell in src/main/data/spells.json that shares
  * its landing message with a member the rosters already classified; tests/charmCcRoster.test.mts
@@ -162,14 +301,69 @@ export interface ParserConfig {
  * built from the catalog's display name matches the sentence the game actually prints.
  */
 export const CHARM_STEMS =
-  /\bcharm\b|beguile|allure|cajol|dictate|besiege|agacerie|beckon|command of druzzil|dominate|boltran|thrall of bones|enslave death|solon.s (bewitching )?bravura/i
+  /\bcharm\b(?! of )|beguile|\ballure\b(?! of death)|alluring whispers|cajol|dictate|besiege|agacerie|beckon|command of druzzil|dominate|thrall of bones|enslave death|befriend animal|call of karana|tunare.s request|solon.s ((bewitching )?bravura|song of the sirens)/i
 export const CC_STEMS =
-  /mesmeriz|enthrall|entranc|dazzle|largo.s (melodic|assonant) binding|screaming terror|ensnar|immobiliz|suffocat|kelin.s lucid lullaby|song of the sirens|pixie strike|sionachie.s dreams/i
+  /mesmeriz|enthrall|entranc|dazzle|screaming terror|ensnar|immobiliz|suffocat|kelin.s lucid lullaby|pixie strike|sionachie.s dreams/i
 
+/**
+ * THE HALF-SWAP (JOS-251), and the half that did not move is the interesting one.
+ *
+ * `charmSpell` IS NOW DERIVED. The scrape captures each spell page's numbered effect list, and
+ * `spellEffectClass.ts` reads it, so "does this spell charm?" is a query over committed data rather
+ * than a stem alternation somebody has to remember to extend. The stems above stay as the FALLBACK
+ * for a name the catalog does not carry — which is the only case left, because the derived set is
+ * keyed by `spellCanonKey` and therefore already answers a ranked log name (`Allure VII`).
+ *
+ * THE SWAP IS PROVABLY BEHAVIOUR-PRESERVING TODAY, and that is the point of doing it this way
+ * rather than as a rewrite: over all 1,928 rows of the corrected catalog, `CHARM_STEMS.test(name)`
+ * and the derived set agree on EVERY name, in both directions — zero disagreements, measured, and
+ * asserted every run by tests/charmCcRoster.test.mts. So this commit changes no classification at
+ * all; what it changes is where the next charm comes from. JOS-250 had to hand-add four stems and
+ * hand-remove four false positives after a human read the wiki page by page; the next scrape that
+ * adds a charm adds it here for free, and a scrape that DISAGREES with a stem fails the suite
+ * instead of quietly being right or quietly being wrong.
+ *
+ * `ccSpell` DID NOT MOVE, and refusing to move it is a finding rather than an omission. The derived
+ * hold roster (mez ∪ root) disagrees with these stems on nineteen spells in both directions:
+ *
+ *   THE STEMS CLAIM FIVE NON-HOLDS — `Ensnare` (a pure `Decrease Movement Speed by 40%`, swept in
+ *   by the `ensnar` stem that exists for Ensnaring ROOTS), `Suffocate` and `Suffocating Sphere`
+ *   (damage-over-time and stat debuffs), and two NPC spells whose names contain "mesmeriz" while
+ *   their effect lines say Silence and Stun. By the JOS-225 rule — a movement debuff is not a hold
+ *   — the first three are that exact defect, still live.
+ *
+ *   THE DERIVATION CLAIMS FOURTEEN THE STEMS MISS — the whole druid root ladder, `Fetter`,
+ *   `Paralyzing Earth`, three enchanter mezzes, and, most plainly, the spell literally named
+ *   `Root`, whose break has never reached the "Mez / root broke" group at all.
+ *
+ * Both halves are corrections. But `Ensnare` is not a stray: it is the worked example in
+ * tests/earlyWarningBreaks.test.mts, the debuff in the buff-overlay e2e, and the hold in the
+ * offline-pause fixture — this tree has treated a snare as a trackable hold since long before
+ * JOS-225 drew the line for ALERTS. Reconciling "a snare is a hold for the timer model" with "a
+ * snare is not a hold for the alert" is an owner ruling about product behaviour, not a refactor an
+ * executor performs on the way past. tests/spellEffectClass.test.mts pins the derivation's answer
+ * for all nineteen so the ruling has something to land against.
+ */
 const classic: ParserConfig = {
   id: 'classic',
   charmSpell: CHARM_STEMS,
   ccSpell: CC_STEMS
+}
+
+/**
+ * The derived charm roster over an installed DB, with `fallback` answering for names it does not
+ * carry.
+ *
+ * NPC-ONLY SPELLS ARE KEPT (`castableOnly: false`), which is not the default `effectRoster` gate
+ * and is deliberate here: `CHARM_STEMS` matches `Alluring Whispers`, `Dragon Charm` and
+ * `Vampire Charm` — JOS-250 added the first of them "for completeness" — and this config feeds
+ * `charmModel.isCharmSpell`, which arms on a CAST rather than on a `Your <X> … worn off of` line.
+ * Dropping them would be a real behaviour change smuggled inside a refactor. SELF-target rows stay
+ * excluded (`targetOnly` default), because there are none in the charm class to exclude.
+ */
+function derivedCharmRoster(db: SpellDb, fallback: RegExp): SpellRoster {
+  const keys = charmRoster(db.spells, { castableOnly: false })
+  return { test: (name: string): boolean => keys.has(spellCanonKey(name)) || fallback.test(name) }
 }
 
 export const PARSER_CONFIGS: Record<string, ParserConfig> = {
@@ -186,15 +380,28 @@ export function getParserConfig(profileId: string = DEFAULT_PROFILE): ParserConf
  * message-driven buffApply / buffWearOff events. Called once at main startup after the DB
  * is loaded. Applies to ALL configs by default (they share the same message grammar); pass
  * a profileId to scope it. Idempotent — re-installing replaces the DB.
+ *
+ * IT ALSO INSTALLS THE DERIVED CHARM ROSTER (JOS-251). A DB is the only thing that carries the
+ * effect lines, so this is the one place that can build the roster from them — and clearing the DB
+ * puts `CHARM_STEMS` back, which keeps the purity contract this function was written under: a
+ * profile with no DB behaves exactly as it did before any of this existed.
  */
 export function installSpellDb(db: SpellDb | undefined, profileId?: string): void {
+  const roster = db ? derivedCharmRoster(db, CHARM_STEMS) : CHARM_STEMS
   if (profileId) {
     const cfg = PARSER_CONFIGS[profileId]
-    if (cfg) cfg.spellDb = db
+    if (cfg) {
+      cfg.spellDb = db
+      cfg.charmSpell = roster
+    }
     return
   }
-  for (const cfg of Object.values(PARSER_CONFIGS)) cfg.spellDb = db
+  for (const cfg of Object.values(PARSER_CONFIGS)) {
+    cfg.spellDb = db
+    cfg.charmSpell = roster
+  }
   classic.spellDb = db
+  classic.charmSpell = roster
 }
 
 /**

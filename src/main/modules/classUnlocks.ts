@@ -19,30 +19,11 @@
 // launch anchor), so the reset costs nothing real and refuses the case it exists for.
 
 import type { EqModule } from './types'
-import { S, validate, type FoldSchema } from '../foldCache/schema'
-import type { FoldCheckpointable } from '../foldCache/serialize'
 import type { LogEvent } from '../../shared/logEvents'
 import type { ClassUnlockDelta, ClassUnlockRecord, ClassUnlockSnap } from '../../shared/types'
 
-/**
- * THE CHECKPOINT DECLARATION (JOS-208 phase 2). `seen` is the dedupe SET and is deliberately NOT
- * stored: it is a derivation of `unlocks` (the lowercased class name of each row), and storing a
- * derivation of a stored fact is how the two come to disagree. `deserializeFold` rebuilds it by
- * the same rule `onEvent` writes it with.
- */
-const CLASS_UNLOCKS_FOLD_SCHEMA: FoldSchema = S.obj({
-  unlocks: S.arr(S.obj({ ts: S.num, className: S.str })),
-  seq: S.num
-})
-
-/** The class-unlock module's complete event-derived state. */
-export interface ClassUnlocksFoldState {
-  unlocks: ClassUnlockRecord[]
-  seq: number
-}
-
 export class ClassUnlocksModule
-  implements EqModule<ClassUnlockSnap, ClassUnlockDelta>, FoldCheckpointable<ClassUnlocksFoldState>
+  implements EqModule<ClassUnlockSnap, ClassUnlockDelta>
 {
   readonly id = 'classUnlocks'
   private unlocks: ClassUnlockRecord[] = []
@@ -84,23 +65,5 @@ export class ClassUnlocksModule
     const delta: ClassUnlockDelta = { appended: this.pending }
     this.pending = []
     return { seq: this.seq, delta }
-  }
-
-  // ---- the checkpoint seam (JOS-208) ---------------------------------------------------------
-
-  readonly foldSchema = CLASS_UNLOCKS_FOLD_SCHEMA
-
-  serializeFold(): ClassUnlocksFoldState {
-    return { unlocks: this.unlocks.map((u) => ({ ...u })), seq: this.seq }
-  }
-
-  deserializeFold(state: unknown): boolean {
-    if (!validate(CLASS_UNLOCKS_FOLD_SCHEMA, state).ok) return false
-    const s = state as ClassUnlocksFoldState
-    this.unlocks = s.unlocks
-    this.seen = new Set(s.unlocks.map((u) => u.className.toLowerCase()))
-    this.seq = s.seq
-    this.pending = []
-    return true
   }
 }

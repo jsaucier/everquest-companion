@@ -32,7 +32,9 @@ import type { AlertDef } from '@shared/types'
  * that genuinely happened at different moments still both speak — a typical alert sound is
  * ~0.6-1.2s, so the next alert is audible as soon as the previous one has stopped talking
  * rather than queuing behind it. Making it configurable would be offering the user a dial for
- * "how much of my own log do I want to miss"; the per-alert opt-out below is the honest knob.
+ * "how much of my own log do I want to miss"; the two opt-outs below — this alert, or all of
+ * them (JOS-222) — are the honest knob, because an opt-out states what it costs and a shorter
+ * window would not.
  */
 export const AUDIO_COALESCE_MS = 1500
 
@@ -57,13 +59,20 @@ export interface ThrottleDecision {
  * is transparent to the window in both directions: it ignores one, and it leaves whatever
  * window was already open exactly as it found it (a burst of ordinary alerts is still coalesced
  * around it).
+ *
+ * `allAlwaysPlay` is the GLOBAL preference (JOS-222, `AlertPrefs.alwaysPlayAll`) and it is the
+ * SAME rule with a wider subject: while it is on, every firing takes the opt-out's branch, so no
+ * window is ever opened and none is ever consulted — the throttle is off, not loosened. It is
+ * `false` by default at this signature too, so a caller that has not been taught about the
+ * preference still gets the shipped behavior rather than a silent bypass.
  */
 export function coalesceAudio(
   def: ThrottledDef,
   now: number,
-  lastAudioMs: number | null
+  lastAudioMs: number | null,
+  allAlwaysPlay = false
 ): ThrottleDecision {
-  if (def.alwaysPlay === true) return { play: true, lastAudioMs }
+  if (allAlwaysPlay || def.alwaysPlay === true) return { play: true, lastAudioMs }
   if (lastAudioMs !== null && now - lastAudioMs < AUDIO_COALESCE_MS) {
     return { play: false, lastAudioMs }
   }

@@ -7,7 +7,8 @@
 import type { JSX } from 'react'
 import { Box, Chip, LinearProgress, Paper, Stack, Typography } from '@mui/material'
 import type { ActiveBuff } from '@shared/types'
-import { fmtDuration, remainingFraction, isOverdue, classAccent } from './format'
+import { rowRankLabel } from '@shared/buffTimers'
+import { fmtDuration, remainingFraction, isOverdue, classAccent, estimatorSourceTitle } from './format'
 import { Tooltip } from '../../lib/Tooltip'
 
 /** Everything the countdown bar needs, resolved once so nothing downstream re-derives it. */
@@ -35,10 +36,16 @@ function estimateState(buff: ActiveBuff, elapsed: number): EstimateState {
 }
 
 /**
- * Permanent illusion (Task #34): a full, steady bar and an explicit label — no countdown,
- * because a self-cast illusion under the Permanent Illusion AA never fades.
+ * A buff that never fades: a full, steady bar and an explicit label — no countdown.
+ *
+ * THE LABEL SAYS WHY, AND IT USED TO GUESS (JOS-215). This read `permanent · illusion AA`
+ * unconditionally, because when Task #34 wrote it the Permanent Illusion AA was the only way an
+ * instance could be permanent. Since JOS-215 the far larger case is the spell's own duration — 62
+ * rows the wiki states as `Permanent`, from Yaulp to a rogue's blade coat to a druid's wolf form —
+ * and telling a rogue their poison coat is an illusion AA is a caption that is simply false.
+ * `permanentSource` is the model's own answer (shared/buffTypes.ts), so nothing is inferred here.
  */
-function PermanentBar(): JSX.Element {
+function PermanentBar({ source }: { source: ActiveBuff['permanentSource'] }): JSX.Element {
   return (
     <>
       <LinearProgress
@@ -47,7 +54,7 @@ function PermanentBar(): JSX.Element {
         sx={{ height: 8, borderRadius: 1, '& .MuiLinearProgress-bar': { bgcolor: 'warning.main' } }}
       />
       <Typography variant="caption" color="warning.main">
-        permanent · illusion AA
+        {source === 'illusion-aa' ? 'permanent · illusion AA' : 'permanent'}
       </Typography>
     </>
   )
@@ -80,8 +87,10 @@ function EstimateBar({
   const remaining = Math.max(0, est - elapsed)
   const frac = remainingFraction(elapsed, est)
   const { overdue, spread } = state
-  // Estimate provenance (JOS-117): 'db' (the spell-database floor held) vs 'observed' (a logged
-  // cast beat the floor — shown as a "log" chip). A small chip on the bar caption.
+  // Estimate provenance (JOS-117 + JOS-212): 'db' (the spell-database floor held) vs 'observed' (a
+  // logged cast ran LONGER than the floor) vs 'cluster' (your own clean cycles agree it is SHORTER
+  // than the floor and overruled it). Both learned sources show a "log" chip — the number came from
+  // the log either way — but they say opposite things about the database, so the tooltip says which.
   const source = buff.durationSource
   return (
     <>
@@ -104,9 +113,7 @@ function EstimateBar({
         </Typography>
         <Stack direction="row" spacing={0.5} alignItems="center">
           {source && (
-            <Tooltip
-              title={source === 'db' ? 'The spell-database baseline' : 'From your logged casts - longer than the baseline'}
-            >
+            <Tooltip title={estimatorSourceTitle(source)}>
               <Chip
                 size="small"
                 label={source === 'db' ? 'db' : 'log'}
@@ -133,9 +140,12 @@ export function ActiveRow({ buff, now }: { buff: ActiveBuff; now: number }): JSX
   // "target: inferred" chip, never a silent guess (Task #32 rule 5c).
   const inferred = buff.inferredTarget === true
 
-  // Permanent illusion (Task #34): a self-cast illusion buff while the Permanent Illusion
-  // AA is owned lasts forever — no countdown, an explicit "permanent · illusion AA" state.
+  // A buff that never fades — the spell's own `Permanent` duration (JOS-215) or a self-cast
+  // illusion under the Permanent Illusion AA (Task #34). No countdown; the caption says which.
   const permanent = buff.permanent === true
+
+  // The rank the cast line spelled, when this instance was resolved from one (JOS-238).
+  const rank = rowRankLabel(buff.spell, buff.castName)
 
   return (
     <Paper
@@ -154,6 +164,15 @@ export function ActiveRow({ buff, now }: { buff: ActiveBuff; now: number }): JSX
         <Typography variant="body2" sx={{ fontWeight: 600 }}>
           {buff.spell}
         </Typography>
+        {/* THE RANK, BESIDE THE NAME AND NOT INSIDE IT (JOS-238). `spell` is the identity — the
+            DB's own display name, which is what alerts, the learner and the wear-off sentence
+            all speak — and the numeral the cast line spelled is a separate fact about this
+            instance. Absent whenever the cast line named no rank. */}
+        {rank != null && (
+          <Typography variant="caption" color="text.secondary" data-testid="active-buff-rank">
+            {rank}
+          </Typography>
+        )}
         {/* The chip's own word IS the disclosure — a tooltip re-explaining `inferred` is the
             defensive footnoting the UI conventions ban (AGENTS.md tooltip and caveat diet). */}
         {inferred ? (
@@ -183,7 +202,7 @@ export function ActiveRow({ buff, now }: { buff: ActiveBuff; now: number }): JSX
       </Stack>
 
       {permanent ? (
-        <PermanentBar />
+        <PermanentBar source={buff.permanentSource} />
       ) : state.est !== null ? (
         <EstimateBar est={state.est} elapsed={elapsed} state={state} buff={buff} />
       ) : (

@@ -151,16 +151,18 @@ test('JOS-118: a landed DEBUFF is a bar on the MOB the landing line named', () =
       [3, 'Guard Gehnus slows down.']
     )
   )
-  // The row carries the RANKED name the cast line spelled (JOS-140) - the landing sentence names
-  // no spell and the wear-off names the rank-less base, so the cast is the only line that knows.
-  const deeds = buffs.active.find((a) => a.spell === 'Shiftless Deeds IV')
+  // The row is NAMED for the spell — the DB's own display name (JOS-238) — and the rank the cast
+  // line spelled rides beside it. Before that ticket the two were one string, and a ranked cast
+  // was an identity no alert, learner or wear-off sentence could ever match.
+  const deeds = buffs.active.find((a) => a.spell === 'Shiftless Deeds')
   assert.ok(deeds, 'the landed slow is tracked')
+  assert.equal(deeds.castName, 'Shiftless Deeds IV', 'and the rank the cast line spelled is kept')
   assert.equal(deeds.self, false, 'a debuff on a mob is not a self buff')
   assert.equal(deeds.target, 'Guard Gehnus', 'keyed to the entity the LANDING line named')
   assert.equal(deeds.cls, 'debuff')
   assert.equal(deeds.messageDriven, true, 'opened by the landing line')
   assert.equal(deeds.inferredTarget, undefined, 'a named target is never flagged inferred')
-  assert.deepEqual(rowNames(rows), ['debuff:Shiftless Deeds IV@Guard Gehnus'])
+  assert.deepEqual(rowNames(rows), ['debuff:Shiftless Deeds@Guard Gehnus'])
 })
 
 test('JOS-118: a landed SELF buff is a bar on you', () => {
@@ -174,7 +176,10 @@ test('JOS-118: a landed SELF buff is a bar on you', () => {
   assert.ok(swift, 'the landed self buff is tracked')
   assert.equal(swift.self, true, 'bound to the player')
   assert.equal(swift.target ?? undefined, undefined, 'a self buff has no target chip')
-  assert.deepEqual(rowNames(rows), ['buff:Swift Like the Wind I@self'])
+  // The DB spells it `Swift Like The Wind`; the cast line spelled `Swift Like the Wind I`. The row
+  // takes the DB's, and the rank rides beside it (JOS-238).
+  assert.deepEqual(rowNames(rows), ['buff:Swift Like The Wind@self'])
+  assert.equal(rows[0].castName, 'Swift Like the Wind I')
 })
 
 test('JOS-118: a buff landing on a NAMED group member is keyed to that person, not to me', () => {
@@ -191,7 +196,7 @@ test('JOS-118: a buff landing on a NAMED group member is keyed to that person, n
   assert.ok(swift, 'the buff on the group member is tracked')
   assert.equal(swift.self, false, 'it is NOT on me — the line named somebody else')
   assert.equal(swift.target, 'Darmoss', 'keyed to the person the landing line named')
-  assert.deepEqual(rowNames(rows), ['buff:Swift Like the Wind I@Darmoss'])
+  assert.deepEqual(rowNames(rows), ['buff:Swift Like The Wind@Darmoss'])
 })
 
 test('JOS-118: a landed CC hold is keyed to the mob the broadcast named', () => {
@@ -267,7 +272,7 @@ test('ownership (d): our OWN cast + its landing IS tracked, keyed to the named e
   assert.equal(buffs.active[0].target, 'a greater kobold', 'on the mob the landing line named')
   assert.deepEqual(
     rowNames(rows).sort(),
-    ['cc:Mesmerization@a ghoul sentinel', 'debuff:Shiftless Deeds IV@a greater kobold'],
+    ['cc:Mesmerization@a ghoul sentinel', 'debuff:Shiftless Deeds@a greater kobold'],
     'both of our own land, each keyed to its own named mob'
   )
 })

@@ -15,7 +15,7 @@
 
 import type { MessageOverlay } from '../../shared/types'
 import type { SpellDb } from '../data/spellDb'
-import { MessageOverlayMiner, type OverlayMinerFoldState } from '../data/messageOverlay'
+import { MessageOverlayMiner, type OverlayRegister, type OverlaySeed } from '../data/messageOverlay'
 import type { LogEvent } from '../../shared/logEvents'
 import { looksLandingMessage } from './buffsShapes'
 
@@ -32,13 +32,29 @@ export class OverlayMining {
   private dirty = true
 
   /**
-   * Seeded warm with the committed baseline + the user's persisted overlay (both additive), so a
-   * fresh install benefits from the shipped baseline and a returning user keeps everything their
-   * own log has taught (Task #36).
+   * Seeded warm with the committed baseline + the user's persisted buckets, so a fresh install
+   * benefits from the shipped baseline and a returning user keeps everything their own logs have
+   * taught (Task #36). EACH SEED CARRIES ITS SOURCE KEY (JOS-231): the bucket a log is filed
+   * under is what lets `beginSource` replace it when that log is folded again, instead of the
+   * fold accumulating on top of its own previous output.
    */
-  constructor(db?: SpellDb, seedOverlays?: (MessageOverlay | null | undefined)[]) {
+  constructor(db?: SpellDb, seeds?: readonly OverlaySeed[]) {
     this.miner = new MessageOverlayMiner(db?.byKey)
-    for (const ov of seedOverlays ?? []) this.miner.merge(ov)
+    for (const s of seeds ?? []) this.miner.merge(s.counts, s.key)
+  }
+
+  /**
+   * A log is about to be folded from its first byte — file what it teaches under `key` and drop
+   * whatever that key held (JOS-231). Called once per character attach, before the scan.
+   */
+  beginSource(key: string): void {
+    this.miner.beginSource(key)
+    this.dirty = true
+  }
+
+  /** The per-source register — what persistence writes and re-seeds the next launch from. */
+  register(): OverlayRegister {
+    return this.miner.register()
   }
 
   /**
@@ -91,21 +107,5 @@ export class OverlayMining {
       this.dirty = false
     }
     return this.cache
-  }
-
-  // ---- the checkpoint seam (JOS-208 phase 2) --------------------------------------------------
-  //
-  // The MINER's accumulator travels; the CACHE does not, because it is a memo of it. Dropping the
-  // cache on restore is what makes the first snapshot after one describe the restored counts
-  // rather than the seeded ones.
-
-  serializeFold(): OverlayMinerFoldState {
-    return this.miner.serializeFold()
-  }
-
-  deserializeFold(state: OverlayMinerFoldState): void {
-    this.miner.deserializeFold(state)
-    this.cache = null
-    this.dirty = true
   }
 }

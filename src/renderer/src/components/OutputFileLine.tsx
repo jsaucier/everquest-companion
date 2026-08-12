@@ -36,13 +36,67 @@
 // exists when `steps` is non-empty, so the three-things-and-stop contract is intact everywhere it
 // was already true.
 
+// AND THE FIFTH (JOS-253): WHEN THIS APP LAST READ IT. The four things above are all about the
+// FILE — what to type, why, how to type it, how old it is — and the owner's 2026-08-12 ruling is
+// that a surface fed by a dump owes the player one more fact, which is whether the thing on screen
+// is that file. The two are the same number on a healthy load and diverge exactly when something
+// went wrong, so the second slot costs nothing to read and is the only thing that can say "the
+// game rewrote this and we are still showing you the old one". It is OPTIONAL: a surface with no
+// load instant to offer renders precisely what it rendered before.
+
 import { type JSX, useEffect, useState } from 'react'
 import { Box, Button, Collapse, Paper, Stack, Typography } from '@mui/material'
 import { formatDateTime } from '../lib/formatDate'
-import { outputAgeLabel, outputUpdatedMillis } from '../lib/outputFreshness'
+import {
+  outputAgeLabel,
+  outputIsStale,
+  outputLoadedLabel,
+  outputUpdatedMillis
+} from '../lib/outputFreshness'
 
 /** How often the age re-renders. Coarse, matching `formatAge`'s own resolution (UpdateChip). */
 const AGE_TICK_MS = 60_000
+
+/** A child's testid, or none when the line was given none. Module-level so the component stays
+ *  within the measured complexity ceiling rather than carrying four copies of this ternary. */
+const sub = (testId: string | undefined, part: string): string | undefined =>
+  testId === undefined ? undefined : `${testId}-${part}`
+
+/** The exact clock time behind a coarse label, or nothing when there is no instant to state. */
+const clock = (at: number | undefined): string | undefined =>
+  at === undefined ? undefined : formatDateTime(at)
+
+/**
+ * ONE TIME SLOT on the right-hand end: coarse words, the exact clock on hover.
+ *
+ * The two slots (the file's age, and — since JOS-253 — when we read it) are the SAME rendering
+ * with different words and a different colour, so they are one component. That is also what keeps
+ * the layout above readable: it reads as a row of groups rather than as two near-identical
+ * fifteen-line blocks that a reader has to diff by eye.
+ */
+function Stamp({
+  label,
+  at,
+  warn = false,
+  testId
+}: {
+  label: string
+  at: number | undefined
+  warn?: boolean
+  testId: string | undefined
+}): JSX.Element {
+  return (
+    <Typography
+      variant="caption"
+      color={warn ? 'warning.main' : 'text.disabled'}
+      title={clock(at)}
+      data-testid={testId}
+      sx={{ flexShrink: 0 }}
+    >
+      {label}
+    </Typography>
+  )
+}
 
 export interface OutputFileLineProps {
   /** the command as the player must type it, verbatim — e.g. `/outputfile inventory` */
@@ -61,6 +115,16 @@ export interface OutputFileLineProps {
    * registry owns them (`OutputKindDef.steps`); an empty list renders no toggle at all.
    */
   steps?: readonly string[]
+  /**
+   * Epoch ms this app last READ the dump (`InventorySource.readAt`) — a TRI-STATE, because
+   * "we have never loaded it" and "this surface does not load it" are different claims and only
+   * one of them belongs on screen:
+   *   a number   — read at that instant.
+   *   `null`     — this surface reads the dump and has NOT loaded one. Renders "not loaded yet",
+   *                which is the state the JOS-253 reporter was in and could not see.
+   *   `undefined`— this surface does not load the file (the default). The slot is not rendered.
+   */
+  loadedAt?: number | null
   testId?: string
 }
 
@@ -69,6 +133,7 @@ export default function OutputFileLine({
   why,
   updatedAt,
   steps = [],
+  loadedAt,
   testId
 }: OutputFileLineProps): JSX.Element {
   const [now, setNow] = useState(() => Date.now())
@@ -84,13 +149,18 @@ export default function OutputFileLine({
   // not a separate rendering) lives with the words, in lib/outputFreshness.ts.
   const at = outputUpdatedMillis(updatedAt)
   const age = outputAgeLabel(at, now)
+  // The second slot (JOS-253). `read` is undefined for both "never loaded" and "not our subject";
+  // `loadedAt !== undefined` is what separates them, and it is a prop check rather than a value
+  // check on purpose (see the prop's doc).
+  const read = loadedAt ?? undefined
+  const stale = outputIsStale(at, read)
   return (
     <Paper variant="outlined" data-testid={testId} sx={{ px: 1.25, py: 0.75, mb: 1 }}>
       <Stack direction="row" spacing={1} alignItems="baseline" sx={{ flexWrap: 'nowrap', minWidth: 0 }}>
         <Typography
           variant="body2"
           sx={{ fontFamily: 'monospace', fontWeight: 700, flexShrink: 0 }}
-          data-testid={testId === undefined ? undefined : `${testId}-command`}
+          data-testid={sub(testId, 'command')}
         >
           {command}
         </Typography>
@@ -105,7 +175,7 @@ export default function OutputFileLine({
             size="small"
             variant="text"
             onClick={() => setShowSteps((v) => !v)}
-            data-testid={testId === undefined ? undefined : `${testId}-steps-toggle`}
+            data-testid={sub(testId, 'steps-toggle')}
             sx={{ flexShrink: 0, minWidth: 0, px: 0.75, py: 0 }}
           >
             {showSteps ? 'Hide steps' : 'How'}
@@ -114,22 +184,36 @@ export default function OutputFileLine({
         {/* The exact clock time is one hover away; the ambient text stays coarse (formatDate's
             own contract). This is the ONE place a tooltip is warranted here — it states the
             precise value of the number beside it, which is what makes the coarse one safe. */}
-        <Typography
-          variant="caption"
-          color="text.disabled"
-          title={at === undefined ? undefined : formatDateTime(at)}
-          data-testid={testId === undefined ? undefined : `${testId}-age`}
-          sx={{ flexShrink: 0 }}
-        >
-          {age}
-        </Typography>
+        <Stamp label={age} at={at} testId={sub(testId, 'age')} />
+        {/* WHEN WE READ IT, in the same idiom as the slot beside it: coarse text, exact time on
+            hover. It goes WARNING-coloured only when the file is provably newer than our copy —
+            that is a fact about two instants we hold, not a staleness threshold this app invented
+            (outputFreshness.ts draws that line). Everywhere else it is the same disabled grey as
+            its neighbour, because on a healthy load the two say the same thing and a permanently
+            highlighted number stops meaning anything. */}
+        {loadedAt !== undefined && (
+          <>
+            {/* The separator is its OWN node and carries no testid: it is punctuation between two
+                slots, and a reader of the load slot — a spec, a screen reader — should get the
+                sentence rather than the sentence plus a dot. */}
+            <Typography variant="caption" color="text.disabled" sx={{ flexShrink: 0 }}>
+              ·
+            </Typography>
+            <Stamp
+              label={outputLoadedLabel(read, now)}
+              at={read}
+              warn={stale}
+              testId={sub(testId, 'loaded')}
+            />
+          </>
+        )}
       </Stack>
       {/* Numbered because the ORDER is the content: opening the hoard after typing the command
           captures nothing, which is the whole failure this is here to prevent. */}
       <Collapse in={showSteps} unmountOnExit>
         <Box
           component="ol"
-          data-testid={testId === undefined ? undefined : `${testId}-steps`}
+          data-testid={sub(testId, 'steps')}
           sx={{ m: 0, mt: 0.75, pl: 2.5 }}
         >
           {steps.map((s) => (

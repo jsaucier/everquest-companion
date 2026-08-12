@@ -1,6 +1,10 @@
-// AlertsToolbar — the global controls strip above the alert list: volume + mute,
-// the search box, the sound-pack registry browser, share copy/import, and "Reset to defaults".
-// Extracted from AlertsView.tsx (Wave D factoring).
+// AlertsToolbar — the global controls strip above the alert list: volume + mute + "always play
+// all", the search box, the sound-pack registry browser, share copy/import, and "Reset to
+// defaults". Extracted from AlertsView.tsx (Wave D factoring).
+//
+// THE THREE SWITCHES ON THE LEFT ARE `AlertPrefs`, whole (main-owned, shared/alertTypes.ts). This
+// strip is that blob's ONE editor, which is why JOS-222's global throttle opt-out landed here and
+// not in Preferences: the answer to "how loud", "at all?" and "how many at once" is one row.
 
 import type { JSX } from 'react'
 import {
@@ -72,6 +76,23 @@ function VolumeControls({
         }
         label="Mute all"
       />
+      {/* THE GLOBAL THROTTLE OPT-OUT (JOS-222). It lives HERE, beside the other two global alert
+          audio controls, because that is where AlertPrefs is edited — Preferences has no alerts
+          section, and inventing one for a single switch would put "how loud" and "how many at
+          once" on two different screens. The tooltip states the COST, not the mechanism: a user
+          turns this on to stop missing things, and what they are buying is a burst that stacks. */}
+      <Tooltip title="Off by default: when several alerts fire at once you hear the first one. Turn this on to hear every one of them, stacked.">
+        <FormControlLabel
+          control={
+            <Switch
+              data-testid="alerts-always-play-all"
+              checked={prefs.alwaysPlayAll === true}
+              onChange={(e) => onPrefsCommit({ ...prefs, alwaysPlayAll: e.target.checked })}
+            />
+          }
+          label="Always play all"
+        />
+      </Tooltip>
     </>
   )
 }

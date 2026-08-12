@@ -59,6 +59,8 @@ import {
 } from './buffTimerSteps.mjs'
 // CLEARING A BAR BY HAND (JOS-203) — its own narrative, beside the other step modules.
 import { stepDismissBar } from './buffDismissSteps.mjs'
+// THE BUFFS THAT NEVER EXPIRE (JOS-215) — hidden by default, revealed by a per-window preference.
+import { stepPermanentRows } from './buffPermanentSteps.mjs'
 import type { FixtureLog } from './logFixture.mjs'
 
 /** The main window's overlay bridge — the same one the title-bar menu calls. */
@@ -566,6 +568,11 @@ async function main(): Promise<void> {
     }
     if (buffsOverlay) {
       await stepDropFlash(buffsOverlay, debuffsOverlay, log)
+      // AFTER the drop flash, deliberately: that step's assertions are about the notices on screen,
+      // and this one toggles a preference that removes rows. Running it first would put a second
+      // set of notices in front of it if the epoch guard ever regressed — which is a thing this
+      // step should FAIL on, not a thing it should hide from the step next door.
+      await stepPermanentRows(buffsOverlay, log)
     } else {
       note('the buffs overlay window never appeared — the self-buff assertions could not run')
     }

@@ -404,16 +404,18 @@ export async function stepMeterScope(page: Page): Promise<void> {
 
   const label = async (): Promise<string> => (await page.textContent(SCOPE_LABEL_SEL))?.trim() ?? ''
 
-  // The default is Group either way — any fallback shows up in the readout's own words, never as
-  // a different scope silently selected for you.
+  // THE DEFAULT IS EVERYONE (JOS-229). It was Group, on the argument that an empty roster falls
+  // back to Everyone anyway — which covers the empty roster and not the incomplete one, and an
+  // incomplete roster is a missing player's bars with no word to explain them. One unambiguous
+  // sentence now: no fallback wording, because nothing is being filtered.
   const first = await label()
-  const noRoster = first === 'Group (no roster yet)'
-  check('it defaults to Group', first === 'Group' || noRoster, first)
+  check('it defaults to Everyone', first === 'Everyone', first)
   // …and the PREFERENCE agrees, on a profile that has never written the key: an absent value is
-  // Group, not You (owner ruling — "fresh install and absent key both resolve to Group").
+  // Everyone, and the control has to say so too — the readout alone could not tell "chosen
+  // Everyone" from "defaulted to Everyone", and only one of those is the claim.
   const chosen = await scopeFromPrefs(page, 'nav-combat')
   await settleCount(page, '[data-testid="combat-dashboard"]', 1, { timeoutMs: 20_000 })
-  check('an absent preference resolves to Group in the control too', chosen === 'group', chosen)
+  check('an absent preference resolves to Everyone in the control too', chosen === 'everyone', chosen)
   const baseline = await settle(() => meterRows(page), (n) => n > 0, { timeoutMs: 15_000 })
 
   // THE PREFERENCE APPLIES. Setting it two tabs away is the whole control now, and the CONDITION
@@ -424,24 +426,33 @@ export async function stepMeterScope(page: Page): Promise<void> {
   // header (and this readout with it) is already there, so settling on the WORD alone would count
   // the meter's rows before the meter had any. `combat-dashboard` is the body, and it exists only
   // once there is a segment to rank.
-  const setTo = async (scope: Scope, want: string): Promise<string> => {
+  //
+  // The wanted word is a PREDICATE rather than a string, because Group has two legal spellings and
+  // which one this log produces is not this spec's business (see the popover pairing below).
+  const setTo = async (scope: Scope, want: (t: string) => boolean): Promise<string> => {
     await setMeterScope(page, scope, 'nav-combat')
     await settleCount(page, '[data-testid="combat-dashboard"]', 1, { timeoutMs: 20_000 })
-    return settle(label, (t) => t === want, { timeoutMs: 8_000 })
+    return settle(label, want, { timeoutMs: 8_000 })
   }
 
-  check('choosing Everyone in Preferences reaches the Combat tab', (await setTo('everyone', 'Everyone')) === 'Everyone', await label())
+  const groupWord = await setTo('group', (t) => t.startsWith('Group'))
+  check('choosing Group in Preferences reaches the Combat tab', groupWord.startsWith('Group'), groupWord)
+  // Which of the two Group states this log leaves behind — the popover pairing at the end of this
+  // step is the one that cares, and it now learns it HERE rather than from the opening readout.
+  const noRoster = groupWord === 'Group (no roster yet)'
   // The row count has to have STOPPED MOVING before it means anything: the panel is fed by a
   // snapshot that arrives a beat after the remount, so a reading taken on the first frame is a
   // reading of an empty meter (settleStable's argument, spelled with a floor).
-  const everyone = await settle(() => meterRows(page), (n) => n > 0, { timeoutMs: 15_000 })
-  check('Everyone shows at least what Group did', everyone >= baseline, `${everyone} vs ${baseline}`)
+  const group = await settle(() => meterRows(page), (n) => n > 0, { timeoutMs: 15_000 })
+  // NARROWING NEVER WIDENS. Equal is legal and expected on the law-1 fallback, where Group renders
+  // as Everyone; more rows under Group than under Everyone would mean the filter added somebody.
+  check('Group shows no more than Everyone did', group <= baseline, `${group} vs ${baseline}`)
 
-  check('…and so does choosing You', (await setTo('you', 'You')) === 'You', await label())
+  check('…and so does choosing You', (await setTo('you', (t) => t === 'You')) === 'You', await label())
   // NO SCOPE EVER HIDES YOU OR YOUR PETS. The rows here are yours and your pets' — they must
   // survive every scope, and only a member row may ever go.
   const you = await settle(() => meterRows(page), (n) => n > 0, { timeoutMs: 15_000 })
-  check('You scope keeps your own rows — only a member is ever filtered', you >= 1 && you <= everyone, `${you} of ${everyone}`)
+  check('You scope keeps your own rows — only a member is ever filtered', you >= 1 && you <= group, `${you} of ${group}`)
 
   // PERSISTED: the choice survives leaving the tab and coming back, because it is a stored
   // preference and not component state.
@@ -481,11 +492,11 @@ export async function stepMeterScope(page: Page): Promise<void> {
   // a narrowed meter.
   await page.keyboard.press('Escape')
   await settleGone(page, '[data-testid="roster-popover"]', { timeoutMs: 8_000 })
-  await setMeterScope(page, 'group', 'nav-combat')
+  await setMeterScope(page, 'everyone', 'nav-combat')
   await settleCount(page, '[data-testid="combat-dashboard"]', 1, { timeoutMs: 20_000 })
   check(
-    'the meter is left on its Group default',
-    (await settle(label, (t) => t.startsWith('Group'), { timeoutMs: 8_000 })).startsWith('Group'),
+    'the meter is left on its Everyone default',
+    (await settle(label, (t) => t === 'Everyone', { timeoutMs: 8_000 })) === 'Everyone',
     await label()
   )
 }

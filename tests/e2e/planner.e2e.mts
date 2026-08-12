@@ -30,7 +30,9 @@
  * the board draws both any-slot cells, named in the client's own words, and a planned exaltation
  * says what it DOES when you hover it (JOS-104, both halves of one player's report);
  * clicking one of a host's sockets lands in the effect browser filtered to that socket, that slot
- * and that host, with a chip that can be cleared (V8); and the exaltation rules card is NOT up on a
+ * and that host, with a chip that can be cleared (V8); that narrowing SURVIVES a switch between the
+ * effect kinds and can equally be reached from the item side, by typing any item the DB carries
+ * into the filter bar's own picker (JOS-210, both halves of the owner's report); and the exaltation rules card is NOT up on a
  * first visit, comes up only from the toolbar's `?`, and closes for good when dismissed (V10 as
  * JOS-51 revised it — the rules are there when asked for, never by default).
  *
@@ -69,6 +71,7 @@ import {
   BOARD,
   BOARD_CELL,
   DONOR_NAME,
+  checkReplaceLabels,
   DONOR_ROW,
   EFFECT_LIST,
   EFFECT_ROW,
@@ -100,6 +103,8 @@ import {
   checkReportedPairs,
   stepEra,
   stepFocusFamilies,
+  stepItemFilter,
+  stepKindSwitchKeepsItem,
   stepNonEquip,
   stepOutputsRegistry,
   stepSocketEffect,
@@ -367,51 +372,6 @@ async function stepInventoryFill(page: Page): Promise<void> {
 }
 
 /**
- * 6c-i. ADD SAYS REPLACE WHEN IT WOULD REPLACE (JOS-42 refinement 3).
- *
- * Asserted UNDER A PRESET, because that is the only place the target socket is unambiguous: you
- * clicked one socket of one item, so every row on screen would write to exactly that socket, and
- * the button can therefore be checked against the socket's own state.
- *
- * The direction that matters is the FALSE REPLACE — a button warning about an overwrite that
- * would not happen teaches the user to ignore the warning — so "empty socket ⇒ nothing says
- * Replace" is asserted flat. The other direction allows one honest exception: a row whose donor
- * and effect are ALREADY what sits there replaces nothing (it is chipped "in set"), so a preset
- * showing only that row legitimately offers no Replace at all.
- */
-async function checkReplaceLabels(page: Page, occupied: boolean): Promise<void> {
-  const labels = await page.evaluate(
-    (s) => Array.from(document.querySelectorAll(s)).map((b) => (b as HTMLElement).innerText.trim()),
-    ADD_BUTTON
-  )
-  if (labels.length === 0) {
-    note('the preset matched no addable donor — the replace-label step is skipped this run')
-    return
-  }
-  const replace = labels.filter((l) => l.toLowerCase() === 'replace').length
-  if (!occupied) {
-    check(
-      'an empty socket is never offered as a Replace — the add button only warns about a real overwrite',
-      replace === 0,
-      `${String(replace)} of ${String(labels.length)} buttons said Replace over an empty socket`
-    )
-    return
-  }
-  const inSet = await page.evaluate(
-    () => Array.from(document.querySelectorAll('.MuiChip-label')).filter((e) => e.textContent === 'in set').length
-  )
-  if (replace === 0 && inSet >= labels.length) {
-    note('every donor the preset offers is already the one in this socket — nothing here would replace anything')
-    return
-  }
-  check(
-    'browsing an OCCUPIED socket, the add button says Replace instead of Add to set',
-    replace > 0,
-    `${String(replace)} of ${String(labels.length)} buttons said Replace (${String(inSet)} already in set)`
-  )
-}
-
-/**
  * 6c. A HOST'S SOCKETS ARE BROWSABLE ONE AT A TIME (V8).
  *
  * The item-focused way in: a cell with a host draws all four of its sockets, and clicking one
@@ -454,6 +414,10 @@ async function stepSocketView(page: Page): Promise<void> {
     ).length
   )
   check('…and no haste-locked donor is offered under the preset', hasteChips === 0, `${String(hasteChips)} haste chips`)
+
+  // …and the kind tabs no longer throw the item away (JOS-210) — next door, with the rest of the
+  // measurements this spec only orders. It leaves the browser on the socket it was handed.
+  await stepKindSwitchKeepsItem(page, target.socket)
 
   // Clearing hands the browser back — the preset is a filter, never a mode you get stuck in.
   await page.click(`${PRESET_CHIP} .MuiChip-deleteIcon`, { timeout: 15_000 })
@@ -576,6 +540,12 @@ async function steps(page: Page): Promise<void> {
       await stepInventoryFill(page)
       await stepHostPicker(page)
       await stepSocketView(page)
+      // A FRESH MOUNT before the item filter is measured: switching modes unmounts the browser, so
+      // this hands it back its defaults (Proc, all slots, the whole corpus) instead of whatever the
+      // preset above left selected — see stepItemFilter on why a short list measures nothing.
+      await page.click(MODE_BOARD, { timeout: 15_000 })
+      await page.click(MODE_EFFECTS, { timeout: 15_000 })
+      await stepItemFilter(page)
       await stepFarm(page)
     }
   }

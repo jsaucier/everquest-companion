@@ -27,7 +27,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseEvent, parseEqTimestamp } from '../src/main/log/parser'
 import { KillsModule } from '../src/main/modules/kills'
-import { allStatuses, type TargetStatus } from '../src/renderer/src/features/bosses/bossStatus'
+import { allStatuses } from '../src/renderer/src/features/bosses/bossStatus'
 import {
   DIFFICULTY_TIERS,
   LOCKOUT_RESET_HOUR,
@@ -42,7 +42,10 @@ import {
 } from '../src/renderer/src/features/bosses/lockout'
 import { formatDate } from '../src/renderer/src/lib/formatDate'
 import { TIER_OPEN_WORLD, TIER_UNKNOWN } from '../src/shared/kills'
-import type { KillTierRun, RaidTarget } from '../src/shared/types'
+import type { KillTierRun } from '../src/shared/types'
+// The fixture replays themselves — shared with tests/bossDefeatedFilter.test.mts so the two specs
+// read ONE record (tests/bossHistories.mts, which parses no timestamp at import time on purpose).
+import { MAESTRO, SPITE, byName, hateWeek, history } from './bossHistories.mts'
 import { readFixture } from './harness.mts'
 
 const HOUR = 3_600_000
@@ -246,47 +249,12 @@ test('an old credited kill plus a fresh witnessed one is still open', () => {
 // What survives is the one lock the log actually states: Lord of Ire at d4. Section 5 below adds
 // the other half of the picture, a week in which all five difficulties really were cleared.
 
-const IRE: RaidTarget = { name: 'Lord of Ire', category: 'Plane of Hate', match: ['Lord of Ire'] }
-const PRINCESS: RaidTarget = {
-  name: 'Thunder Spirit Princess',
-  category: 'Plane of Sky',
-  match: ['Thunder Spirit Princess']
-}
-/** The two Plane of Hate rows section 5 uses, spelled as bosses.json spells them. */
-const MAESTRO: RaidTarget = {
-  name: 'Maestro of Rancor',
-  category: 'Plane of Hate',
-  match: ['Maestro of Rancor'],
-  zone: 'Plane of Hate'
-}
-const SPITE: RaidTarget = {
-  name: 'Master of Spite',
-  category: 'Plane of Hate',
-  match: ['Master of Spite'],
-  zone: 'Plane of Hate'
-}
-
+// The records themselves are built in tests/bossHistories.mts — see its header for why no
+// timestamp is parsed there (this file's TZ pin runs after every import has been evaluated).
 const IRE_D4 = parseEqTimestamp('Sat Aug 01 16:09:29 2026')
 /** The Mon Aug 03 Lord of Ire kill — `The Plane of Hate`, no instance suffix: the open world. */
 const IRE_OPEN = parseEqTimestamp('Mon Aug 03 23:02:44 2026')
 const PRINCESS_MINE = parseEqTimestamp('Tue Aug 04 22:55:08 2026')
-
-/** Both fixtures through the REAL parser into one kills module, oldest first. */
-function history(): TargetStatus[] {
-  const mod = new KillsModule()
-  mod.reset()
-  let seq = 0
-  for (const name of ['bosstier-lord-of-ire.log', 'boss-credit-open-world.log']) {
-    for (const raw of readFixture(name)) {
-      const ev = parseEvent(raw, seq++)
-      if (ev) mod.onEvent(ev)
-    }
-  }
-  return allStatuses([IRE, PRINCESS], mod.snapshot().state.mobs)
-}
-
-const byName = (list: TargetStatus[], name: string): TargetStatus =>
-  list.find((s) => s.target.name === name)!
 
 test('golden: standing before the reset, only the INSTANCED kill is locked', () => {
   // Mon Aug 03 2026, 23:30 Pacific — half an hour after the open-world kill.
@@ -517,20 +485,6 @@ test('golden: two open-world kills of the same boss green no rung between them',
 //   THE OPEN WORLD (tests/fixtures/boss-open-world-hate.log). The same zone with no suffix, two
 //   credited Master of Spite kills — one before the Tue Aug 04 reset and one after, so whichever
 //   week you stand in, one of them is inside it and neither greens anything.
-
-/** The five-difficulty ladder run and the open-world kills, folded into ONE kills module. */
-function hateWeek(): TargetStatus[] {
-  const mod = new KillsModule()
-  mod.reset()
-  let seq = 0
-  for (const name of ['bosstier-hate-ladder-aug01.log', 'boss-open-world-hate.log']) {
-    for (const raw of readFixture(name)) {
-      const ev = parseEvent(raw, seq++)
-      if (ev) mod.onEvent(ev)
-    }
-  }
-  return allStatuses([MAESTRO, SPITE], mod.snapshot().state.mobs)
-}
 
 test('golden: the Aug 01 ladder run fills all FIVE rungs of that week', () => {
   // Sat Aug 01 18:00 Pacific — a couple of hours after the d4 clear, inside the week that opened

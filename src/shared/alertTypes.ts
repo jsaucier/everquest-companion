@@ -201,14 +201,30 @@ export interface SpeechVoice {
  * Why a speech request could not be served. These are STATES, not errors — the UI says
  * what is missing instead of failing silently:
  *  - 'engine-not-installed' → the selected tier has no model/voices on disk yet.
+ *  - 'engine-failed'        → the model IS on disk and synthesis still produced no audio.
+ *  - 'engine-unloadable'    → the model is on disk and the machine cannot LOAD the engine at
+ *                             all: the native module's `dlopen` failed (ERR_DLOPEN_FAILED).
  *  - 'not-implemented'      → this build ships the channel but not the engine behind it.
  *  - 'invalid-request'      → the handler rejected the payload (see ipc/speech.ts).
+ *
+ * THE LAST TWO ARE JOS-247, AND THEY EXIST BECAUSE ONE OF THEM WAS BEING TOLD AS THE FIRST.
+ * Every failure of the downloaded tier used to answer 'engine-not-installed', including a user
+ * whose 115 MB download had finished perfectly and whose worker thread then died on startup.
+ * The renderer degrades to a Windows voice on any of these (that seam is unchanged and is the
+ * point), but it can only SAY what happened if the reason is true — and "not downloaded" is a
+ * different sentence, with a different remedy, from "downloaded, and this PC cannot run it".
+ *
+ * They are separate members rather than one reason plus a message because a message is free
+ * text crossing IPC on an error path; a closed union carries the same fact and the renderer
+ * owns every word the user reads.
  *
  * There is no 'disabled' member any more: it meant "voice is switched off in preferences", and
  * that switch no longer exists (see VoicePrefs). Nothing ever returned it.
  */
 export type SpeechUnavailableReason =
   | 'engine-not-installed'
+  | 'engine-failed'
+  | 'engine-unloadable'
   | 'not-implemented'
   | 'invalid-request'
 
@@ -318,6 +334,35 @@ export interface AlertDef {
    * round-trips the key untouched).
    */
   alwaysPlay?: boolean
+  /**
+   * THE EARLY WARNING OFFSET, IN SECONDS (JOS-216) — "warn me 10 seconds before the mez drops".
+   *
+   * It MOVES this alert's one fire; it does not add a second one. A def with an offset does not
+   * sound when its trigger matches: the match ARMS a warning against the timer row that landing
+   * produced, and the alert fires `earlyWarnSec` seconds before that row's estimated end. One
+   * landing is one warning, and a debuff that ends early (a break line, the mob dying, a zone)
+   * takes its pending warning with it — the row is gone, so there is nothing left to warn about.
+   *
+   * AND WHEN THE TRIGGER IS THE ENDING, THE OFFSET ARMS FROM THE ROW INSTEAD (JOS-235). For a
+   * break-family def — the per-spell `breaks`/`charmBreaks` alerts, the "Mez / root broke" and
+   * "Charm break" groups, a slow wearing off — the trigger and the end are the SAME line, so
+   * arming on it resolved against a world that line had already emptied and the alert went
+   * SILENT, both early and at the break. Such a def instead arms when a row it would announce the
+   * break of LANDS, and it still fires on its own trigger: one landing yields one firing, the
+   * warning when the hold survives to the deadline (the at-break firing for that landing is then
+   * suppressed), the break itself when it ends sooner. An early break is never silent.
+   *
+   * IT CONSUMES THE EXISTING ESTIMATE AND TRACKS NOTHING ITSELF. The end it counts back from is
+   * `shared/buffTimers.ts buildTimerRows`' countdown row — the same number the debuffs overlay
+   * draws — so a landing the model can state no duration for arms nothing at all rather than
+   * warning against an invented one (world-model law 1; the rule and its honest limits are in
+   * shared/earlyWarning.ts, the evaluator is main/modules/alerts.ts).
+   *
+   * Bounded by MIN/MAX_EARLY_WARN_SEC. Absent ⇒ fire on the trigger, which is what every def
+   * written before this existed already meant — so it is additive, needs no store migration, and
+   * an ordinary alert still saves byte-identically (import dedupe hashes these fields).
+   */
+  earlyWarnSec?: number
 }
 
 /** Global sound preferences (main-owned, persisted). */
@@ -326,6 +371,22 @@ export interface AlertPrefs {
   globalVolume: number
   /** When true, no alert sounds play (the player still receives deltas). */
   muted: boolean
+  /**
+   * ALWAYS PLAY EVERY ALERT — the per-alert `AlertDef.alwaysPlay` opt-out, raised to a global
+   * one (JOS-222, owner 2026-08-11: "a preference to always play for all alerts").
+   *
+   * It is the SAME bypass, applied to every def rather than to the ones the user ticked: the
+   * cross-alert coalescing window (renderer/features/alerts/audioThrottle.ts) is skipped and
+   * nothing occupies it, so four buffs fading together are four sounds. That IS the smear the
+   * throttle exists to prevent — which is why it STARTS OFF and stays off unless the user says
+   * otherwise. Someone who would rather hear everything twice than miss one thing gets to say
+   * so in one place instead of ticking a box on every alert they ever add.
+   *
+   * Absent ⇒ false ⇒ today's behavior, which is why this is additive: the key is written only
+   * when it is true, so a store where the throttle is on is byte-identical to one written
+   * before this existed, and every def's own `alwaysPlay` still means exactly what it meant.
+   */
+  alwaysPlayAll?: boolean
 }
 
 /** One alert that fired, carried in the alerts module delta. */

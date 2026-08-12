@@ -144,23 +144,22 @@ export class Tailer extends EventEmitter<TailerEvents> {
   }
 
   /**
-   * THE BYTE OFFSET THE FOLD'S KNOWLEDGE REACHES — the end of the last COMPLETE line emitted
-   * (JOS-208).
+   * THE BYTE OFFSET THE FOLD'S KNOWLEDGE REACHES — the end of the last COMPLETE line emitted.
    *
    * NOT `this.offset`, and the difference is the whole reason this method exists. `offset` is how
    * far the tailer has READ, which includes a trailing partial line the game has not finished
-   * writing; that line has been emitted to nobody. A checkpoint claims "the state in this file is
-   * `fold(bytes [0, b))`", so `b` must be exactly where the emitted lines stop — the same
+   * writing; that line has been emitted to nobody. Anything claiming "the state I hold is
+   * `fold(bytes [0, b))`" needs `b` to be exactly where the emitted lines stop — the same
    * definition `ScanResult.endOffset` uses, and the same reason it uses it.
    *
    * `leftover` is decoded text, so its BYTE length is what comes off, not its character length: a
-   * partial line containing a non-ASCII name would otherwise leave `b` pointing mid-character and
-   * the shoulder hash would be computed over bytes no line boundary sits on.
+   * partial line containing a non-ASCII name would otherwise leave `b` pointing mid-character.
    *
    * THE SIBLING ABOVE IS THE OTHER ANSWER, AND THE TWO MUST NOT BE SWAPPED. `readOffset()` (JOS-57)
    * is the READ cursor, and the cold-read delta wants exactly that — how many bytes nobody has
-   * read. This one is where the FOLD's knowledge stops. They differ by at most one partial line,
-   * which is nothing to a byte-count bucket and is a wrong `b` to a checkpoint.
+   * read; the tail mark `markTailPosition` writes is that one. This one is where the FOLD's
+   * knowledge stops. They differ by at most one partial line, which is nothing to a byte-count
+   * bucket and everything to a claim about what has been folded.
    */
   checkpointOffset(): number {
     return Math.max(0, this.offset - Buffer.byteLength(this.leftover, 'utf8'))

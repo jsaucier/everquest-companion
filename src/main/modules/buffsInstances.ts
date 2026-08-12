@@ -47,10 +47,11 @@ import {
   deathCensorsActive,
   deathCensorsOpen,
   hygieneCap,
-  isPermanentIllusion,
+  landingIsPermanent,
   landingSpec,
   openLeftBehindOnZone,
   reapOrphanedOpen,
+  reprojectSpec,
   unwitnessedCullCap
 } from './buffsInstanceRules'
 
@@ -68,6 +69,11 @@ export interface LandingSpec {
    * `instanceSpellKey`.
    */
   lineKey?: string
+  /**
+   * The RANKED text the cast line spelled, when a named anchor resolved this landing and it is not
+   * simply the spell's own name (JOS-238). DISPLAY ONLY — the identity is `spell`.
+   */
+  castName?: string
   /**
    * The spells this landing sentence could be, when it is a FAMILY the anchor could not narrow
    * (a Quick Buff burst names no spell). Present ⇒ the row shows the ~ chip and mints nothing.
@@ -218,8 +224,20 @@ export class BuffInstances {
    */
   applyMessageBuff(spell: string, spec: LandingSpec): void {
     const { target, ts, illusion, durationMs } = spec
-    if (durationMs == null && !illusion) return
     const key = spec.lineKey ?? spellKey(spell)
+    // WHAT A LANDING MUST STATE TO OPEN A ROW — a duration, an illusion flag, or (JOS-215) the
+    // spell DB's own word that it never expires.
+    //
+    // The third arm is the reported defect (01KZS7FZEAC0Q0T76ZJRS32DSR: "the buff window omits self
+    // buffs"). A permanent buff has no duration BECAUSE it is permanent, so the first two arms
+    // refused 57 of the 62 permanent spells outright — they printed their landing sentence, the
+    // parser emitted a perfectly good `buffApply`, and this line dropped it on the floor. The
+    // remaining five are the illusion-flagged permanents, which got in through the middle arm and
+    // were then mis-modelled as count-up rows the 90-minute cull retired (see `landingIsPermanent`).
+    //
+    // `isPermanent` reads `durationText`, never the null `durationMs` beside it — buffsStats.ts
+    // carries the measurement that says why those are not the same question.
+    if (durationMs == null && !illusion && !this.stats.isPermanent(key)) return
     // A SELF apply of a DETRIMENTAL spell is an incoming debuff a MOB cast on the player —
     // not the player's own buff. Skip it (the bar shows only the player's beneficial buffs).
     const self = target === 'self'
@@ -230,7 +248,14 @@ export class BuffInstances {
 
     const { disp, eKey, caster, permanent } = this.bindTo(key, spec)
     const iKey = instanceKey(key, eKey)
-    const record = this.openRecord(iKey, { spell, spellKey: key, entityKey: eKey, caster, disp })
+    const record = this.openRecord(iKey, {
+      spell,
+      castName: spec.castName,
+      spellKey: key,
+      entityKey: eKey,
+      caster,
+      disp
+    })
     // A FAMILY never mints (we do not know which spell it was), so its landings open contaminated.
     record.group.land(ts, spec.candidates !== undefined)
     // A permanent self illusion has no expiry to pair with, so it keeps no open record at all.
@@ -244,15 +269,16 @@ export class BuffInstances {
 
   /**
    * WHERE a landing binds: the entity it names, that entity's disposition, whose cast it is, and
-   * whether it is a permanent self illusion. Also the one side effect worth naming — the target's
-   * display CASING is remembered here, so the row's chip reads "Cazic-Thule" and not the
-   * lowercased key (Task #35).
+   * whether it is PERMANENT — the spell's own `Permanent` duration, or a self illusion under the
+   * Permanent Illusion AA (`landingIsPermanent` holds both arms). Also the one side effect worth
+   * naming — the target's display CASING is remembered here, so the row's chip reads "Cazic-Thule"
+   * and not the lowercased key (Task #35).
    */
   private bindTo(
     key: string,
     spec: LandingSpec
   ): { self: boolean; disp: EntityDisposition; eKey: string; caster: string; permanent: boolean } {
-    const { target, ts, illusion } = spec
+    const { target } = spec
     const self = target === 'self'
     const eKey = self ? SELF_KEY : idKey(target)
     if (!self) this.pets.namedEntityDisplay.set(eKey, target)
@@ -261,7 +287,7 @@ export class BuffInstances {
       disp: self ? 'self' : this.pets.dispForNamedTarget(target),
       eKey,
       caster: spec.caster ?? SELF_CASTER,
-      permanent: isPermanentIllusion(self, illusion, ts, spec.permanentIllusionOwnedTs)
+      permanent: landingIsPermanent(self, this.stats.isPermanent(key), spec)
     }
   }
 
@@ -274,6 +300,10 @@ export class BuffInstances {
     const existing = this.open.get(iKey)
     if (existing?.caster === id.caster) {
       existing.spell = id.spell
+      // The NEWEST landing's word on what was cast, including "nothing extra" — a re-land through
+      // a Quick Buff burst names no rank, and keeping the previous cast's would attribute a rank
+      // to a landing that never stated one.
+      existing.castName = id.castName
       existing.disp = id.disp
       return existing
     }
@@ -375,19 +405,10 @@ export class BuffInstances {
   private restat(iKey: string, open: OpenCast): void {
     const prev = this.active.get(iKey)
     if (!prev) return
+    const { spellKey: key, entityKey, caster, group } = open
     this.active.set(
       iKey,
-      this.build({
-        spell: prev.spell,
-        key: open.spellKey,
-        entityKey: open.entityKey,
-        startedTs: open.group.oldestTs,
-        dispOverride: prev.disposition,
-        caster: open.caster,
-        count: open.group.count,
-        ...(prev.candidates ? { candidates: prev.candidates } : {}),
-        opts: { messageDriven: prev.messageDriven, permanent: prev.permanent }
-      })
+      this.build(reprojectSpec(prev, { key, entityKey, caster, startedTs: group.oldestTs, count: group.count }))
     )
   }
 
@@ -396,21 +417,9 @@ export class BuffInstances {
     // Restat every live instance of this spell (they share the per-(line, caster) stats).
     for (const [ik, a] of [...this.active]) {
       if (instanceSpellKey(ik) !== key) continue
-      const open = this.open.get(ik)
-      this.active.set(
-        ik,
-        this.build({
-          spell: a.spell,
-          key,
-          entityKey: instanceEntityKey(ik),
-          startedTs: a.startedTs,
-          dispOverride: a.disposition,
-          caster: a.caster ?? SELF_CASTER,
-          count: open?.group.count ?? a.count ?? 1,
-          ...(a.candidates ? { candidates: a.candidates } : {}),
-          opts: { messageDriven: a.messageDriven, permanent: a.permanent }
-        })
-      )
+      const count = this.open.get(ik)?.group.count ?? a.count ?? 1
+      const at = { key, entityKey: instanceEntityKey(ik), startedTs: a.startedTs, caster: a.caster ?? SELF_CASTER, count }
+      this.active.set(ik, this.build(reprojectSpec(a, at)))
     }
     this.dirty = true
   }
@@ -757,27 +766,4 @@ export class BuffInstances {
   private build(spec: ActiveSpec): ActiveBuff {
     return buildActive(spec, this.stats, this.pets)
   }
-
-  // ---- THE CHECKPOINT SEAM IS NOT IN THIS FILE (JOS-208 phase 2) ------------------------------
-  //
-  // `packInstances` / `unpackInstances` in `buffsFoldShapes.ts` read and write the three
-  // collections above, which are public and always have been. Two reasons it sits there rather
-  // than here, and the second is the load-bearing one:
-  //
-  //   * this file is AT the repo's 400-code-line ceiling, and the house answer to that is a
-  //     split rather than a widened threshold;
-  //   * this class is not the checkpointed UNIT. `BuffsModule` is — it owns the six
-  //     collaborators, validates one blob for all of them and refuses as one — so the code that
-  //     packs this half belongs beside the declaration that describes it, not scattered across
-  //     the six objects it happens to read.
-  //
-  // WHAT IS STORED, argued where the reader will look for it: all three collections travel, and
-  // the OPEN records are the ones that would be tempting to leave behind because nothing in the
-  // snapshot describes them. They are the LEARNING records — what a wear-off pairs against to
-  // mint a duration sample — so dropping them would mean a restore silently stopped learning
-  // from every cycle in flight, and nothing shows that until a bar counts down from the wrong
-  // number weeks later. `active` is stored as ROWS rather than rebuilt from `open` + `stats`,
-  // because the two are not in bijection by design: a permanent illusion is an active with no
-  // open record, and the unwitnessed cull deletes a row while deliberately KEEPING its open
-  // record (JOS-149/156/203). `dirty` is absent — a restored fold has published nothing.
 }

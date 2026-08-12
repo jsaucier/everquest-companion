@@ -41,6 +41,7 @@ import type {
   FiredAlert,
   SpeechEngine,
   SpeechSayResult,
+  SpeechUnavailableReason,
   SpeechVoice,
   VoicePrefs
 } from '@shared/types'
@@ -250,7 +251,7 @@ export async function listVoices(engine: SpeechEngine): Promise<SpeechVoice[]> {
 
 /**
  * The ONE thing that can still stand between "this alert says it speaks" and "you hear words",
- * now that the master switch is gone. Both members are SETUP states, not errors:
+ * now that the master switch is gone. The first two are SETUP states, not errors:
  *
  *  - 'engine-not-installed' → the natural (Kokoro) tier is selected but its ~115 MB pack is not
  *    downloaded. Speech still happens — `speak()` falls back to the system voice and warns once —
@@ -258,9 +259,25 @@ export async function listVoices(engine: SpeechEngine): Promise<SpeechVoice[]> {
  *  - 'no-voices' → the system tier has no voices at all (a stripped Windows image, a platform
  *    with no `speechSynthesis`). This one IS silence, and it is the only one that is.
  *
+ * …and the last two are JOS-247: the pack IS downloaded and it still is not the voice you hear.
+ *
+ *  - 'engine-failed' → main tried and produced no audio.
+ *  - 'engine-unloadable' → main cannot even load the engine on this PC (ERR_DLOPEN_FAILED).
+ *
+ * THE DIFFERENCE BETWEEN THE FIRST TWO AND THE LAST TWO IS WHERE THE FACT COMES FROM, and it is
+ * why they cannot all be derived by `speechSetupGap`. A setup gap is a property of the INVENTORY
+ * and is knowable by asking; an engine fault is only ever knowable by having TRIED, because a
+ * downloaded pack whose worker dies enumerates its 54 voices perfectly (`speech:voices` reads
+ * the file, not the engine). That is exactly the reporter's screen: a full picker, a natural
+ * voice selected, and every alert in the default Microsoft voice. So the fault is LATCHED from
+ * the first failed utterance (below) and merged in by `useSpeechSetup`.
+ *
  * Null means there is nothing to say about setup.
  */
-export type SpeechSetupGap = 'engine-not-installed' | 'no-voices'
+export type SpeechSetupGap = 'engine-not-installed' | 'no-voices' | 'engine-failed' | 'engine-unloadable'
+
+/** The subset of the above that only a failed utterance can reveal. */
+export type SpeechEngineFault = 'engine-failed' | 'engine-unloadable'
 
 /**
  * Resolve a tier + its actual voice inventory into the gap, if any. Pure, so the annotation the
@@ -275,10 +292,73 @@ export function speechSetupGap(engine: SpeechEngine, voices: readonly unknown[])
   return engine === 'kokoro' ? 'engine-not-installed' : 'no-voices'
 }
 
-/** What each gap MEANS, in the user's terms. The link that follows it is the fix. */
+/**
+ * What each gap MEANS, in the user's terms. The link that follows it is the fix.
+ *
+ * The 'engine-unloadable' line NAMES A REMEDY, which no other note here does, and it is allowed
+ * to because the remedy was measured rather than guessed: the shipped `onnxruntime_binding.node`
+ * and `onnxruntime.dll` import VCRUNTIME140/VCRUNTIME140_1/MSVCP140 (PE import tables, 2026-08-12)
+ * and Electron ships none of them, so a PC without the Microsoft Visual C++ x64 runtime fails to
+ * load the engine in exactly this way. It says "usually" because a dlopen can fail for other
+ * reasons (an antivirus quarantine of the same files is the other realistic one) and this app
+ * cannot see which happened.
+ */
 export const SPEECH_SETUP_NOTES: Record<SpeechSetupGap, string> = {
   'engine-not-installed': 'The natural voice isn’t downloaded - a Windows voice speaks until it is.',
-  'no-voices': 'This machine has no speech voices installed.'
+  'no-voices': 'This machine has no speech voices installed.',
+  'engine-failed':
+    'The natural voice is downloaded but could not speak - a Windows voice is speaking instead.',
+  'engine-unloadable':
+    'The natural voice is downloaded but will not start on this PC - a Windows voice is speaking ' +
+    'instead. Installing the Microsoft Visual C++ x64 runtime usually fixes it.'
+}
+
+// ------------------------------------------------------- the engine fault, once it has spoken
+
+/**
+ * THE LATCH. `speak()` is the only thing in this app that ever learns the downloaded tier does
+ * not work, and before JOS-247 the only thing it did with that knowledge was `console.warn`
+ * once — so a user whose natural voice had never once worked saw a perfectly healthy picker and
+ * had no way to find out. This holds the fault so the UI can state it.
+ *
+ * IT IS STICKY FOR THE SESSION, on purpose. The engine's own failure is latched in main (a
+ * thread that could not load its native module cannot load it later), and a phrase said BEFORE
+ * the failure is served from the wav cache and still succeeds — so clearing this on the next
+ * success would blink the note off for a cached word and back on for a new one. "The natural
+ * voice failed this session" stays true either way.
+ *
+ * Deliberately module state and not React state: `speak()` is called from the alert firing path,
+ * the row's ▶ and the preferences preview, none of which are inside a component.
+ */
+let engineFault: SpeechEngineFault | null = null
+const faultListeners = new Set<(fault: SpeechEngineFault) => void>()
+
+/** The fault this session has seen, or null while the tier has never failed. */
+export function speechEngineFault(): SpeechEngineFault | null {
+  return engineFault
+}
+
+/** Subscribe to the first fault of the session. Returns the unsubscribe. */
+export function onSpeechEngineFault(listener: (fault: SpeechEngineFault) => void): () => void {
+  faultListeners.add(listener)
+  return () => faultListeners.delete(listener)
+}
+
+/**
+ * Record what a failed `speech:say` said about itself. Only the two ENGINE faults latch:
+ * 'engine-not-installed' is already visible everywhere as a setup gap (the picker says "not
+ * installed", the row links to Preferences), and latching it would double every one of those.
+ */
+export function noteSpeechEngineFault(reason: SpeechUnavailableReason): void {
+  if (reason !== 'engine-failed' && reason !== 'engine-unloadable') return
+  if (engineFault === reason) return
+  engineFault = reason
+  for (const listener of faultListeners) listener(reason)
+}
+
+/** Tests only: forget the session's fault so cases do not leak into each other. */
+export function resetSpeechEngineFault(): void {
+  engineFault = null
 }
 
 // ------------------------------------------------------------------ the e2e / test hook
@@ -385,6 +465,11 @@ async function sayThroughEngine(
     return false
   }
   if (!result.ok) {
+    // The console warning stays a once-per-session DIAGNOSTIC; the LATCH is what the UI reads.
+    // Both, because they answer different questions: the warning tells a developer reading a dev
+    // console what happened at 21:04, the latch tells the user why their voice is not the one
+    // they picked, at whatever later moment they go looking.
+    noteSpeechEngineFault(result.reason)
     warnKokoroFallback(result.reason)
     return false
   }

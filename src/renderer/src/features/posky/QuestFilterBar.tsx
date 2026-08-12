@@ -326,19 +326,34 @@ const InventorySource = memo(function InventorySource({
         <MenuItem value="inventory">Export, plus loot since</MenuItem>
         <MenuItem value="both">Export if any, else log</MenuItem>
       </TextField>
-      {/* The span survives the tooltip that needed it: a DISABLED button swallows no mouse
-          events, so the hint has to hang on the wrapper to be readable in the state where the
-          user most wants it (Reload is disabled precisely while the source is Log). */}
-      <span title="Run /outputfile inventory in-game, then reload">
-        <Button
-          variant="outlined"
-          startIcon={<RefreshIcon />}
-          onClick={() => void onReload()}
-          disabled={countSource === 'log'}
-        >
-          Reload inventory
-        </Button>
-      </span>
+      {/* THE ROOT CAUSE OF JOS-253 WAS ON THIS BUTTON, and it was one clause: `disabled={countSource
+          === 'log'}`. `log` is the DEFAULT count source (useProgress's `loadCountSource`), so on a
+          fresh install this control was born disabled and stayed that way forever — no detection
+          path was ever consulted, no file was ever looked for, and the reporter who ran
+          `/outputfile inventory` in game and came back to a dead button was looking at a dropdown
+          he had never touched. The gate read as "reloading would change nothing under this
+          source", which is true of the NUMBERS and false of the ACT: a reload re-reads the dump
+          into the store, which the Loot ledger, the character sheet and the Exaltations tab all
+          read, and it is the one thing a user reaches for when they suspect the app has not
+          noticed their file. A control that is right about its own effect and wrong about what
+          the user is asking for is worse than no control.
+
+          It is also no longer the primary path: main reads the dump at session start and follows
+          it on every rewrite (JOS-253, session.ts), so this is the "do it now" affordance the
+          brief asked be kept, not the way inventory arrives. The span is gone with the disabled
+          state — it existed only because a disabled button swallows the mouse events a tooltip
+          needs, and an enabled one carries its own `title`. */}
+      <Button
+        variant="outlined"
+        // The handle tests/e2e/sky-inventory-autoload.e2e.mts reads: that spec pins this button
+        // as ENABLED under the default count source, which is the regression the ticket is.
+        data-testid="posky-reload-inventory"
+        title="Re-read your /outputfile inventory dump now. The app also loads it by itself whenever the game rewrites it."
+        startIcon={<RefreshIcon />}
+        onClick={() => void onReload()}
+      >
+        Reload inventory
+      </Button>
     </>
   )
 })

@@ -148,8 +148,25 @@ export function previewTextFor(name: string, f: SpeechForm): string | null {
   return speechTextFor({ name, ...(fields.speech ? { speech: fields.speech } : {}) }, null)
 }
 
-/** Audio-channel selector + the always-play opt-out. Both apply whether or not speech is on. */
-function AudioActionRow({ form }: { form: SpeechForm }): JSX.Element {
+/**
+ * The one sentence the greyed-out opt-out says on hover (JOS-222). A NATIVE title, never a popper:
+ * this file renders three Selects and the rule (JOS-143) is that no file mounting a dropdown may
+ * also mount a hover card that could open over its option list — the same spelling AlertDialog's
+ * early-warning info icon uses.
+ */
+const ALL_ALWAYS_PLAY_TITLE =
+  'Always play is on for every alert, in the Alerts toolbar - turn it off there to set this per alert.'
+
+/**
+ * Audio-channel selector + the always-play opt-out. Both apply whether or not speech is on.
+ *
+ * THE OPT-OUT GREYS OUT WHEN THE GLOBAL PREFERENCE IS ON, and it keeps showing THIS alert's own
+ * saved value rather than being forced to look on (JOS-222). The global one is a bypass applied
+ * over the top; it does not rewrite what any def says, so a user who turns it back off finds every
+ * per-alert choice exactly where they left it — which is also what saving from this dialog does,
+ * because a disabled switch changes no state and `speechFieldsFor` still emits the stored key.
+ */
+function AudioActionRow({ form, allAlwaysPlay }: { form: SpeechForm; allAlwaysPlay: boolean }): JSX.Element {
   return (
     <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
       <Box sx={{ minWidth: 200 }}>
@@ -170,17 +187,26 @@ function AudioActionRow({ form }: { form: SpeechForm }): JSX.Element {
           ))}
         </Select>
       </Box>
-      <FormControlLabel
-        control={
-          <Switch
-            size="small"
-            data-testid="alert-always-play"
-            checked={form.alwaysPlay}
-            onChange={(e) => form.setAlwaysPlay(e.target.checked)}
-          />
-        }
-        label={<Typography variant="body2">Always play (skip audio throttle)</Typography>}
-      />
+      {/* The span is what carries the hover: a disabled control swallows mouse events, so a title
+          on the Switch itself would never fire (same reason the Remove-condition button is
+          wrapped). It is present only while disabled, so nothing explains a control that works. */}
+      <span
+        {...(allAlwaysPlay ? { title: ALL_ALWAYS_PLAY_TITLE } : {})}
+        data-testid="alert-always-play-wrap"
+      >
+        <FormControlLabel
+          disabled={allAlwaysPlay}
+          control={
+            <Switch
+              size="small"
+              data-testid="alert-always-play"
+              checked={form.alwaysPlay}
+              onChange={(e) => form.setAlwaysPlay(e.target.checked)}
+            />
+          }
+          label={<Typography variant="body2">Always play (skip audio throttle)</Typography>}
+        />
+      </span>
     </Stack>
   )
 }
@@ -329,7 +355,8 @@ export default function SpeechBlock({
   name,
   form,
   voiceSetup,
-  captureNames = []
+  captureNames = [],
+  allAlwaysPlay = false
 }: {
   name: string
   form: SpeechForm
@@ -341,6 +368,13 @@ export default function SpeechBlock({
    * them — and then the hint renders nothing at all rather than an empty label.
    */
   captureNames?: string[]
+  /**
+   * `AlertPrefs.alwaysPlayAll` — the GLOBAL always-play preference (JOS-222). When it is on, this
+   * alert's own opt-out is greyed out and says why on hover, because the global one already
+   * decides the question for every alert. Defaults to false so a caller with no prefs in hand (a
+   * test mounting this block bare) renders the ordinary editable control.
+   */
+  allAlwaysPlay?: boolean
 }): JSX.Element {
   const speaks = form.audio !== 'sound'
   return (
@@ -352,7 +386,7 @@ export default function SpeechBlock({
         </Typography>
       </Stack>
       <Stack spacing={1.5}>
-        <AudioActionRow form={form} />
+        <AudioActionRow form={form} allAlwaysPlay={allAlwaysPlay} />
         {/* No master switch to warn about any more (this used to say "spoken alerts are switched
             off in Preferences"): choosing 'Speak it' above IS the switch. The only thing left to
             say is that the chosen tier has nothing to speak with — and it says it with a LINK. */}

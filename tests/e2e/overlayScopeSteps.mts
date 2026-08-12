@@ -102,43 +102,43 @@ export async function stepOverlayScope(page: Page, overlay: Page, setLocked: Set
   await checkFloorPlacement(overlay)
 
   const first = await label(overlay)
-  // The SAME phrasing the Combat tab shows, because both go through `chipLabel` — one wording,
-  // two renderers. Which of the two Group states the log leaves behind is not this spec's
-  // business; that both windows would spell it identically is.
-  check(
-    'it defaults to Group, stating any fallback in the word rather than switching scope for you',
-    first === 'Group' || first === 'Group (no roster yet)',
-    first
-  )
+  // The SAME word the Combat tab shows, because both go through `chipLabel` — one wording, two
+  // renderers. The overlay reads the same absent key as every other surface, so JOS-229's default
+  // has to arrive here too: a floating meter that opened on Group while the app opened on Everyone
+  // would be the per-surface disagreement JOS-115 spent a ticket deleting.
+  check('it defaults to Everyone, the same as every other meter', first === 'Everyone', first)
   const stable = await settleStable(() => label(overlay), { timeoutMs: 4_000 })
   check('…and it holds still on its own', stable === first, `${first} → ${stable}`)
 
   // THE CROSS-WINDOW APPLY. Written in the MAIN window through the real preferences control; this
-  // window is a second BrowserWindow of the same origin and hears it through 'storage'.
-  await setMeterScope(page, 'everyone', 'nav-combat')
-  const applied = await settle(() => label(overlay), (t) => t === 'Everyone', { timeoutMs: 10_000 })
-  check('a preference set in the main window reaches the floating overlay', applied === 'Everyone', applied)
+  // window is a second BrowserWindow of the same origin and hears it through 'storage'. GROUP is
+  // what it writes: the word has to CHANGE for the trip to have proven anything, and Group is the
+  // one that also carries the law-1 fallback wording this floor exists to be able to show.
+  await setMeterScope(page, 'group', 'nav-combat')
+  const applied = await settle(() => label(overlay), (t) => t.startsWith('Group'), { timeoutMs: 10_000 })
+  check('a preference set in the main window reaches the floating overlay', applied.startsWith('Group'), applied)
   // …and no roster editor came with it: that is the Combat tab's job.
   check('the overlay offers no roster popover', (await countOf(overlay, '[data-testid="roster-open"]')) === 0)
 
-  // THE TITLE BAR NEVER SAYS IT. With the scope set to 'Everyone' the word is unmistakable, so the
-  // header row's own text is the assertion — the tag did not move a few pixels left, it left.
+  // THE TITLE BAR NEVER SAYS IT. The scope is deliberately NOT the default right now, so the word
+  // on the floor is one no default could have put there, and the header row's own text is the
+  // assertion — the tag did not move a few pixels left, it left.
   const headerText = await overlay.evaluate(
     (trig) => (document.querySelector(trig)?.parentElement as HTMLElement | null)?.innerText ?? '',
     TRIGGER
   )
-  check('no scope text in the overlay meter title bar', !headerText.includes('Everyone'), headerText.replace(/\s+/g, ' ').slice(0, 120))
+  check('no scope text in the overlay meter title bar', !headerText.includes('Group'), headerText.replace(/\s+/g, ' ').slice(0, 120))
 
   await setLocked(overlay, true)
   check('a LOCKED overlay KEEPS the floor readout (JOS-121 — it is the meter, not chrome)', (await countOf(overlay, OVERLAY_SCOPE_FLOOR)) === 1)
-  check('…still saying the stored scope with no chrome around it', (await label(overlay)) === 'Everyone', await label(overlay))
+  check('…still saying the stored scope with no chrome around it', (await label(overlay)) === applied, await label(overlay))
 
   await setLocked(overlay, false)
-  check('the overlay still shows the stored scope after the lock round trip', (await label(overlay)) === 'Everyone', await label(overlay))
+  check('the overlay still shows the stored scope after the lock round trip', (await label(overlay)) === applied, await label(overlay))
 
-  // Leave the app on its default so nothing downstream inherits a widened meter.
-  await setMeterScope(page, 'group', 'nav-combat')
-  await settle(() => label(overlay), (t) => t.startsWith('Group'), { timeoutMs: 10_000 })
+  // Leave the app on its default so nothing downstream inherits a narrowed meter.
+  await setMeterScope(page, 'everyone', 'nav-combat')
+  await settle(() => label(overlay), (t) => t === 'Everyone', { timeoutMs: 10_000 })
 }
 
 // ── JOS-121: what the title bar did with the room ───────────────────────────────────────
@@ -248,7 +248,7 @@ export async function stepTitleBarRoom(overlay: Page): Promise<void> {
   // so this measures today's real sentence rather than a hard-coded guess that would rot. It is
   // fetched out here because the page-side callback is at its complexity budget.
   const saying = await label(overlay)
-  const room = await readRoom(overlay, saying || 'Group')
+  const room = await readRoom(overlay, saying || 'Everyone')
   if (!check('the title bar could be measured', room !== null)) return
   const { before, after, word } = room as RoomReadings
   note(

@@ -76,6 +76,125 @@ export function nextCheckDelayMs(
   return jitter(backoff, rand)
 }
 
+// ----------------------------------------------------- feed failure messages
+//
+// JOS-211. A 0.18.0 user pressed "Check for updates" and the app answered
+// `Unexpected end of JSON input`. That sentence is not ours and it is not about
+// updates: it is a bare `SyntaxError` from `JSON.parse`, escaping THREE layers
+// down, with nothing left of the HTTP request that produced it.
+//
+// WHERE IT COMES FROM (read out of the installed builder-util-runtime@6.x /
+// electron-updater@6.8.9, not the docs). One check is three plain github.com
+// GETs (updater.ts research §5). Every one of them lands in
+// `HttpExecutor.handleResponse` (builder-util-runtime/out/httpExecutor.js), whose
+// response-end handler is:
+//
+//     if (statusCode >= 400) {
+//       const isJson = contentType != null && contentType.includes("json")
+//       reject(createHttpError(response, `… Data: ${isJson ? safeStringifyJson(JSON.parse(data)) : data}`))
+//     }
+//
+// The `JSON.parse(data)` there runs while FORMATTING the error, inside the same
+// try whose `catch (e) { reject(e) }` is the only handler — so on a >= 400
+// response that ADVERTISES json and carries an empty or truncated body, the
+// SyntaxError REPLACES the HttpError entirely. The status code, the URL and the
+// method are all thrown away, and what reaches us is a parse error about a body
+// nobody asked us to parse. (Measured 2026-08-12: `GET
+// github.com/<owner>/<repo>/releases/latest` — the second of the three requests —
+// answers `content-type: application/json; charset=utf-8`, so its error responses
+// take exactly that branch.) Two of the three call sites in `GitHubProvider`
+// rethrow whatever they get without wrapping it, which is how it arrives bare.
+//
+// Everything that can produce an empty/truncated body on a 4xx/5xx is out of our
+// hands and TRANSIENT by nature: an abuse-detection 429, an edge node that closes
+// the connection mid-body, a captive-portal/proxy error page, a 5xx from a
+// deploy. So the policy is: ONE retry, then a sentence that says what happened
+// and that it is worth trying again — never the parser's words.
+//
+// These predicates are here (not in main/updater.ts) so they can be tested with
+// the REAL failures: `tests/updateCadence.test.mts` runs `JSON.parse` over an
+// empty body, a truncated body and an HTML error page and feeds the thrown error
+// straight in, which is precisely what httpExecutor does to us.
+
+/**
+ * electron-updater's own codes for "the feed did not parse". Each one wraps the
+ * underlying failure into a message that embeds a whole XML feed or a stack
+ * trace — readable to nobody, and several kilobytes wide in a caption.
+ */
+const FEED_PARSE_CODES = new Set([
+  // GitHubProvider: `Cannot parse releases feed: <stack>,\nXML:\n<the entire atom feed>`.
+  'ERR_UPDATER_INVALID_RELEASE_FEED',
+  // Provider.parseUpdateInfo: latest.yml was absent, empty or not YAML.
+  'ERR_UPDATER_INVALID_UPDATE_INFO'
+])
+
+/** The parser sentences a body can produce, across Node versions (they were reworded in 20+). */
+const PARSE_MESSAGE =
+  /unexpected end of json input|unexpected token|unexpected non-whitespace|in json at position|unterminated string in json|json\.parse|end of the stream or a document separator/i
+
+/**
+ * True when a check failed because the FEED BODY could not be parsed — as opposed
+ * to a failure that names something the user might act on (no network, DNS, a
+ * 404 with a real status attached).
+ *
+ * Deliberately message-shaped as well as code-shaped: the bare case carries no
+ * code at all (it is a raw `SyntaxError`), and `ERR_UPDATER_LATEST_VERSION_NOT_FOUND`
+ * is NOT in the code set because that code also covers a repo with no release —
+ * it only counts here when the message it interpolated shows a parse failure
+ * inside.
+ */
+export function isFeedParseError(err: unknown): boolean {
+  if (err == null) return false
+  const e = err as { code?: unknown; name?: unknown; message?: unknown }
+  if (typeof e.code === 'string' && FEED_PARSE_CODES.has(e.code)) return true
+  // js-yaml throws YAMLException for a truncated latest.yml; JSON.parse throws SyntaxError.
+  if (e.name === 'SyntaxError' || e.name === 'YAMLException') return true
+  return typeof e.message === 'string' && PARSE_MESSAGE.test(e.message)
+}
+
+/**
+ * ONE retry for a malformed/empty feed body, and no more.
+ *
+ * `attempts` is how many attempts have already FINISHED. The retry is immediate:
+ * each attempt is a fresh set of requests, an empty body is a per-response event,
+ * and a rate-limit wall that survives the retry falls through to the ordinary
+ * exponential backoff (nextCheckDelayMs) rather than being hammered here.
+ * Nothing else is retried — a network outage already has the backoff, and
+ * retrying a 404 twice as fast helps nobody.
+ */
+export function shouldRetryCheck(err: unknown, attempts: number): boolean {
+  return attempts < 1 && isFeedParseError(err)
+}
+
+/** What the user reads when the feed came back unreadable twice. */
+export const FEED_PARSE_MESSAGE =
+  'The update service sent an unreadable response (an empty or partial reply from GitHub). Nothing is wrong with your install - please try again later.'
+
+/** No caption should carry a multi-kilobyte XML dump or a stack trace. */
+export const MAX_UPDATE_MESSAGE_CHARS = 200
+
+/** `err.message` when there is one, else the value itself, stringified. */
+function failureText(err: unknown): string {
+  return String((err as { message?: unknown } | null | undefined)?.message ?? err)
+}
+
+/**
+ * The ONE producer of `UpdateStatus.message` (src/main/updater.ts pushes nothing
+ * else). A parse failure becomes the sentence above; everything else keeps the
+ * text it always had — "getaddrinfo ENOTFOUND github.com" is genuinely useful —
+ * but reduced to its FIRST LINE and bounded, because electron-updater's wrapped
+ * errors embed stacks and whole feeds.
+ */
+export function describeUpdateFailure(err: unknown): string {
+  if (err == null) return 'unknown error'
+  if (isFeedParseError(err)) return FEED_PARSE_MESSAGE
+  const oneLine = failureText(err).split('\n')[0].trim()
+  if (oneLine.length === 0) return 'unknown error'
+  return oneLine.length > MAX_UPDATE_MESSAGE_CHARS
+    ? `${oneLine.slice(0, MAX_UPDATE_MESSAGE_CHARS - 1).trimEnd()}…`
+    : oneLine
+}
+
 // ------------------------------------------------------- version comparison
 //
 // Our versions are semver with a CI-stamped prerelease on the main channel

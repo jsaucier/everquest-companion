@@ -34,7 +34,8 @@
 //             in ./TextSizeSetting.tsx, descriptor and all. The overlays' own text scaling is a
 //             separate control on the overlay itself.
 //   Combat   — the meters' two shaping choices: WHOSE damage they show (You / Group / Everyone,
-//             default Group — JOS-115 moved it here off every combat surface) and where the
+//             default Everyone since JOS-229 — JOS-115 moved it here off every combat surface,
+//             JOS-229 changed which way it opens) and where the
 //             pet's damage sits. Lives in ./CombatSection.tsx, descriptor and all.
 //   Overlays — when the floating meters get out of the way: hide them while EverQuest isn't
 //             running (on by default) and/or while it isn't the window you're in (off).

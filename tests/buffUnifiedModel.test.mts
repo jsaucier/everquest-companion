@@ -232,7 +232,7 @@ test('ONE NAME, BOTH WINDOWS: a charmed pet carries its buffs and its debuffs at
   assert.ok(mine.length >= 3, `expected the pet to carry buff and debuff rows: ${mine.map((x) => x.name).join(', ')}`)
   const buffSide = rowsForSurface(mine, 'buffs').map((x) => x.name)
   const debuffSide = rowsForSurface(mine, 'debuffs').map((x) => x.name)
-  assert.ok(buffSide.includes('Swift Like the Wind I'), `the haste is a buff: ${buffSide.join(', ')}`)
+  assert.ok(buffSide.includes('Swift Like The Wind'), `the haste is a buff: ${buffSide.join(', ')}`)
   assert.ok(debuffSide.includes('Tashani'), `the resist debuff is a debuff: ${debuffSide.join(', ')}`)
   assert.ok(debuffSide.includes('Cajoling Whispers'), `and so is the charm: ${debuffSide.join(', ')}`)
 })
@@ -343,17 +343,17 @@ test('a debuff whose close nobody witnessed is culled, and mints nothing', () =>
   ]
   // Inside its life: the bar is there, counting down from the DB floor.
   const live = replay(script, { observeSec: 60 })
-  assert.ok(rowFor(live, 'Shiftless Deeds IV'), 'the slow is up while it is up')
+  assert.ok(rowFor(live, 'Shiftless Deeds'), 'the slow is up while it is up')
 
   // THE BOUND TIGHTENED (JOS-156): this used to be the duration AGAIN — 150 s + 150 s, so the row
   // sat at 0s until 300 s — and it is now the flat DB timeout, 150 s + 60 s. The old assertion
   // observed at 400 s and so passed either way; it pins the boundary now, because the boundary is
   // the thing the owner ruled on.
   const beat = replay(script, { observeSec: 200 })
-  assert.ok(rowFor(beat, 'Shiftless Deeds IV'), 'visibly overdue for a beat is by design, not a bug')
+  assert.ok(rowFor(beat, 'Shiftless Deeds'), 'visibly overdue for a beat is by design, not a bug')
 
   const later = replay(script, { observeSec: 220 })
-  assert.equal(rowFor(later, 'Shiftless Deeds IV'), undefined, 'no wear-off ever arrived, so it is not held')
+  assert.equal(rowFor(later, 'Shiftless Deeds'), undefined, 'no wear-off ever arrived, so it is not held')
   assert.equal(statFor(later, 'shiftless deeds')?.n ?? 0, 0, 'an absence of evidence is not a measurement')
 })
 
@@ -411,7 +411,7 @@ test('…and a BUFF of yours is not culled, because your clock is the one that p
     ],
     { observeSec: 2_000 }
   )
-  assert.ok(rowFor(r, 'Swift Like the Wind I'), 'a self buff keeps the hygiene cap as its only long stop')
+  assert.ok(rowFor(r, 'Swift Like The Wind'), 'a self buff keeps the hygiene cap as its only long stop')
 })
 
 // ---------------------------------------------------------------------------------------------
@@ -480,7 +480,7 @@ test('the flat order is ascending time remaining, with the unnumbered rows after
   const flat = orderTimerRows(rowsForSurface(r.rows, 'debuffs'), 'none')
   assert.deepEqual(
     flat.map((x) => x.name),
-    ['Mesmerization VII', 'Shiftless Deeds IV', 'Cajoling Whispers'],
+    ['Mesmerization VII', 'Shiftless Deeds', 'Cajoling Whispers'],
     'soonest to expire first, across every target — 24 s, then 150 s, then 16 minutes'
   )
   // And the grouped arrangement is still the projection's own order, untouched.

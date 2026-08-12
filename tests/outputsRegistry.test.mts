@@ -33,7 +33,12 @@ import {
   preferredOutputFile,
   OUTPUT_KINDS
 } from '../src/shared/outputs/kinds'
-import { outputAgeLabel, outputUpdatedMillis } from '../src/renderer/src/lib/outputFreshness'
+import {
+  outputAgeLabel,
+  outputIsStale,
+  outputLoadedLabel,
+  outputUpdatedMillis
+} from '../src/renderer/src/lib/outputFreshness'
 
 const INVENTORY = outputKind('inventory')
 
@@ -243,4 +248,50 @@ test('the freshness line reads never-run, fresh and stale out of one slot', () =
   // …and a clock that is behind the file (mid-session DST, a network drive) never reads as a
   // future age: `formatAge` floors at zero, so it says "just now".
   assert.equal(outputAgeLabel(outputUpdatedMillis('2026-08-05T18:05:00.000Z'), now), 'updated just now')
+})
+
+// ---------------------------------------------------------------------------
+// THE SECOND SLOT: WHEN WE READ IT (JOS-253)
+// ---------------------------------------------------------------------------
+//
+// The slot above is the FILE's age. This one is ours, and the pair is the ticket: a dump written
+// while the app was closed is "updated just now" and, before JOS-253, was never read at all — two
+// facts that a single timestamp cannot hold and that no surface could previously tell apart.
+
+test('the load slot says when WE read the dump, including that we never have', () => {
+  const now = Date.parse('2026-08-05T18:00:00.000Z')
+
+  // NEVER LOADED — a distinct sentence from the age slot's "not yet run", and both can be on
+  // screen at once (the player wrote a dump; we have not opened it).
+  assert.equal(outputLoadedLabel(undefined, now), 'not loaded yet')
+
+  // LOADED — the same coarse `formatAge` idiom as its neighbour, so the two read as one pair.
+  assert.equal(outputLoadedLabel(Date.parse('2026-08-05T17:59:40.000Z'), now), 'loaded just now')
+  assert.equal(outputLoadedLabel(Date.parse('2026-08-05T17:38:00.000Z'), now), 'loaded 22m ago')
+  assert.equal(outputLoadedLabel(Date.parse('2026-08-02T18:00:00.000Z'), now), 'loaded 3d ago')
+})
+
+test('stale is the GAP between the two instants, and an unknown is never a warning', () => {
+  const wrote = Date.parse('2026-08-05T18:00:00.000Z')
+
+  // THE REPORTED CASE: the game rewrote the dump and our copy is from before that. This is the
+  // one judgement this file makes, and it rests on two instants we hold rather than on a
+  // staleness threshold nobody measured.
+  assert.equal(outputIsStale(wrote, wrote - 60_000), true)
+  assert.equal(outputIsStale(wrote, wrote - 5 * 24 * 3600_000), true)
+
+  // A HEALTHY LOAD is not stale, in either order. The mtime is stamped as the game finishes
+  // writing and `readAt` a settle-threshold later, so the two land within a second of each other
+  // and their ordering at that scale means nothing — one second of slack, and no more.
+  assert.equal(outputIsStale(wrote, wrote), false)
+  assert.equal(outputIsStale(wrote, wrote + 400), false)
+  assert.equal(outputIsStale(wrote, wrote - 1000), false, 'exactly one second is still healthy')
+  assert.equal(outputIsStale(wrote, wrote - 1001), true, '…and the millisecond past it is not')
+
+  // NEITHER HALF UNKNOWN IS A WARNING. A dump that does not exist, and a surface that has never
+  // loaded one, are both states the words already say — colouring them would be the app claiming
+  // a comparison it cannot make.
+  assert.equal(outputIsStale(undefined, wrote), false)
+  assert.equal(outputIsStale(wrote, undefined), false)
+  assert.equal(outputIsStale(undefined, undefined), false)
 })

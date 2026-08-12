@@ -52,6 +52,13 @@ function feed(eng: CombatEngine, lines: string[], seq: { n: number }): number {
  *  first, observed long after the last line. */
 function fights(lines: string[]): SegmentSummary[] {
   const eng = new CombatEngine()
+  // LIVE FROM THE START, because that is the only state anybody ever LOOKS at a meter in, and
+  // since JOS-208 phase 4 it is also the only state the wall-clock closure sweep runs in: a
+  // replay is not a moment in time, so `snapshot(now)` no longer finalizes a fight while the
+  // historical fold is still reading (engine.ts). Every window below asks what the meter shows
+  // after its span, which is a live question; the poll-lag arms model the live tick race and
+  // still exercise it.
+  eng.setLive()
   eng.setPlayerName('Primitive')
   const lastTs = feed(eng, lines, { n: 0 })
   return eng
@@ -73,6 +80,7 @@ function fights(lines: string[]): SegmentSummary[] {
 
 test('W61: the boss pull opens at the pull, not 78 seconds early', () => {
   const eng = new CombatEngine()
+  eng.setLive()
   eng.setPlayerName('Primitive')
   const seq = { n: 0 }
   feed(eng, readFixture('w61-twin-mez-prime.log'), seq)
@@ -108,6 +116,7 @@ test('W61: the skirmish closes ~5s after the last death, not 46s later', () => {
   // "when does it close" is answerable at any instant — this is the reading the owner would
   // have had on screen. The last twin dies at 20:10:38; LINGER_MS is 5s.
   const eng = new CombatEngine()
+  eng.setLive()
   eng.setPlayerName('Primitive')
   const seq = { n: 0 }
   feed(eng, readFixture('w61-twin-mez-prime.log'), seq)
@@ -143,6 +152,7 @@ test('CC4 (THE LAW): a LIVE mezzed hostile still holds the fight open through si
     '[Sun Jul 19 09:00:06 2026] You have slain a fire beetle!'
   ]
   const eng = new CombatEngine()
+  eng.setLive()
   eng.setPlayerName('Primitive')
   feed(eng, lines, { n: 0 })
   // 39s after the beetle died: nine times LINGER_MS, past PRESENCE_GONE_MS, and still inside

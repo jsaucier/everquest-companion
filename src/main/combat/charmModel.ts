@@ -92,7 +92,8 @@
 // timestamp it is reasoning at, so a replay and a live tail behave identically.
 
 import spellsJson from '../data/spells.json'
-import { getParserConfig } from '../log/rulesets'
+import { applySpellCorrections } from '../data/spellCorrections'
+import { getParserConfig, type SpellRoster } from '../log/rulesets'
 import { spellCanonKey } from '../log/parseCommon'
 import type { SpellDbFile } from '../../shared/types'
 
@@ -126,8 +127,38 @@ export const DEFAULT_CHARM_DURATION_MS = 960_000
  *  only cost of a long memory is remembering a handful of names. */
 export const PROMOTE_MS = 600_000
 
-/** The wiki/DB `msg_cast_on_other` that IS the charm broadcast. */
-const CHARM_MSG = 'Someone has been charmed.'
+/**
+ * The wiki/DB `msg_cast_on_other` sentences that ARE a charm broadcast — the caster-less lines a
+ * charm lands with.
+ *
+ * IT IS THREE SENTENCES, NOT ONE (JOS-250 charm roster research 2026-08-12). This used to be the
+ * single enchanter string, which quietly made every inference built on it enchanter-only. The
+ * committed spells.json groups charms by landing message into three PURE families — pure meaning
+ * every castable member is a charm, which is what makes the grouping evidence rather than a guess
+ * (the same standard `ccSpell`'s families are held to):
+ *
+ *   `Someone has been charmed.`  6 castable — the Enchanter ladder, Charm 11 → Dictate 60
+ *                                (+2 NPC-only: Alluring Whispers, Vampire Charm)
+ *   `Someone blinks.`            7 castable — the Druid/Shaman ladder, Befriend Animal 13 →
+ *                                Tunare`s Request 55
+ *   `Someone moans.`             5 castable — the Necromancer charm-undead ladder, Dominate
+ *                                Undead 18 → Enslave Death 60
+ *
+ * The bard's `Someone 's eyes glaze over.` is deliberately NOT here: that sentence is IMPURE (two
+ * charms and two real mezzes share it) and JOS-200's standing cost is that the landing cannot be
+ * routed. It stays a `cc` line with a candidate list.
+ *
+ * MEASURED, owner's whole log, 1,608,483 lines, 2026-08-12: 456 `has been charmed.` lines, ZERO
+ * ` blinks.` lines and ZERO ` moans.` lines — and zero of either in every committed fixture. So
+ * the two added families are STRUCTURALLY covered and not verified against a real line: the
+ * membership is the DB's own, the routing is the enchanter family's verbatim, and nothing in this
+ * corpus exercises them. Said out loud because the awaiting-sample law asks which.
+ */
+const CHARM_MESSAGES: ReadonlySet<string> = new Set([
+  'Someone has been charmed.',
+  'Someone blinks.',
+  'Someone moans.'
+])
 
 /**
  * Rank-folded spell key → the longest cast time any rank of that line has, from the committed
@@ -162,20 +193,82 @@ const DURATION_MS_BY_SPELL: ReadonlyMap<string, number> = longestByKey((s) => s.
  */
 export const CHARM_SPELLS_BY_MESSAGE: ReadonlySet<string> = new Set(
   (spellsJson as SpellDbFile).spells
-    .filter((s) => s.msgCastOnOther === CHARM_MSG)
+    .filter((s) => s.msgCastOnOther !== undefined && CHARM_MESSAGES.has(s.msgCastOnOther))
     .map((s) => spellCanonKey(s.name))
 )
 
-/** Membership tests. The audited stem regexes live in the parser ruleset (they are what the
+/**
+ * Charm spells the DB gives a cast-on-other message that is NOT the charm broadcast — i.e. lines
+ * that are charms and CANNOT have printed `<mob> has been charmed.` (JOS-250).
+ *
+ * ONE MEMBER, and it is the bard's: `Solon's Bewitching Bravura` is a CHARM (JOS-200 established
+ * that against JOS-84's mez reading) whose landing sentence is `Someone 's eyes glaze over.` —
+ * shared verbatim with three real mezzes, which is JOS-200's standing cost and is not relitigated
+ * here. The consequence for THIS ticket is mechanical rather than a judgement: a bard's charm cast
+ * can never be the thing a charm BROADCAST resolved, so it must not arm the third-party join, or a
+ * bard singing beside an enchanter would make every one of that enchanter's binds a two-caster
+ * tie. The owner's log holds exactly that pair once — Enzee's Bravura and President's Cajoling
+ * Whispers V, four seconds apart on one rock golem, Thu Jul 30 18:27:16.
+ *
+ * DERIVED, NEVER LISTED. The set is "every rank of this line states a cast-on-other message, and
+ * none of them state the charm broadcast", so a scrape that fills in a missing message moves the
+ * membership by itself. `Allure` is the case that makes the derivation matter: the DB records NO
+ * cast-on-other message for it at all, so it is absent from here and stays eligible — which is
+ * correct and measured, since the owner cast it 159 times and every one of those broadcasts is his
+ * (see CHARM_SPELLS_BY_MESSAGE's note on the same gap).
+ */
+const CHARM_SPELLS_WITH_OTHER_CAST_MESSAGE: ReadonlySet<string> = (() => {
+  const raw = (spellsJson as SpellDbFile).spells
+  // THE CORRECTED NAME IS A SECOND KEY, AND LEAVING IT OUT WAS A MEASURED BUG. This table is
+  // keyed by name and the parser only ever sees the LOG's spelling, which for the one spell that
+  // matters here is not the committed file's: spells.json says `Solon's Bravura`, the game prints
+  // `Solon's Bewitching Bravura`, and the corrections overlay renames the row (AGENTS.md — a name
+  // is a join key). Built off the raw import alone, the bard's charm was absent from this set, so
+  // it armed the third-party join and turned the rock-golem episode into a false two-caster tie
+  // (measured on w67-ally-charm-same-named-twin.log before this line existed: the refusal was
+  // right for the wrong reason, and every enchanter binding beside a bard would have been one).
+  // Both spellings are entered, exactly as `solon.s (bewitching )?bravura` answers to both.
+  const corrected = applySpellCorrections(raw).spells
+  const stated = new Map<string, boolean>()
+  raw.forEach((s, i) => {
+    const msg = s.msgCastOnOther
+    if (msg === undefined || msg === null || msg === '') return
+    const onlyOther = !CHARM_MESSAGES.has(msg)
+    for (const name of [s.name, corrected[i]?.name ?? s.name]) {
+      const key = spellCanonKey(name)
+      // ANY rank saying a charm broadcast keeps the whole line eligible: a scrape that lost one
+      // rank's message must not disqualify the spell (world-model law 3 — the DB is the oracle,
+      // and a partial oracle answers "unknown", never "no").
+      stated.set(key, (stated.get(key) ?? true) && onlyOther)
+    }
+  })
+  return new Set([...stated].filter(([, onlyOther]) => onlyOther).map(([k]) => k))
+})()
+
+/** Membership tests. The audited rosters live in the parser ruleset (they are what the
  *  `Your <spell> spell has worn off of <mob>` path already uses to tell charm from mez), so
- *  they are read from there rather than re-implemented — one source of truth per question. */
-function stems(): { charmSpell: RegExp; ccSpell: RegExp } {
+ *  they are read from there rather than re-implemented — one source of truth per question.
+ *  SINCE JOS-251 `charmSpell` is a DERIVED set rather than a regex once a spell DB is installed,
+ *  which is why the return type is the roster interface: both answer `test(name)` and this file
+ *  never wanted anything else from them. */
+function stems(): { charmSpell: SpellRoster; ccSpell: SpellRoster } {
   const cfg = getParserConfig()
   return { charmSpell: cfg.charmSpell, ccSpell: cfg.ccSpell }
 }
 
 export function isCharmSpell(spell: string): boolean {
   return stems().charmSpell.test(spellCanonKey(spell))
+}
+
+/**
+ * Could a cast of `spell` have printed `<mob> has been charmed.`? (JOS-250.)
+ *
+ * The membership test for the THIRD-PARTY join only. Your own binds deliberately keep using the
+ * wider `isCharmSpell` — that path is gated on `You begin casting`, which nobody else prints, so
+ * it needs no help telling casters apart and must stay byte-identical (law 8).
+ */
+export function isCharmBroadcastSpell(spell: string): boolean {
+  return isCharmSpell(spell) && !CHARM_SPELLS_WITH_OTHER_CAST_MESSAGE.has(spellCanonKey(spell))
 }
 
 export function isCcSpell(spell: string): boolean {

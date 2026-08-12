@@ -29,9 +29,11 @@ import {
 } from '@mui/material'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import type { CountSource } from '@shared/types'
+import type { WindowLootRates } from '@shared/lootRates'
 import type { Timeslice } from '@shared/timeslice'
 import { formatDateTime, formatTime } from '../../lib/formatDate'
 import type { GroupRow } from './lootGrouping'
+import { LOOT_RATE_TITLE, lootRateText } from './lootRateText'
 import {
   DEFAULT_LOOT_SORT,
   isLootSortKey,
@@ -188,14 +190,40 @@ export function LootToolbar({
   )
 }
 
-/** The one-line ledger caption. It reads the auto-reload instant itself rather than taking it as a
- *  prop — it is the only thing that shows it. */
+/**
+ * HOW FAST THIS SLICE IS PAYING, on its own line under the caption (JOS-261).
+ *
+ * It is the aggregate the ledger never had: the timeslice control could already CUT the counts, but
+ * nothing on this tab ever divided them by the time they took — the one number two reporters asked
+ * for ("motes per hour for the grind I am in"). Both denominators, each named, each beside its own
+ * span; the words and every honesty rule behind them live in `lootRateText.ts`.
+ *
+ * Its own element, and its own testid, rather than another clause of the sentence above: that
+ * sentence is about the LEDGER (how many rows, from where, how fresh) and this one is about the
+ * PLAY behind it, and an e2e that wants to read one must not have to parse the other.
+ */
+function LootRateLine({ rates }: { rates: WindowLootRates | null }): JSX.Element | null {
+  const text = rates ? lootRateText(rates) : null
+  if (text == null) return null
+  return (
+    // Native `title`, no popper — the JOS-127 rule this file's header states: nothing interactive
+    // may mount over the toolbar sitting directly above this line.
+    <Typography variant="body2" color="text.secondary" data-testid="loot-rates" title={LOOT_RATE_TITLE}>
+      {text}
+    </Typography>
+  )
+}
+
+/** The ledger caption: what the table is showing, and how fast the slice behind it is paying. It
+ *  reads the auto-reload instant itself rather than taking it as a prop — it is the only thing that
+ *  shows it. */
 export function LootSummary({
   eventCount,
   uniqueCount,
   inventoryInfo,
   slice,
-  totalCount
+  totalCount,
+  rates
 }: {
   eventCount: number
   uniqueCount: number
@@ -206,22 +234,31 @@ export function LootSummary({
    *  session" is the literal question this control was asked for — a ledger that silently showed
    *  a third of its rows would answer half of it. Omitted under `All`, where the two are equal. */
   totalCount: number
+  /** Loot per hour over the slice, both denominators (`useSliceLootRates`). Null ⇒ nothing parsed
+   *  yet, and the rate line is simply absent — there is no play to state a rate over. */
+  rates: WindowLootRates | null
 }): JSX.Element {
   const autoUpdatedAt = useInventoryReloadedAt()
   return (
-    <Typography variant="body2" color="text.secondary" data-testid="loot-summary">
-      {eventCount.toLocaleString()} loot events
-      {slice.id === 'all' ? '' : ` in ${slice.caption} of ${totalCount.toLocaleString()} all time`} ·{' '}
-      {uniqueCount.toLocaleString()} unique items · click a row for mob/zone/drop-rate breakdown ·{' '}
-      {inventoryInfo
-        ? `inventory export ${formatDateTime(new Date(inventoryInfo.loadedAt).getTime())}`
-        : 'no inventory export loaded'}
-      {autoUpdatedAt && (
-        <Typography component="span" variant="body2" sx={{ color: 'success.main' }}>
-          {' '}· auto-updated {formatTime(autoUpdatedAt)}
-        </Typography>
-      )}
-    </Typography>
+    // ONE Stack child, TWO lines: the caption and the rate line belong to the same paragraph of the
+    // page, and letting them be two children of the view's `spacing={2}` column would put a 16px
+    // gutter between a sentence and its own footnote.
+    <Box>
+      <Typography variant="body2" color="text.secondary" data-testid="loot-summary">
+        {eventCount.toLocaleString()} loot events
+        {slice.id === 'all' ? '' : ` in ${slice.caption} of ${totalCount.toLocaleString()} all time`} ·{' '}
+        {uniqueCount.toLocaleString()} unique items · click a row for mob/zone/drop-rate breakdown ·{' '}
+        {inventoryInfo
+          ? `inventory export ${formatDateTime(new Date(inventoryInfo.loadedAt).getTime())}`
+          : 'no inventory export loaded'}
+        {autoUpdatedAt && (
+          <Typography component="span" variant="body2" sx={{ color: 'success.main' }}>
+            {' '}· auto-updated {formatTime(autoUpdatedAt)}
+          </Typography>
+        )}
+      </Typography>
+      <LootRateLine rates={rates} />
+    </Box>
   )
 }
 

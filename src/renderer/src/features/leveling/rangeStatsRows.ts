@@ -31,6 +31,10 @@
 //      identical to what it was before offline existed.
 
 import type { ComboInterval, RangeStats, ZoneRangeRow } from '@shared/progressionStats'
+// The idle threshold as a VALUE, relatively imported (the aaPaceRows `AA_POTION_CHARGES`
+// precedent): `ACTIVE_TIME_TITLE` states the number of minutes out loud, and a hand-typed 5 there
+// would be a second copy of a measured constant waiting to drift from the one that classifies.
+import { IDLE_GAP_MS } from '../../../../shared/progressionStats'
 import { formatAaRate, formatKillRate, formatLevelRate, formatPointRate } from '../../lib/formatRate'
 import { fmtDuration } from './levelChartGeometry'
 import { zoneColor } from './zoneBands'
@@ -84,6 +88,9 @@ export interface HeroStat {
   value: string
   label: string
   sub: string
+  /** Hover sentence, when the card's number needs one. Only the RATE card has one: it is the
+   *  only card here whose denominator is active time (JOS-249). Absent ⇒ no `title` at all. */
+  title?: string
 }
 
 const MS_PER_MIN = 60_000
@@ -208,7 +215,9 @@ export function rangeHeroes(stats: RangeStats): HeroStat[] {
       id: 'rate',
       value: rate(stats.levelsPerHourActive, formatLevelRate),
       label: 'Levels per hour',
-      sub: rateSub(stats)
+      sub: rateSub(stats),
+      // The caption already says "over 2h 03m active"; this says what that hour is (JOS-249).
+      title: withActiveTime('Levels of progress per hour of active time.')
     },
     { id: 'kills', value: stats.kills.toLocaleString(), label: 'Mobs killed', sub: killsSub(stats) },
     {
@@ -247,6 +256,39 @@ export function activeIdleText(stats: RangeStats): string {
 export function idleRuleCaption(idleThresholdMs: number): string {
   const mins = idleThresholdMs / MS_PER_MIN
   return `idle = no experience, kill, or loot event for over ${mins} minutes`
+}
+
+/**
+ * WHAT "ACTIVE TIME" MEANS, IN ONE SENTENCE, WHEREVER A RATE DIVIDES BY IT (JOS-249).
+ *
+ * A 0.22.0 user asked the question this string answers — "is that AFK removed, or any time not in
+ * combat?" — and neither guess is right, so the sentence says what it IS and then names both
+ * guesses to close them out. It is the reading of `progressionStats.rangeStats` exactly:
+ *
+ *   activeMs = durationMs - idleMs - offlineMs
+ *
+ * where `durationMs` is the selection's wall clock (Σ of the zone's own visits when the slice or
+ * the row carries a zone), `idleMs` is every gap longer than `IDLE_GAP_MS` in the exp ∪ credited
+ * kill ∪ loot stream — the WHOLE gap, not `gap - threshold` — and `offlineMs` is the logouts the
+ * log closed with a login line. MEASURED while writing this (synthetic snapshots through the real
+ * `rangeStats`): a 6-minute hole costs the full 6 minutes, a 4m59s hole costs nothing, loot alone
+ * keeps the clock running, and a 30-minute stretch of pure fighting with no kill, exp or loot line
+ * scored 0 active — which is why the sentence refuses "out of combat" out loud. Damage is not a
+ * column of `ProgressionSnap` at all, so combat can neither start nor stop this clock.
+ *
+ * ONE SPELLING, ON EVERY SURFACE THAT DIVIDES BY IT — the Leveling range panel, the AA pace,
+ * the in-window drops, the Loot drill-down's per-zone rates, the Overview leveling card and the XP
+ * overlay all hover the same words, because a definition worded twice is a definition that will
+ * eventually say two things.
+ */
+export const ACTIVE_TIME_TITLE =
+  `Active time = the span shown minus every gap over ${IDLE_GAP_MS / MS_PER_MIN} minutes with no experience, credited kill, ` +
+  'or loot line, and minus any stretch the log says you were logged out - not an AFK check, and not out-of-combat time.'
+
+/** `title` with the definition appended — the ONE way a surface that already had a hover sentence
+ *  gains this one, so the two can never be separated by a copy-paste. */
+export function withActiveTime(title: string): string {
+  return `${title} ${ACTIVE_TIME_TITLE}`
 }
 
 /**
@@ -326,8 +368,8 @@ export function aaRateText(stats: RangeStats): string | null {
   return `${rate(stats.aaPerHourActive, formatAaRate)} · ${rate(stats.aaPointsPerHourActive, formatPointRate)}`
 }
 
-/** The AA-rate chip's tooltip — what each half measures. */
-export const AA_RATE_TITLE = 'AA completions and ability points per hour of active time.'
+/** The AA-rate chip's tooltip — what each half measures, and what the hour under it is. */
+export const AA_RATE_TITLE = withActiveTime('AA completions and ability points per hour of active time.')
 
 /**
  * The footnote for rows whose experience lines stated no percentage. Null when every sample

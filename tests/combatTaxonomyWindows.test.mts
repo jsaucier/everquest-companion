@@ -48,6 +48,13 @@ const WINDOW: string[] = [
 
 function replay(): { eng: CombatEngine; lastTs: number } {
   const eng = new CombatEngine()
+  // LIVE FROM THE START, because that is the only state anybody ever LOOKS at a meter in, and
+  // since JOS-208 phase 4 it is also the only state the wall-clock closure sweep runs in: a
+  // replay is not a moment in time, so `snapshot(now)` no longer finalizes a fight while the
+  // historical fold is still reading (engine.ts). Every window below asks what the meter shows
+  // after its span, which is a live question; the poll-lag arms model the live tick race and
+  // still exercise it.
+  eng.setLive()
   eng.setPlayerName('Primitive')
   let seq = 0
   let lastTs = 0
@@ -228,6 +235,7 @@ const RESIST_WINDOW: string[] = [
 
 function replayResist(): { eng: CombatEngine; lastTs: number } {
   const eng = new CombatEngine()
+  eng.setLive()
   eng.setPlayerName('Primitive')
   let seq = 0
   let lastTs = 0
@@ -356,6 +364,7 @@ test('W-res1: the timeline carries a resist tick + a miss tick, each attributed'
 test('full-log: category totals sum EXACTLY to source totals (the taxonomy tripwire)', { skip: !existsSync(FULL_LOG) }, () => {
   const lines = readFileSync(FULL_LOG, 'utf8').split(/\r?\n/)
   const eng = new CombatEngine()
+  eng.setLive()
   eng.setPlayerName('Primitive')
   let seq = 0
   for (const raw of lines) {
@@ -376,6 +385,7 @@ test('full-log: category totals sum EXACTLY to source totals (the taxonomy tripw
 test('full-log: resist events parse in bulk AND never move a damage total (the v2 tripwire)', { skip: !existsSync(FULL_LOG) }, () => {
   const lines = readFileSync(FULL_LOG, 'utf8').split(/\r?\n/)
   const eng = new CombatEngine()
+  eng.setLive()
   eng.setPlayerName('Primitive')
   let seq = 0
   let parsedResists = 0
@@ -418,6 +428,7 @@ test('full-log: stance + invocation sweep finds all verified names', { skip: !ex
 test('full-log: per-encounter timeline ring is memory-bounded (drop-oldest across the session)', { skip: !existsSync(FULL_LOG) }, () => {
   const lines = readFileSync(FULL_LOG, 'utf8').split(/\r?\n/)
   const eng = new CombatEngine()
+  eng.setLive()
   eng.setPlayerName('Primitive')
   let seq = 0
   for (const raw of lines) {

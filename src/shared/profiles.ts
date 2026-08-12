@@ -242,7 +242,11 @@ export function buildSettingsBody(input: SettingsExportInput): SettingsBundleBod
   if (alerts.length) body.alerts = alerts
   body.alertPrefs = {
     globalVolume: clamp01(input.alertPrefs?.globalVolume, 0.7),
-    muted: input.alertPrefs?.muted ?? false
+    muted: input.alertPrefs?.muted ?? false,
+    // Projected only when TRUE (JOS-222), the same rule the store writes it by: a bundle from a
+    // machine with the audio throttle on is byte-identical to one written before the preference
+    // existed, so no old share string suddenly grows a row it never carried.
+    ...(input.alertPrefs?.alwaysPlayAll === true ? { alwaysPlayAll: true } : {})
   }
   const overlays = exportableOverlays(input.overlays)
   if (Object.keys(overlays).length) body.overlays = overlays

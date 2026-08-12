@@ -11,7 +11,6 @@
 
 import { ipcRenderer } from 'electron'
 import { IPC } from '../shared/ipc'
-import type { FoldCacheState } from '../shared/foldCachePrefs'
 import type { PerfHudPrefs, PerfSample, StartupProfile } from '../shared/perf'
 
 export const perfBridge = {
@@ -42,25 +41,5 @@ export const perfBridge = {
     } catch {
       // A missing startup mark is a missing measurement, never a broken window.
     }
-  },
-
-  // ---- the startup checkpoint's switch (JOS-208) ----
-  //
-  // IT IS IN THIS SLICE because it is an item of Preferences → PERFORMANCE, sitting directly
-  // under the startup breakdown that it changes — someone who has just read "Log history
-  // replayed: 6.2 s" is standing exactly where this setting means something. Nothing about the
-  // HUD's sampler is involved; the two share a section and a bridge file, and nothing else.
-  //
-  // BOTH ANSWERS CARRY THREE FACTS, not one: what the switch is set to, what this launch is
-  // actually doing, and why. They differ only when `EQ_FOLD_CACHE` is overriding the preference —
-  // the dev escape hatch, which wins in both directions — and the card says so rather than
-  // drawing a switch that is quietly wrong about the launch it is sitting in.
-
-  /** The checkpoint switch, as this launch resolved it. */
-  getFoldCache: (): Promise<FoldCacheState> => ipcRenderer.invoke(IPC.foldCacheGet),
-  /**
-   * Set the checkpoint switch. It takes effect on the NEXT launch — the fold is resolved once, at
-   * character attach, so there is deliberately no "apply now" for main to pretend to do.
-   */
-  setFoldCache: (enabled: boolean): Promise<FoldCacheState> => ipcRenderer.invoke(IPC.foldCacheSet, enabled)
+  }
 }

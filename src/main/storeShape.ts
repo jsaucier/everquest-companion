@@ -160,13 +160,6 @@ export interface StoreShape {
    */
   respawn?: RespawnPrefs
   /**
-   * THE FOLD CHECKPOINT SWITCH (JOS-208, `src/main/storeFoldCache.ts`). ABSENT MEANS OFF — the
-   * rollout is off by default until the owner has run it by hand and the fleet's divergence count
-   * has stayed at zero — so it is another additive key on the same carve-out: no schema bump, no
-   * migration, and a build that predates the feature ignores it.
-   */
-  foldCache?: { enabled?: boolean }
-  /**
    * The newest release whose notes this install has been SHOWN (JOS-73; shared/releaseNotes.ts).
    *
    * ABSENT MEANS FRESH INSTALL, and that is the whole reason it is an optional key rather than a

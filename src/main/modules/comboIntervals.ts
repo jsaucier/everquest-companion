@@ -32,21 +32,16 @@ import type {
   ComboSlot
 } from '../../shared/classCombo'
 import { scoreSlots, statedSlots } from './comboScore'
+import {
+  levelRange,
+  levelRegressedInside,
+  type LevelPoint,
+  type WhoRow
+} from './comboLevels'
 
-/** A `/who` row, reduced to what interval construction needs. */
-export interface WhoRow {
-  ts: number
-  seq: number
-  classes: ClassAbbr[]
-  /** the bracketed level — min over the loadout, so it is the interval's level too. */
-  level: number
-}
-
-/** A `You have gained a level!` ding. */
-export interface LevelPoint {
-  ts: number
-  level: number
-}
+// The two shapes that STATE a level live beside the code that reconciles them (comboLevels.ts) and
+// are re-exported here, which is the import path every caller already uses.
+export type { LevelPoint, WhoRow }
 
 export interface IntervalInput {
   observations: readonly ClassObservation[]
@@ -331,11 +326,43 @@ function absorbedWindow(
  * "departed" simply because no time has passed, so an arrival that clears the ≥2-bucket sustain
  * bar is what has to carry the claim. And because this only ever RE-ADDS a cut the merge had
  * already deleted, it cannot move a boundary the model gets right today.
+ *
+ * THE DEPARTURE TEST SILENTLY UN-FIXED ITSELF AS THE LOG GREW (JOS-239, owner-reported: a wizard
+ * the owner levelled to 25 was credited with a Lord Nagafen kill at D4). `absorbedWindow` runs to
+ * the END of the observations, so "MNK left" is a question asked over all of recorded history —
+ * and the owner swapped BACK into PAL/MNK/ENC on Aug 08, 40.1 h after the Aug 06 19:31 ding.
+ * Nothing departed, the cut was never reinstated, and ONE 4.5-day interval carried two loadouts
+ * plus a level range of 11-50 that no single loadout can produce. Fixture cw5 kept passing
+ * because it ENDS inside the wizard evening; cw6 is the same span with the swap-back on it.
+ *
+ * THE SECOND ARM, and why it needs no clock constant. The question a merge answers is "are these
+ * two detectors describing ONE event?", and the honest disqualifier is that the stretch between
+ * them is an ERA IN ITS OWN RIGHT: it sustains a FULL LOADOUT's worth of exclusive evidence, by
+ * the same ≥2-hourly-bucket bar everything else in this file uses. Measured on the two fixtures
+ * that disagree:
+ *
+ *   CW2 (Aug 02, a genuine one-event merge): the ding lands 19 minutes past the shift's window
+ *        and the stretch between them sustains {BER,ROG} — TWO classes, not a loadout. Absorbed,
+ *        exactly as before, and CW2's boundary is untouched.
+ *   CW6 (Aug 06): the ding lands 43.9 h past it and the stretch sustains {ENC,MNK,PAL} — a whole
+ *        loadout, playing for two days. Two swaps, whatever the far side of the ding later does.
+ *
+ * The second condition is the model's own admission that it is out of its depth: the absorbed
+ * span is OVER-DETERMINED (more classes clear the sustained-exclusive bar than the loadout has
+ * slots). It is not strictly needed — an era between two detectors already disproves one event —
+ * but it keeps the new arm to spans the model has already declared it cannot explain, which is
+ * the conservative reading of "only ever re-add a cut the merge deleted".
+ *
+ * The WINDOW degrades honestly. `lo` is still the last word of a class that is gone; when the
+ * second arm fires there may be none (that is what it is for), and the spread collapses to
+ * `window.from` — "somewhere between the previous boundary and the ding", which is a superset of
+ * the truth rather than a narrower claim than the evidence supports.
  */
 export function reinstatedDrops(
   observations: readonly ClassObservation[],
   drops: readonly Boundary[],
-  dated: readonly Boundary[]
+  dated: readonly Boundary[],
+  expectedSlots: number
 ): Boundary[] {
   if (observations.length === 0) return []
   const end = observations[observations.length - 1].ts + 1
@@ -348,7 +375,13 @@ export function reinstatedDrops(
     const now = exclusiveSpans(observations.filter((o) => o.ts >= drop.at && o.ts < window.to))
     const departed = was.filter((s) => !now.some((n) => n.cls === s.cls))
     const arrived = now.some((n) => !was.some((s) => s.cls === n.cls))
-    if (departed.length === 0 || !arrived) continue
+    const swapped = departed.length > 0 && arrived
+    // The absorbed stretch is a loadout era of its own, inside a span the model cannot explain.
+    const ownEra = was.length >= expectedSlots
+    const overDetermined =
+      exclusiveSpans(observations.filter((o) => o.ts >= window.from && o.ts < window.to)).length >
+      expectedSlots
+    if (!swapped && !(ownEra && overDetermined)) continue
     // The ding is the cut (the log spoke there); the window opens no earlier than the last
     // evidence of a class that is gone, which is the narrowest honest left edge available.
     const lo = Math.max(window.from, ...departed.map((s) => s.last))
@@ -417,14 +450,6 @@ function sliceTimeline(
       observations: observations.filter((o) => o.ts >= start.at && (end === null || o.ts < end))
     }
   })
-}
-
-/** The level in force at `ts` — the last /who row or ding at or before it. */
-function levelAt(input: IntervalInput, ts: number): number | null {
-  let level: number | null = null
-  for (const p of input.levels) if (p.ts <= ts) level = p.level
-  for (const r of input.whoRows) if (r.ts <= ts) level = r.level
-  return level
 }
 
 /** Latest-set wins: two statements about one span are one statement, the later one. */
@@ -533,20 +558,8 @@ function slotsFor(slice: Slice, input: IntervalInput, prior: 2 | 3): SlotDecisio
   }
 }
 
-/** Levels observed inside a slice, for the interval's honest level range. */
-function levelRange(input: IntervalInput, slice: Slice): [number | null, number | null] {
-  const inside = [
-    ...input.levels.filter((p) => p.ts >= slice.start.at && (slice.end === null || p.ts < slice.end)),
-    ...input.whoRows.filter((r) => r.ts >= slice.start.at && (slice.end === null || r.ts < slice.end))
-  ].map((p) => p.level)
-  const at = levelAt(input, slice.start.at)
-  if (at !== null) inside.push(at)
-  if (inside.length === 0) return [null, null]
-  return [Math.min(...inside), Math.max(...inside)]
-}
-
 function toInterval(slice: Slice, input: IntervalInput, index: number): ComboInterval {
-  const [levelLo, levelHi] = levelRange(input, slice)
+  const [levelLo, levelHi] = levelRange(input, slice.start.at, slice.end)
   const prior: 2 | 3 = levelLo !== null && levelLo < TERTIARY_UNLOCK_LEVEL ? 2 : 3
   const { slots, expectedSlots, provenanceLock, overruled } = slotsFor(slice, input, prior)
   const last = slice.observations[slice.observations.length - 1]
@@ -572,6 +585,9 @@ function toInterval(slice: Slice, input: IntervalInput, index: number): ComboInt
   // Optional and set only when true, so an interval nobody overrode serializes exactly as it
   // did before this change — the delta transport diffs intervals by JSON.stringify.
   if (overruled) interval.userOverruled = true
+  // Same rule for the same reason (JOS-239): absent unless the span really did see the level go
+  // backwards, so no interval's JSON moves for a flag that does not apply to it.
+  if (levelRegressedInside(input, slice.start.at, slice.end)) interval.levelRegressed = true
   const also = [...(slice.start.also ?? [])]
   // The window could not be split further and still names more classes than a loadout holds:
   // say so rather than silently dropping the surplus (§ 4.5's floor rule).
@@ -617,7 +633,9 @@ export function buildIntervals(input: IntervalInput): ComboInterval[] {
   // …and put back any ding the merge swallowed that the evidence says was its OWN swap. Done
   // after the merge rather than inside it because the test needs the observations, and because
   // it may only ever ADD a cut the merge deleted (see reinstatedDrops).
-  const dated = mergeBoundaries([...merged, ...reinstatedDrops(observations, drops, merged)])
+  // The prior is enough for the slot count here for the same reason it is inside the shift
+  // bisector: a 2-slot era cannot be over-determined at 3, so 3 is the conservative bar.
+  const dated = mergeBoundaries([...merged, ...reinstatedDrops(observations, drops, merged, 3)])
   // …then the two `/who` rules, NARROW FIRST. `whoShiftBoundaries` cuts at a row the evidence
   // behind it contradicts (JOS-192) — a swap the log otherwise never dates, and the reason a
   // correcting `/who` no longer relabels the hours in front of it. Its cuts are handed to

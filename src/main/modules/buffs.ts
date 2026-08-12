@@ -106,13 +106,11 @@ import type { BuffsDelta, BuffsSnap, MessageOverlay } from '../../shared/types'
 import { idKey } from '../log/parser'
 import type { SpellDb } from '../data/spellDb'
 import { OverlayMining } from './buffsMining'
+import type { OverlayRegister, OverlaySeed } from '../data/messageOverlay'
 import { charmedPetDiesOnDeathLine } from '../combat/entityRules'
 import type { BuffTrustPrefs } from '../../shared/buffTrust'
-import { validate } from '../foldCache/schema'
-import type { FoldCheckpointable } from '../foldCache/serialize'
 import { admitLanding, type LandingContext } from './buffLanding'
 import { BuffInstances } from './buffsInstances'
-import { BUFFS_FOLD_SCHEMA, packInstances, unpackInstances, type BuffsFoldState } from './buffsFoldShapes'
 import { CastAnchors } from './buffAnchors'
 import { PetEntities } from './buffsEntities'
 import { SpellStats } from './buffsStats'
@@ -129,25 +127,7 @@ import {
 /** One member of the LogEvent union, selected by its `kind` tag. */
 type Ev<K extends LogEvent['kind']> = Extract<LogEvent, { kind: K }>
 
-// THE CHECKPOINT DECLARATION (JOS-208 phase 2) is `BUFFS_FOLD_SCHEMA`, in `buffsFoldShapes.ts` —
-// this file is at the repo's line ceiling, and the reasons that would otherwise sit here are:
-//
-//   IT IS ONE BLOB ON PURPOSE. The alternative — a `FoldUnit` per collaborator — would put five
-//   more ids in the container directory for objects that have no id, no snapshot and no
-//   independent lifetime, and would let a future edit restore four of them and forget the fifth.
-//   They are constructed together, reset together and are only ever coherent together, so they
-//   are checkpointed together, each declaring its own shape beside itself.
-//
-//   AND THIS MODULE OWNS THE TWO SHARED HALVES. `anchors` and `stats` are handed to `buffTimers`
-//   at construction (JOS-140 ruling 1: one attribution rule, one learner). They are serialized
-//   HERE, once, by their owner — `buffTimers`' declaration states the same thing from the other
-//   side. The container's fixed unit ORDER (attach.ts) makes the restore deterministic, and it
-//   does not matter which of the two lands first: both hold the same object.
-//
-//   THE THIRD PHASE-1 DEBT IS PAID HERE TOO: `miner` is the MessageOverlayMiner, whose registry
-//   this module publishes as `BuffsSnap.overlay`.
-
-export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta>, FoldCheckpointable<BuffsFoldState> {
+export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
   readonly id = 'buffs'
   private seq = 0
 
@@ -200,7 +180,7 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta>, FoldCheckpo
 
   constructor(
     db?: SpellDb,
-    seedOverlays?: (MessageOverlay | null | undefined)[],
+    seedOverlays?: readonly OverlaySeed[],
     emitDerived?: (ev: LogEvent, live: boolean) => void
   ) {
     this.stats = new SpellStats(db)
@@ -256,9 +236,28 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta>, FoldCheckpo
     this.emitDerived(ev, this.curLive)
   }
 
-  /** Serialize the current learned overlay (for debounced persistence in index.ts). */
+  /** Serialize the current learned overlay (the served/audit view). */
   overlaySnapshot(): MessageOverlay {
     return this.mining.build()
+  }
+
+  /**
+   * The overlay REGISTER — per-source counts, for debounced persistence (session.ts, index.ts).
+   * Deliberately not `overlaySnapshot()`: what gets written must be attributable to the log that
+   * produced it, or the next launch's fold adds its own output back on top (JOS-231).
+   */
+  overlayRegister(): OverlayRegister {
+    return this.mining.register()
+  }
+
+  /**
+   * A NEW LOG IS ABOUT TO BE FOLDED FROM ITS FIRST BYTE (JOS-231). Mining is game knowledge and
+   * survives `reset()` on purpose — a spell's cast messages are the same for every character —
+   * but the counts THIS log accounts for are about to be re-stated in full, so its bucket is
+   * discarded rather than added to. Called from `session.resetWorldFor`, before the scan.
+   */
+  beginOverlaySource(key: string): void {
+    this.mining.beginSource(key)
   }
 
   reset(): void {
@@ -466,6 +465,8 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta>, FoldCheckpo
       illusion: landing.illusion,
       durationMs: landing.durationMs,
       caster: landing.caster,
+      // DISPLAY ONLY (JOS-238): the rank the cast line spelled. `landing.spell` is the identity.
+      ...(landing.castName ? { castName: landing.castName } : {}),
       ...(landing.lineKey ? { lineKey: landing.lineKey } : {}),
       ...(landing.candidates ? { candidates: landing.candidates } : {}),
       permanentIllusionOwnedTs: this.permanentIllusionOwnedTs
@@ -673,50 +674,5 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta>, FoldCheckpo
     if (!this.inst.dirty) return null
     this.inst.dirty = false
     return { seq: this.seq, delta: this.buildSnap() }
-  }
-
-  // ---- the checkpoint seam (JOS-208) ---------------------------------------------------------
-
-  readonly foldSchema = BUFFS_FOLD_SCHEMA
-
-  serializeFold(): BuffsFoldState {
-    return {
-      seq: this.seq,
-      emoteTextCount: [...this.emoteTextCount],
-      ...(this.permanentIllusionOwnedTs === undefined
-        ? {}
-        : { permanentIllusionOwnedTs: this.permanentIllusionOwnedTs }),
-      stats: this.stats.serializeFold(),
-      pets: this.pets.serializeFold(),
-      inst: packInstances(this.inst),
-      anchors: this.anchors.serializeFold(),
-      frame: this.frame.serializeFold(),
-      miner: this.mining.serializeFold()
-    }
-  }
-
-  /**
-   * ONE GATE FOR SIX OBJECTS. The collaborators' own `deserializeFold`s take typed plain data and
-   * never validate — this declaration has already validated the whole tree, and a second opinion
-   * inside each of them would be a second place for the shape and the check to drift apart.
-   * Nothing is adopted until the whole blob is accepted, so a refusal leaves all six untouched.
-   */
-  deserializeFold(state: unknown): boolean {
-    if (!validate(BUFFS_FOLD_SCHEMA, state).ok) return false
-    const s = state as BuffsFoldState
-    this.seq = s.seq
-    this.emoteTextCount = new Map(s.emoteTextCount)
-    this.permanentIllusionOwnedTs = s.permanentIllusionOwnedTs
-    // STATS AND PETS FIRST: the instance store reads both when it projects a row, and the rows it
-    // is about to adopt were projected against exactly these.
-    this.stats.deserializeFold(s.stats)
-    this.pets.deserializeFold(s.pets)
-    unpackInstances(this.inst, s.inst)
-    this.anchors.deserializeFold(s.anchors)
-    this.frame.deserializeFold(s.frame)
-    // REPLACES the seeded miner rather than merging into it — see its seam for why that is the
-    // whole of the one-truth argument here.
-    this.mining.deserializeFold(s.miner)
-    return true
   }
 }

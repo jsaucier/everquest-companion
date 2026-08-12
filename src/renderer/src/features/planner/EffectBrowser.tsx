@@ -24,6 +24,14 @@
 // sources beside the observed ones, which is what made it a fair destination for a never-looted
 // donor (see PlannerChips' header, and features/loot/ItemDbSources.tsx).
 //
+// …AND SINCE JOS-210 THE OTHER DIRECTION IS A FILTER TOO: name an ITEM and the list becomes the
+// effects that can legally be socketed into it (`itemFits`, plannerPreset.ts — R2's slot and class
+// halves plus R3's flat no on haste). Two doors, one narrowing: the Inventory tab's socket click
+// (V8's preset, which also names the cell an add writes to) and the filter bar's own item picker,
+// which reaches ANY item the DB carries rather than only the ones your set already hosts. It
+// SURVIVES A KIND SWITCH — the four socket tabs move the preset's socket instead of clearing it,
+// because "and what about its worn effects?" is one question about one item.
+//
 // TWO FILTERS SHRINK THE CORPUS BEFORE ANY OF THAT, and they are opposites in spirit.
 //
 // THE ERA FILTER IS ON BY DEFAULT and is the difference between a plan and a wish list. The
@@ -75,8 +83,7 @@ import {
 } from './plannerData'
 import { browserRows, groupDonors, type BrowserRow, type GroupAxis } from './plannerGroups'
 import { outgoing, plannedBySocket, replacesFor, targetCells, type SocketKey } from './plannerReplace'
-import { classesMismatch } from './plannerClasses'
-import { useHostClasses, type BrowsePreset } from './plannerPreset'
+import { itemFits, useItemFocus, type BrowsePreset, type ItemFocus } from './plannerPreset'
 import { sourceIndex } from './sourceIndex'
 
 /** Which (donor, effect) pairs the selected set already plans — the "in set" chip. */
@@ -103,11 +110,13 @@ interface RowsInput {
   text: string
   planClasses: readonly ClassAbbr[]
   view: { eraOnly: boolean; nonEquip: boolean }
-  /** V8 — the host's own class list; `[]` is unknown and filters nothing (law 1) */
-  hostClasses: readonly ClassAbbr[]
-  /** V8 — a preset promises only-legal-fits, so haste-locked donors are OUT there (R3; owner
-   *  verdict 2026-08-05). In the free browser they stay, chipped — that is where R3 is taught. */
-  presetActive: boolean
+  /**
+   * The ITEM the browser is narrowed to (V8's preset host, or one picked by hand since JOS-210),
+   * or null for the free browser. It is R2 and R3 in one object: only effects that can legally be
+   * socketed into that item survive, which is also why haste-locked donors are OUT under it (owner
+   * verdict 2026-08-05) while the free browser keeps them chipped, where R3 is taught.
+   */
+  focus: ItemFocus | null
   axis: GroupAxis
   open: ReadonlySet<string>
 }
@@ -122,15 +131,14 @@ interface RowsInput {
  * only ever runs when there is nothing to draw, and `NOTHING_HIDDEN` keeps that case free.
  */
 function useVisibleRows(input: RowsInput): { rows: BrowserRow[]; hidden: HiddenByView } {
-  const { donors, filters, text, planClasses, view, hostClasses, presetActive, axis, open } = input
+  const { donors, filters, text, planClasses, view, focus, axis, open } = input
   const filtered = useMemo(() => {
     const rows = filterDonors(donors, { ...filters, text }, planClasses, view)
-    // ONE pass, two rules. Haste-locked donors are illegal under a preset (see
-    // RowsInput.presetActive), and R2's class half runs against the HOST rather than the set: an
-    // effect can only move into an item that shares a class with it. No empty-hostClasses guard
-    // is needed — `classesMismatch` answers false for an unknown list by construction (law 1).
-    return rows.filter((d) => !(presetActive && d.hasteLocked) && !classesMismatch(d.classes, hostClasses))
-  }, [donors, filters, text, planClasses, view, hostClasses, presetActive])
+    // ONE pass, ONE rule — `itemFits` (plannerPreset.ts), which is R3's flat no on haste plus R2's
+    // two halves asked about the HOST rather than the set: an effect can only move into an item it
+    // shares a slot AND a class with. Nothing about it is restated here.
+    return focus === null ? rows : rows.filter((d) => itemFits(d, focus))
+  }, [donors, filters, text, planClasses, view, focus])
   const groups = useMemo(() => groupDonors(filtered, axis, donorEraOf), [filtered, axis])
   const rows = useMemo(() => browserRows(groups, open), [groups, open])
   const hidden = useMemo(
@@ -199,6 +207,8 @@ interface RowListProps {
   ready: boolean
   /** what the two view toggles are holding back — only consulted when `rows` is empty (JOS-67) */
   hidden: HiddenByView
+  /** the item the list is narrowed to, so an empty list can name it (JOS-210) */
+  item: string | null
   onToggle: (id: string) => void
   onAdd: (donor: DonorRow, anchor: HTMLElement) => void
   onOpenLoot?: (item: string) => void
@@ -210,19 +220,25 @@ interface RowListProps {
  * "No effects match these filters" is true of a typo and of a filter quietly holding back four
  * real answers, and the second is the case a user reported (JOS-67). The counts come from
  * `hiddenByView`; the toggles they name are two controls up, in the filter bar.
+ *
+ * AND WHEN AN ITEM IS THE NARROWING, IT IS NAMED (JOS-210). "No effects match these filters" over a
+ * list filtered to one item reads as a broken search; "Nothing on the Proc tab can be socketed into
+ * X" is the answer, and it is usually the true one — most items share a slot with only a slice of
+ * the corpus, and R2 is the reason rather than anything the user typed.
  */
-function emptyText(ready: boolean, hidden: HiddenByView): string {
+function emptyText(ready: boolean, hidden: HiddenByView, item: string | null): string {
   if (!ready) return 'Reading the item database…'
   const parts: string[] = []
   if (hidden.era > 0) parts.push(`${String(hidden.era)} outside ${CURRENT_ERA_LABEL}`)
   if (hidden.nonEquip > 0) parts.push(`${String(hidden.nonEquip)} with no equipment slot`)
-  if (parts.length === 0) return 'No effects match these filters.'
-  return `No effects match these filters - but ${parts.join(' and ')} are hidden by the toggles above.`
+  const head = item === null ? 'No effects match these filters' : `Nothing here can be socketed into ${item}`
+  if (parts.length === 0) return `${head}.`
+  return `${head} - but ${parts.join(' and ')} are hidden by the toggles above.`
 }
 
 /** The bounded scroll box (AGENTS.md UI conventions) and the window of rows inside it. */
 function RowList(props: RowListProps): JSX.Element {
-  const { rows, win, planClasses, planned, replaces, ready, hidden, onToggle, onAdd, onOpenLoot } = props
+  const { rows, win, planClasses, planned, replaces, ready, hidden, item, onToggle, onAdd, onOpenLoot } = props
   return (
     <>
       <Box sx={{ height: win.topPad }} />
@@ -247,7 +263,7 @@ function RowList(props: RowListProps): JSX.Element {
       <Box sx={{ height: win.bottomPad }} />
       {rows.length === 0 && (
         <Typography variant="body2" color="text.secondary" data-testid="planner-effects-empty" sx={{ p: 2 }}>
-          {emptyText(ready, hidden)}
+          {emptyText(ready, hidden, item)}
         </Typography>
       )}
     </>
@@ -292,6 +308,55 @@ function writeFlow(ctx: {
   }
 }
 
+/**
+ * THE THREE WRITES THE FILTER BAR MAKES, and which of them hand the browser back (JOS-210).
+ *
+ * `change` is the slot select and the "usable by this set" chip: both contradict the cell you
+ * arrived from, so both clear the preset — with its values still SELECTED, which is what makes
+ * clearing feel like being handed the browser rather than being reset.
+ *
+ * `setSocket` is the four kind tabs, and it is the bug this ticket names. It used to run that same
+ * clear path, so narrowing to an item and then asking "what about its worn effects?" silently threw
+ * the item away. Switching kinds is ONE question about the SAME item, so the item stays and the
+ * preset's socket MOVES with the tab — which keeps the add target, the replace warning and the
+ * chip's own label all naming the socket that is actually on screen.
+ *
+ * `pickItem` is the filter bar's item picker, and a hand-picked item REPLACES whatever the browser
+ * was narrowed to, preset included: you are now filling a different item, and the cell you came
+ * from is no longer the question.
+ *
+ * A plain function, not a hook — it closes over state the caller already holds (the `writeFlow`
+ * precedent below) and calls nothing of React's.
+ */
+function filterWrites(ctx: {
+  preset: BrowsePreset | null
+  /** the MERGED filters, so clearing the preset leaves its values selected */
+  filters: DonorFilters
+  setOwn: (f: DonorFilters) => void
+  setPicked: (f: ItemFocus | null) => void
+  onPreset?: (p: BrowsePreset | null) => void
+}): {
+  change: (f: DonorFilters) => void
+  setSocket: (s: SocketType) => void
+  pickItem: (f: ItemFocus | null) => void
+} {
+  const { preset, filters, setOwn, setPicked, onPreset } = ctx
+  return {
+    change: (next) => {
+      setOwn(next)
+      onPreset?.(null)
+    },
+    setSocket: (socket) => {
+      setOwn({ ...filters, socket })
+      if (preset !== null) onPreset?.({ ...preset, socket })
+    },
+    pickItem: (next) => {
+      setPicked(next)
+      onPreset?.(null)
+    }
+  }
+}
+
 export interface EffectBrowserProps {
   plan: ExaltPlan
   /**
@@ -300,7 +365,12 @@ export interface EffectBrowserProps {
    * (the X on the preset chip, or touching any filter control) hands the browser back.
    */
   preset?: BrowsePreset | null
-  onClearPreset?: () => void
+  /**
+   * Write the preset back (`null` clears it) — the seam that lets a KIND SWITCH move the socket it
+   * names instead of dropping the item (JOS-210). PlannerView owns the state because the trip that
+   * sets it starts on another tab.
+   */
+  onPreset?: (p: BrowsePreset | null) => void
   /** write one socket of the selected set (usePlans' `setSocket`) */
   onSocket: (slot: PlanSlotId, socket: SocketType, planned: { effect: string; donorKey: string }) => void
   /** deep-link a donor into the Loot tab's item drill-down (App's `openLoot`) */
@@ -310,7 +380,7 @@ export interface EffectBrowserProps {
 export default function EffectBrowser({
   plan,
   preset = null,
-  onClearPreset,
+  onPreset,
   onSocket,
   onOpenLoot
 }: EffectBrowserProps): JSX.Element {
@@ -318,23 +388,22 @@ export default function EffectBrowser({
   const era = useEraOnly()
   const nonEquip = useNonEquip()
   const [own, setOwn] = useState<DonorFilters>(DEFAULT_FILTERS)
-  const hostClasses = useHostClasses(preset)
+  // The item picked in the filter bar (JOS-210's second door). The preset outranks it while one is
+  // on, and picking by hand clears the preset — so exactly one item is ever being filled.
+  const [picked, setPicked] = useState<ItemFocus | null>(null)
+  const focus = useItemFocus(preset, picked)
   // THE PRESET WINS while it is on: the socket and slot it names are facts about the item window
-  // you came from, not preferences. Touching any control clears it (`change` below), because
-  // changing the socket tab while filtered to a Proc socket would be asking two things at once.
-  // The preset names a CELL; the donor filter is about the equipment SLOT that cell occupies, so
-  // browsing FINGER 2 shows the same ring donors as browsing FINGER 1 (JOS-67). An ANY cell
-  // occupies none, and `equipSlotOf` returns null there — which is already this filter's word for
-  // "every slot" (JOS-104), so browsing an any-slot's socket narrows by socket and host classes
-  // and leaves the slot alone, which is exactly what that place allows.
+  // you came from, not preferences. The preset names a CELL; the donor filter is about the
+  // equipment SLOT that cell occupies, so browsing FINGER 2 shows the same ring donors as browsing
+  // FINGER 1 (JOS-67). An ANY cell occupies none, and `equipSlotOf` returns null there — which is
+  // already this filter's word for "every slot" (JOS-104), so browsing an any-slot's socket narrows
+  // by socket and by the host itself and leaves the slot select alone.
   const filters: DonorFilters = useMemo(
     () => (preset === null ? own : { ...own, socket: preset.socket, slot: equipSlotOf(preset.slot) }),
     [own, preset]
   )
-  const change = (next: DonorFilters): void => {
-    setOwn(next)
-    onClearPreset?.()
-  }
+  // The three filter-bar writes, and which of them hand the browser back — `filterWrites` above.
+  const { change, setSocket, pickItem } = filterWrites({ preset, filters, setOwn, setPicked, onPreset })
   const groupBy = useGroupBy(filters.socket)
   const [text, setText] = useState('')
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set<string>())
@@ -358,8 +427,7 @@ export default function EffectBrowser({
     text: deferredText,
     planClasses: plan.classes,
     view,
-    hostClasses,
-    presetActive: preset !== null,
+    focus,
     axis: groupBy[0],
     open
   })
@@ -387,13 +455,14 @@ export default function EffectBrowser({
       <EffectFilterBar
         filters={filters}
         setFilters={change}
+        setSocket={setSocket}
         text={text}
         setText={setText}
         era={era}
         nonEquip={nonEquip}
         groupBy={groupBy}
-        preset={preset}
-        onClearPreset={onClearPreset}
+        focus={focus}
+        setFocus={pickItem}
       />
 
       <Box
@@ -409,6 +478,7 @@ export default function EffectBrowser({
           replaces={replaces}
           ready={ready}
           hidden={hidden}
+          item={focus?.name ?? null}
           onToggle={toggle}
           onAdd={add}
           onOpenLoot={onOpenLoot}

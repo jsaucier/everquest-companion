@@ -48,8 +48,14 @@ import {
   SPEECH_ENGINES,
   normalizeVoicePrefs
 } from '@shared/speechText'
-import { applyVoicePrefs, currentVoicePrefs, forgetSystemVoices, speak } from '../../lib/speech'
-import { useVoiceOptions } from '../../lib/useVoices'
+import {
+  applyVoicePrefs,
+  currentVoicePrefs,
+  forgetSystemVoices,
+  speak,
+  SPEECH_SETUP_NOTES
+} from '../../lib/speech'
+import { useSpeechEngineFault, useVoiceOptions } from '../../lib/useVoices'
 import { trackFeature } from '../../lib/telemetry'
 
 /** What each tier is, in one line. The size lives on the download button, where it is actionable. */
@@ -304,6 +310,37 @@ function EngineRow({
   )
 }
 
+/**
+ * THE DEGRADATION, SAID OUT LOUD (JOS-247) — the note that was missing when a 0.22.0 user
+ * downloaded a natural voice and heard the default Microsoft one for every selection.
+ *
+ * Nothing on this screen could have told them. The download had finished, so the "not installed"
+ * line was correctly absent; `speech:voices` reads the downloaded FILE, so the picker listed
+ * every natural voice and let them choose one; and the only trace of the fallback was a
+ * `console.warn` in a window with no console. The engine fault is the one fact that reveals it,
+ * and it can only be learned by having tried — so it renders here, right under the picker whose
+ * selection is not being honoured, and after any utterance this session (an alert, or the ▶
+ * beside it, which is the deliberate way to find out on demand).
+ *
+ * It is `warning.main` rather than the secondary grey the "not downloaded" note wears: that one
+ * is a setup step the user has not taken yet, this one is a thing that is broken on their PC.
+ */
+function EngineFaultNote(): JSX.Element | null {
+  const fault = useSpeechEngineFault()
+  if (!fault) return null
+  return (
+    <Typography
+      variant="caption"
+      color="warning.main"
+      display="block"
+      sx={{ mt: 0.5, maxWidth: 520, lineHeight: 1.4 }}
+      data-testid="pref-voice-engine-fault"
+    >
+      {SPEECH_SETUP_NOTES[fault]}
+    </Typography>
+  )
+}
+
 /** Default voice + the ▶ that speaks an alert-shaped preview through the real engine. */
 function VoicePickerRow({
   prefs,
@@ -351,6 +388,14 @@ function VoicePickerRow({
       >
         Preview
       </Button>
+      {/* Under the picker and the ▶ that reveals it, full width so a two-clause sentence reads.
+          Only the downloaded tier can fault; a user who has since switched back to Windows voices
+          is hearing exactly what they chose and needs no warning about the other one. */}
+      {prefs.engine === 'kokoro' && (
+        <Box sx={{ width: '100%' }}>
+          <EngineFaultNote />
+        </Box>
+      )}
     </Stack>
   )
 }

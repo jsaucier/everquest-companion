@@ -3,16 +3,19 @@
 // Pure: it reads the learned per-spell stats and the current pet identities and writes
 // nothing, so every caller in the instance store shares one definition of what a row says.
 
-import type { ActiveBuff, BuffClass } from '../../shared/types'
+import type { ActiveBuff, BuffClass, EstimatorSource } from '../../shared/types'
 import type { EntityDisposition } from '../combat/entityRules'
 import { SELF_CASTER } from '../../shared/buffTrust'
-import { SELF_KEY } from './buffsShapes'
+import { SELF_KEY, spellKey } from './buffsShapes'
 import type { PetEntities } from './buffsEntities'
 import type { SpellStats } from './buffsStats'
 
 /** Everything that identifies the instance being projected, plus how it was established. */
 export interface ActiveSpec {
+  /** The IDENTITY — a resolved landing's DB name, or the joined family (JOS-238). */
   spell: string
+  /** DISPLAY ONLY: the ranked text the cast line spelled, when it said one (JOS-238). */
+  castName?: string
   key: string
   entityKey: string
   startedTs: number
@@ -78,7 +81,7 @@ function overlayDurationOf(
   permanent: boolean,
   stats: SpellStats,
   caster: string
-): { overlayDurationMs: number | null; overlaySource?: 'db' | 'observed' } {
+): { overlayDurationMs: number | null; overlaySource?: EstimatorSource } {
   if (permanent) return { overlayDurationMs: null }
   const est = stats.estimateFor(key, caster)
   if (est.ms != null && est.source) return { overlayDurationMs: est.ms, overlaySource: est.source }
@@ -96,9 +99,9 @@ function durationFields(
   p25: number | null
   p75: number | null
   n: number
-  durationSource?: 'db' | 'observed'
+  durationSource?: EstimatorSource
   overlayDurationMs: number | null
-  overlaySource?: 'db' | 'observed'
+  overlaySource?: EstimatorSource
 } {
   const st = stats.statFor(key, caster)
   const est = stats.estimateFor(key, caster)
@@ -121,12 +124,21 @@ function durationFields(
  */
 function optionalFields(
   spec: ActiveSpec,
-  at: { inferredTarget: boolean; permanent: boolean; messageDriven: boolean; caster: string }
+  at: {
+    inferredTarget: boolean
+    permanent: boolean
+    permanentSource: ActiveBuff['permanentSource']
+    messageDriven: boolean
+    caster: string
+    calmsTarget: boolean
+  }
 ): Partial<ActiveBuff> {
   const count = spec.count ?? 1
   return {
+    ...(spec.castName != null && spec.castName !== spec.spell ? { castName: spec.castName } : {}),
+    ...(at.calmsTarget ? { calmsTarget: true as const } : {}),
     ...(at.inferredTarget ? { inferredTarget: true } : {}),
-    ...(at.permanent ? { permanent: true } : {}),
+    ...(at.permanent ? { permanent: true, permanentSource: at.permanentSource } : {}),
     ...(at.messageDriven ? { messageDriven: true } : {}),
     ...(count > 1 ? { count } : {}),
     ...(at.caster !== SELF_CASTER ? { caster: at.caster } : {}),
@@ -146,6 +158,15 @@ export function buildActive(spec: ActiveSpec, stats: SpellStats, pets: PetEntiti
   const messageDriven = opts?.messageDriven === true
   const { target, inferredTarget } = resolveTargetLabel({ entityKey, cls, self, disp, messageDriven }, pets)
   const permanent = opts?.permanent === true
+  // THE CALM LINE (JOS-213), read at the same seam as `cls` and from the same DB. A FAMILY the
+  // anchors could not narrow answers only if EVERY candidate calms — the same rule `statedDuration`
+  // applies to a family's duration, and it is trivially satisfied here because the candidates of a
+  // shared landing sentence are exactly the spells that print it.
+  const calms = stats.calmsTarget(key) || (spec.candidates?.every((c) => stats.calmsTarget(spellKey(c))) ?? false)
+  // WHY it is permanent, derived rather than plumbed (JOS-215). `landingIsPermanent` asks the DB
+  // first and the AA second, so re-asking the DB here answers the same question in the same order
+  // and the two can never disagree — which is the reason this is not a field on the landing.
+  const permanentSource: ActiveBuff['permanentSource'] = stats.isPermanent(key) ? 'spell' : 'illusion-aa'
   const d = durationFields(key, permanent, stats, caster)
   return {
     spell,
@@ -161,6 +182,13 @@ export function buildActive(spec: ActiveSpec, stats: SpellStats, pets: PetEntiti
     ...(d.durationSource ? { durationSource: d.durationSource } : {}),
     overlayDurationMs: d.overlayDurationMs,
     ...(d.overlaySource ? { overlaySource: d.overlaySource } : {}),
-    ...optionalFields(spec, { inferredTarget, permanent, messageDriven, caster })
+    ...optionalFields(spec, {
+      inferredTarget,
+      permanent,
+      permanentSource,
+      messageDriven,
+      caster,
+      calmsTarget: calms
+    })
   }
 }

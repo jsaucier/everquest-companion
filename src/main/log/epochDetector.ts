@@ -76,8 +76,6 @@
 // gone rather than merely unread. And do not move `LAUNCH_MS` off LOCAL time to "tidy" it —
 // the anchor and the parser are deliberately on one clock (see the constant's own note).
 
-import { S, validate, type FoldSchema } from '../foldCache/schema'
-import type { FoldUnit } from '../foldCache/serialize'
 import type { LogEvent, EpochEvent } from '../../shared/logEvents'
 
 /**
@@ -98,33 +96,12 @@ export const LAUNCH_MS = new Date(2026, 6, 28, 0, 0, 0, 0).getTime()
  * FIRST event whose ts is at/after {@link LAUNCH_MS} returns the synthesized `EpochEvent` to
  * emit (once), else null. Reset per character (re)load.
  */
-export class EpochDetector implements FoldUnit {
-  /**
-   * CHECKPOINTED (JOS-208), and not because it publishes anything — it publishes nothing. One
-   * boolean, and leaving it out of a checkpoint made the fold WRONG in a measured, reproducible
-   * way: a fresh detector restored beside a restored fold re-fires the launch boundary at the first
-   * event of the TAIL, and an `epoch` event clears character-scoped state in half the modules in
-   * the tree. The differential harness caught it at every split point in every fixture on its first
-   * run. See `foldCache/serialize.ts` FoldUnit for the rule this is the reason for.
-   */
-  readonly id = 'epoch'
-  readonly foldSchema: FoldSchema = S.obj({ fired: S.bool })
-
+export class EpochDetector {
   /** True once the launch-boundary epoch has fired for this log (fires at most once). */
   private fired = false
 
   reset(): void {
     this.fired = false
-  }
-
-  serializeFold(): { fired: boolean } {
-    return { fired: this.fired }
-  }
-
-  deserializeFold(state: unknown): boolean {
-    if (!validate(this.foldSchema, state).ok) return false
-    this.fired = (state as { fired: boolean }).fired
-    return true
   }
 
   /**

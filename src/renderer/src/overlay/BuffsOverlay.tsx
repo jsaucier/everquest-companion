@@ -46,6 +46,7 @@ import {
   type TimerOverlayKind,
   buildTimerRows,
   dismissTimerRows,
+  filterPermanentRows,
   orderTimerRows,
   rowsForSurface,
   timerDrops,
@@ -257,11 +258,62 @@ function useDismissals(): { dismissals: TimerDismissals; dismiss: (row: BuffTime
   return { dismissals, dismiss }
 }
 
+/**
+ * ONE FOOTER CHIP, drawn twice (JOS-215). The arrangement toggle and the permanent-buff toggle are
+ * the same control — a two-state press whose LABEL states what you are looking at and whose title
+ * states what pressing it would do — so they are one component rather than two copies of thirty
+ * lines of inline style. `attr` carries the state the e2e reads, per chip.
+ */
+function FooterChip({
+  testId,
+  attr,
+  label,
+  title,
+  dim = false,
+  onPress,
+  noDrag
+}: {
+  testId: string
+  attr: Record<string, string>
+  label: string
+  title: string
+  /** Draw it faded — the "this is currently off" reading, for a chip whose two states are on/off. */
+  dim?: boolean
+  onPress: () => void
+  noDrag: React.CSSProperties
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      {...attr}
+      title={title}
+      onClick={onPress}
+      style={{
+        ...noDrag,
+        flexShrink: 0,
+        background: 'transparent',
+        border: '1px solid rgba(255,255,255,0.14)',
+        borderRadius: 4,
+        color: dim ? 'rgba(255,255,255,0.38)' : 'rgba(255,255,255,0.7)',
+        fontSize: 9,
+        letterSpacing: 0.4,
+        textTransform: 'uppercase',
+        padding: '1px 5px',
+        cursor: 'pointer'
+      }}
+    >
+      {label}
+    </button>
+  )
+}
+
 /** Footer — interactive mode only: the bg-alpha slider + text size, matching every other kind. */
 function BuffsFooter({
   bgAlpha,
   textScale,
   grouping,
+  showPermanent,
   patch,
   noDrag,
   accent
@@ -269,6 +321,7 @@ function BuffsFooter({
   bgAlpha: number
   textScale: number
   grouping: TimerGrouping
+  showPermanent: boolean
   patch: OverlayChrome['patch']
   noDrag: React.CSSProperties
   accent: string
@@ -305,34 +358,39 @@ function BuffsFooter({
           two answers and the label states the one you would get by pressing it, which is the same
           shape the lock pin already uses. It writes through the SAME persisted per-kind config as
           the alpha slider beside it, so each window remembers its own answer. */}
-      <button
-        type="button"
-        data-testid="buff-timer-grouping"
-        data-grouping={grouping}
+      <FooterChip
+        testId="buff-timer-grouping"
+        attr={{ 'data-grouping': grouping }}
+        label={grouping === 'none' ? 'time left' : 'by target'}
         title={
           grouping === 'none'
             ? 'Sorted by time left. Press to group by target instead.'
             : 'Grouped by target. Press to sort by time left instead.'
         }
-        onClick={() => {
+        onPress={() => {
           patch({ grouping: grouping === 'none' ? 'target' : 'none' })
         }}
-        style={{
-          ...noDrag,
-          flexShrink: 0,
-          background: 'transparent',
-          border: '1px solid rgba(255,255,255,0.14)',
-          borderRadius: 4,
-          color: 'rgba(255,255,255,0.7)',
-          fontSize: 9,
-          letterSpacing: 0.4,
-          textTransform: 'uppercase',
-          padding: '1px 5px',
-          cursor: 'pointer'
+        noDrag={noDrag}
+      />
+      {/* THE PERMANENT BUFFS (JOS-215), the same two-state shape and the same persisted per-kind
+          config. Hidden is the owner's default — a buff with no clock is not what a timer window is
+          watched for — so the label reads `perm` dimmed until you ask for it, and the state is on
+          the element for the e2e to read rather than inferred from the word. */}
+      <FooterChip
+        testId="buff-timer-permanent"
+        attr={{ 'data-show-permanent': showPermanent ? 'true' : 'false' }}
+        label="perm"
+        dim={!showPermanent}
+        title={
+          showPermanent
+            ? 'Showing buffs that never expire. Press to hide them.'
+            : 'Buffs that never expire are hidden. Press to show them.'
+        }
+        onPress={() => {
+          patch({ showPermanent: !showPermanent })
         }}
-      >
-        {grouping === 'none' ? 'time left' : 'by target'}
-      </button>
+        noDrag={noDrag}
+      />
       <TextScaleStepper textScale={textScale} patch={patch} noDrag={noDrag} />
     </div>
   )
@@ -388,18 +446,35 @@ export default function BuffsOverlay({ kind }: { kind: TimerOverlayKind }): JSX.
 
   // ABSENT means "this window's default", which is not the same for both — see SURFACE.
   const grouping = config?.grouping ?? surface.grouping
+  // ABSENT MEANS HIDDEN (JOS-215, owner ruling) — the same answer for both windows, so unlike the
+  // arrangement above it needs no per-surface row.
+  const showPermanent = config?.showPermanent === true
   const { dismissals, dismiss } = useDismissals()
   // THE DISMISSALS ARE THE LAST STEP, over the ordered rows of THIS surface: everything downstream
   // — the groups, the header's count, the drop flash — is then talking about what is on screen.
+  // The permanent filter is the FIRST, ahead of the sort, for the same reason.
   const rows = useMemo(
-    () => dismissTimerRows(orderTimerRows(rowsForSurface(buildTimerRows(buffs, timers), kind), grouping), dismissals),
-    [buffs, timers, kind, grouping, dismissals]
+    () =>
+      dismissTimerRows(
+        orderTimerRows(
+          filterPermanentRows(rowsForSurface(buildTimerRows(buffs, timers), kind), showPermanent),
+          grouping
+        ),
+        dismissals
+      ),
+    [buffs, timers, kind, grouping, showPermanent, dismissals]
   )
   const groups = useMemo(() => groupRows(rows, surface.selfLabel, grouping), [rows, surface.selfLabel, grouping])
   // ONE COUNTER OVER BOTH MODULES: either one re-hydrating is a rebuilt row set, and the two
   // snapshots land as two separate promises — so a sum, which changes on each of them. The
   // dismissal count joins it for the same reason (JOS-203): a row the user cleared did not drop.
-  const drops = useDropFlash(rows, nowMs, buffsHydrations + timersHydrations + dismissals.size)
+  // …and so does the permanent switch (JOS-215): hiding the roster removes rows, and "Yaulp
+  // dropped" is exactly what the window must not say about a preference the user just set.
+  const drops = useDropFlash(
+    rows,
+    nowMs,
+    buffsHydrations + timersHydrations + dismissals.size + (showPermanent ? 1 : 0)
+  )
 
   return (
     <div
@@ -469,6 +544,7 @@ export default function BuffsOverlay({ kind }: { kind: TimerOverlayKind }): JSX.
           bgAlpha={bgAlpha}
           textScale={textScale}
           grouping={grouping}
+          showPermanent={showPermanent}
           patch={patch}
           noDrag={noDrag}
           accent={surface.accent}

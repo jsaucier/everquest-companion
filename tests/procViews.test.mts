@@ -183,7 +183,7 @@ test('a heal-ONLY proc still counts once — max, never the damage side alone', 
   // lines on the spell-proc side — and the rule is `max`, never `damageHits`.
   const lanes = new Map<string, SpellProcLane>()
   for (let i = 0; i < 13; i++) {
-    addSpellProc(lanes, { spell: 'Center', amount: 66, isHeal: true, active: new Set<string>() })
+    addSpellProc(lanes, { spell: 'Center', side: 'heal', amount: 66, active: new Set<string>() })
   }
   const lane = lanes.get('center')
   assert.ok(lane)

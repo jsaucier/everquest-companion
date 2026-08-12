@@ -4,8 +4,9 @@
 // DB-gated message-driven buff events, and — matched LAST of all — spell-landing emotes.
 // Every regex, table and comment here is verbatim from the single-pass parser.
 
-import type { LogEvent, PetSayKind } from '../../shared/logEvents'
+import type { CcVerb, LogEvent, PetSayKind } from '../../shared/logEvents'
 import { PET_LEADER_RE, PET_SAY_LINES, PET_SAY_RE } from '../../shared/logScrub'
+import { isPlayerShapedName } from '../../shared/playerShape'
 import type { PoisonProcDef } from '../../shared/poisons'
 import { POISON_BY_COAT_MSG, POISON_DRY_MSG, POISON_PROCS } from '../../shared/poisons'
 import { matchCastOnOtherSuffix } from '../data/spellDb'
@@ -18,7 +19,10 @@ const UNCHARM_RE = /^Your (.+?) spell has worn off of (.+?)\.$/
 // siblings. Charm is handled separately (CHARM_RE); the DoT-application shapes
 // (poisoned/diseased) and unrelated spell notices (smitten/overwritten) are NOT CC
 // and are excluded. `ensnared` is a root (a hold), so it counts.
-const CC_APPLY_RE = /^(.+?) has been (?:mesmerized|enthralled|entranced|ensnared)\.$/
+// The verb is CAPTURED since JOS-228: three of these four sentences describe a hold that damage
+// breaks and one does not, and the model needs the word to tell a corpse it can explain from one
+// it cannot (`CcEvent.verb` states the whole argument).
+const CC_APPLY_RE = /^(.+?) has been (mesmerized|enthralled|entranced|ensnared)\.$/
 // The CC BREAK ANNOTATION (JOS-180): "<mob> has been awakened by <name>." — one shape, measured
 // over the whole log (1,518 occurrences, zero variants; `by` is the player 1,364 times, a group
 // member or a mob for the rest). It was `{kind:'unknown'}` before this rule existed, so it can
@@ -224,7 +228,54 @@ export function classifyCharm({ text, ts, seq, raw, cfg }: ClassifyCtx): LogEven
       ...(cands ? { candidates: cands.map((s) => ({ name: s.name, durationMs: s.durationMs })) } : {})
     }
   }
-  return null
+  return classifyNonEnchanterCharm({ text, ts, seq, raw, cfg })
+}
+
+/**
+ * THE OTHER TWO CHARM LANDINGS (JOS-250 charm roster research 2026-08-12) —
+ * `<mob> blinks.` (Druid/Shaman) and `<mob> moans.` (Necromancer charm-undead).
+ *
+ * `<mob> has been charmed.` is the ENCHANTER family and nothing else, which quietly made every
+ * charm inference in this app enchanter-only: the charm hold (JOS-140), the ownership model
+ * (Task #65) and the ally attribution (JOS-250) all key off the `charm` EVENT, and a druid's
+ * charm never produced one. A druid charming for your group contributed exactly as much as they
+ * did before any of that work existed.
+ *
+ * THE ADMISSION TEST IS THE FAMILY'S PURITY, NOT THE SENTENCE. These two lines are far more
+ * generic than "has been charmed", so the rule refuses unless the DB's own candidate list for the
+ * matched suffix is entirely charm-family (`cfg.charmSpell`, the audited roster). Measured in the
+ * committed spells.json: `Someone blinks.` is 7/7 castable charms (Befriend Animal 13 → Tunare`s
+ * Request 55) and `Someone moans.` is 5/5 (Dominate Undead 18 → Enslave Death 60). If a future
+ * scrape puts a non-charm under either sentence, the purity test fails and the line falls through
+ * to `classifyDbBuff` exactly as it does today — the rule shrinks itself rather than misfiling.
+ *
+ * DB-GATED, so with no spell DB installed this branch cannot fire and the parser is byte-identical
+ * to what it was — the same construction `classifyCcApply`'s and `classifyCharm`'s candidate lists
+ * already use.
+ *
+ * IT SHADOWS `classifyDbBuff` FOR THESE LINES, on purpose: they used to parse as `buffApply` with
+ * the same candidate list, which no consumer routed anywhere (none is in DISPEL_FAMILY,
+ * PROC_BUFF_CATALOG, SELF_LANDING_PROCS or PET_TARGET_SPELLS). MEASURED before making the swap:
+ * the owner's whole log holds ZERO lines ending ` blinks.` or ` moans.`, and so does every
+ * committed fixture — so this rule is STRUCTURALLY covered, changes not one number in any golden,
+ * and is the awaiting-sample law's "say which" rather than a claim of verification.
+ */
+function classifyNonEnchanterCharm({ text, ts, seq, raw, cfg }: ClassifyCtx): LogEvent | null {
+  if (!text.endsWith(' blinks.') && !text.endsWith(' moans.')) return null
+  const db = cfg.spellDb
+  if (!db) return null
+  const hit = matchCastOnOtherSuffix(text, db)
+  if (!hit) return null
+  const cands = hit.entry.cands
+  if (cands.length === 0 || !cands.every((s) => cfg.charmSpell.test(s.name))) return null
+  return {
+    kind: 'charm',
+    seq,
+    ts,
+    raw,
+    mob: norm(hit.target),
+    candidates: cands.map((s) => ({ name: s.name, durationMs: s.durationMs }))
+  }
 }
 
 /**
@@ -291,6 +342,7 @@ export function classifyCcApply({ text, ts, seq, raw, cfg }: ClassifyCtx): LogEv
       ts,
       raw,
       mob: norm(m[1]),
+      verb: m[2] as CcVerb,
       ...(cands ? { candidates: cands.map((s) => ({ name: s.name, durationMs: s.durationMs })) } : {})
     }
   }
@@ -376,6 +428,46 @@ export function classifyPetLeader({ text, ts, seq, raw, cfg }: ClassifyCtx): Log
   // Case-insensitive like every other name comparison in this parser (world-model law 2).
   if (m[2].toLowerCase() !== self.trim().toLowerCase()) return null
   return { kind: 'petClaim', seq, ts, raw, name: norm(m[1]), via: 'leader' }
+}
+
+/**
+ * THE SAME ANSWER, ABOUT SOMEBODY ELSE (JOS-250) — `<PetName> says, 'My leader is <Player>.'`
+ * where `<Player>` is NOT the tailed character.
+ *
+ * `classifyPetLeader` above declines these, on purpose and correctly: nothing in this app used to
+ * have a use for a stranger's pet, and a `petClaim` naming one would have been bound to YOU by
+ * five different models. JOS-250 gives it a use — the ally-charm attribution model, which credits
+ * a third party's charm pet to that third party and never to you — so the line gets its OWN kind
+ * (`allyPetLeader`) rather than a flag on the one everything else reads.
+ *
+ * IT MUST RUN AFTER `classifyPetLeader`, which is why it sits directly beneath it in the cascade:
+ * the two are the same sentence and are separated only by WHOSE name is in the second capture, so
+ * the self rule has to be offered the line first or your own pet would arrive as a stranger's.
+ *
+ * THE CHARACTER NAME IS STILL LOAD-BEARING even though this rule refuses it. With no character
+ * installed, `classifyPetLeader` declines EVERY line (its own safe default), so without this guard
+ * this rule would claim the user's own `/pet who leader` answer and file the user's own pet as an
+ * ally's. Declining while the name is unknown keeps the pair's precedence honest in both states.
+ *
+ * THE LEADER MUST BE PLAYER-SHAPED (shared/playerShape.ts). `says` is a broadcast channel and the
+ * whole log's mob speech goes through it; a leader capture that admitted `a fire giant warrior`
+ * would invent a charmer out of a growl.
+ *
+ * NO REAL THIRD-PARTY OCCURRENCE EXISTS IN THE OWNER'S LOG (whole-log sweep, 1,608,483 lines,
+ * 2026-08-12: one `says, 'My leader is …'` line in total, and it names the owner). See
+ * `AllyPetLeaderEvent` for what that means for the evidence standing behind this rule.
+ */
+export function classifyAllyPetLeader({ text, ts, seq, raw, cfg }: ClassifyCtx): LogEvent | null {
+  const self = cfg.characterName
+  if (self === undefined || self === '' || !text.includes(" says, 'My leader is ")) return null
+  const m = PET_LEADER_RE.exec(text)
+  if (!m) return null
+  const owner = m[2]
+  // The self form belongs to classifyPetLeader (which ran first); restated here so the two rules
+  // cannot both claim a line if the cascade is ever reordered.
+  if (owner.toLowerCase() === self.trim().toLowerCase()) return null
+  if (!isPlayerShapedName(owner)) return null
+  return { kind: 'allyPetLeader', seq, ts, raw, pet: norm(m[1]), owner: norm(owner) }
 }
 
 /**

@@ -27,7 +27,8 @@ import {
   routeDry,
   routeProc,
   routeProcBuffApply,
-  routeProcBuffWearOff
+  routeProcBuffWearOff,
+  routeSelfLandingProc
 } from './procRouting'
 import {
   QUICK_BUFF_AA,
@@ -36,6 +37,13 @@ import {
   procEligibleDamage,
   type SpellOrigin
 } from './procDetect'
+// SOMEBODY ELSE'S CHARM PET (JOS-250) — its own module, for the reason its header states: it is
+// one feature whose four ingest handlers and two routing paths would otherwise push both this file
+// and routing.ts past the measured 400-line ceiling.
+import { ingestAllyPetLeader, ingestForeignCharm, ingestOtherCastBegin } from './allyRouting'
+// …and its sibling: the three lines that bind one of YOUR pets, extracted VERBATIM by the same
+// split (petClaims.ts). Two ownership features, two modules, one dispatch switch.
+import { bindPetBuffLanding, ingestPetClaim } from './petClaims'
 import { CC_HOLD_MS } from './encounter'
 import { Agg, type DamageEvent } from './aggregate'
 import type { WindowFold } from './procWindows'
@@ -50,7 +58,6 @@ import type {
   LogEvent,
   MissEvent,
   MitigationEvent,
-  PetClaimEvent,
   SpecialAttackEvent
 } from '../../shared/logEvents'
 
@@ -95,129 +102,18 @@ function ingestCc(st: EngineState, ev: CcEvent): void {
 function ingestCharm(st: EngineState, ev: CharmEvent): void {
   const key = idKey(ev.mob)
   if (st.charm.charmBroadcast(key, ev.mob, ev.ts) === 'foreign') {
-    st.log(ev.ts, 'charm', 'dropped', `⚡ ${ev.mob} charmed by someone else - not your pet`)
+    ingestForeignCharm(st, ev, key)
     return
   }
+  // YOUR charm wins outright over any ally bind of the same mob. It can happen — you charm what
+  // somebody else's charm just broke off — and two models both calling one entity a pet is exactly
+  // the duplicated-ownership shape law 4 is a scar from.
+  st.ally.release(key)
   const inst = st.world.charm(ev.mob, ev.ts)
   st.notePet(key)
   st.log(ev.ts, 'charm', 'info', `⚡ charmed ${st.world.label(inst)} [${inst.instanceId}]`)
 }
 
-/** How a pet came to be bound. Only the debug line reads it — every route below is the same
- *  state transition, on purpose (a second retirement path is what law 4 is a scar from). */
-type ClaimVia = PetClaimEvent['via'] | 'petBuff'
-
-const CLAIM_NOTE: Record<ClaimVia, string> = {
-  tell: '',
-  leader: ' (it named you its leader)',
-  petBuff: ' (you cast a pet-only spell on it)'
-}
-
-/**
- * A pet identified you as its owner, so the named entity is your pet. THREE lines produce this
- * one transition, and this function deliberately does not care which — `via` reaches the debug
- * line and nothing else:
- *
- *   via 'tell'    `<Name> told you, '… Master.'` — private, unforgeable, but only ever sent by a
- *                 pet you have ORDERED.
- *   via 'leader'  `<Name> says, 'My leader is <You>.'` — the `/pet who leader` answer (JOS-52),
- *                 the on-demand way out of that blind spot. Broadcast, so the parser has already
- *                 refused every one of these that named anyone but the tailed character; by the
- *                 time it arrives here it is the same fact the tell states.
- *   via 'petBuff' a named landing that resolved YOUR OWN cast of a `targetType: Pet` spell
- *                 (JOS-188 — bindPetBuffLanding below). The one route that needs nothing of the
- *                 player but the buff they were casting anyway.
- *
- * Ownership-DEFINITIVE and pet-only, which is why it also PROMOTES: a name we saw charmed but
- * declined to bind (no own cast behind the broadcast) is bound HERE, and bound as CHARMED rather
- * than summoned — AGENTS.md's rule that a claim from a name ever seen charmed re-arms the
- * charmed set, never the permanent one.
- *
- * Otherwise it binds a SUMMONED pet (idempotent; a charmed mob sends the tell too — the real log
- * shows both — and world.claim() leaves an already-charmed instance's petKind alone, so a
- * charmed pet is never reclassified as summoned). It adds the name to the ATTRIBUTION set only.
- */
-function bindPetClaim(st: EngineState, name: string, ts: number, via: ClaimVia): void {
-  const key = idKey(name)
-  const promote = !st.world.petInstance(name) && st.charm.claimIsCharmed(key, ts)
-  const inst = promote ? st.world.charm(name, ts) : st.world.claim(name, ts)
-  st.notePet(key)
-  // The claim is also the corroboration a provisional charm bind was waiting for.
-  st.charm.notePetEvidence(key)
-  const what = promote ? 'charm claim' : 'pet claim'
-  st.log(ts, promote ? 'charm' : 'pet', 'info', `⚡ ${what} ${st.world.label(inst)} [${inst.instanceId}]${CLAIM_NOTE[via]}`)
-  // SINGLE-PET SUCCESSION (JOS-54): claiming a NEW summoned pet retires the previous one inside
-  // the world model, and the name index has to follow it out or routing would go on admitting
-  // the retired pet's swings as yours. Same two-line follow-through death already does — the
-  // world model decides, `petNames` and the charm model are told.
-  for (const gone of st.syncPetNames()) {
-    st.charm.release(gone)
-    st.log(ts, 'pet', 'info', `✕ ${gone} retired - one pet at a time; ${name} is yours now`)
-  }
-}
-
-function ingestPetClaim(st: EngineState, ev: PetClaimEvent): void {
-  bindPetClaim(st, ev.name, ev.ts, ev.via)
-}
-
-/**
- * THE UPGRADED PET (JOS-188) — `You begin casting Burnout.` … `<Name> goes berserk.`
- *
- * The reported defect: a magician upgraded a level-10 water elemental to a level-14 one and the
- * new pet never appeared in the meter; relogging did not help. Nothing was broken. The JOS-54
- * succession law never RAN, because succession is triggered by the successor's own claim and an
- * upgraded summon produces none: `world.claim()` binds a NAME, the new pet has a different one,
- * and the only two binding lines the app had both require the player to TALK to the pet. The
- * reporter's 30-minute slice holds 2,446 lines, two pets and ZERO tells — replayed through this
- * engine before the fix it ends with `petDisplayNames() === []` and one row, You. The successor
- * landed 89 hits / 3,385 points into nobody's column; the predecessor's 187 / 5,698 sat frozen
- * in a row that had stopped growing, which is exactly what "they stop showing up" describes.
- *
- * THE THIRD BINDING SIGNAL, and the first that costs the player nothing. 40 spells in the DB are
- * `targetType: Pet` (charmModel.ts PET_TARGET_SPELLS) and the game will not let one land on
- * anything but your own pet; `You begin casting <Spell>.` is printed for the player and NOBODY
- * else. So the pair — own cast, then a landing that resolves it — names your pet as surely as
- * the tell does, and it fires at the moment a summoner buffs the pet they just summoned rather
- * than at the moment they first order it.
- *
- * MEASURED, owner's whole log (1,557,569 lines): 19 binds, 14 distinct names, and every one of
- * the 14 is a name a `… Master.'` tell ALSO bound — no name is bound by this rule alone, and no
- * bind contradicts one. In all 14 this arrives FIRST, by 81 s to 2,528 s, and the damage those
- * pets landed in the gaps is 1,865 hits / 27,088 points the meter throws away today (Giber
- * alone: 947 hits / 11,636 points over 42 minutes). On the reporter's slice it binds Jabektik at
- * 11:26:40, ten seconds before its first swing.
- *
- * THE MESSAGE IS NOT THE GATE — the armed own cast is. `goes berserk.` resolves to
- * Burnout / Fury / Rage / Voice of the Berserker and only Burnout is a pet spell, so the
- * candidate list must contain the spell we are mid-cast of. That is `charmBroadcast`'s test with
- * one more field, and for the same reason: a caster-less line is ours only when it resolved one
- * of our own casts.
- *
- * WHAT IT DOES NOT FIX, stated rather than papered over: a player who casts no pet-only buff
- * still has a pet the log cannot bind until they order it (JOS-49's accepted blind spot). Report
- * 01KZN569YA6T751QCJW99P1ZCA is that case — its pet buffs (`Spirit of the Puma`, `Spiritual
- * Brawn`, `Inner Fire`) are not `targetType: Pet`, so this rung produces zero binds there and
- * its three `told you, 'Attacking … Master.'` tells remain the only evidence in it. Same root
- * cause, different half: the answer for them is still to order it once.
- *
- * AND IT IS THE COMBAT MODEL'S BIND ONLY. `modules/buffs.ts` runs its own entity-level pet
- * succession off the `petClaim` LOG EVENT (AGENTS.md law 4: two models, different reach, by
- * measurement rather than oversight), and this rung produces no such event — it is a state
- * transition inside the engine, not a line the parser can emit, because the arm is per-stream
- * state and `parseEvent` is per-line. So the buff module's pet slot still waits for the tell,
- * exactly as it did before this ticket: no worse, not yet better. Making it better means either
- * a derived-event seam the session feeds to both, or a second arm in the buffs module — and a
- * second arm is precisely the duplicated retirement path law 4 is a scar from, so it does not
- * get built on the way past without its own measurement.
- */
-function bindPetBuffLanding(st: EngineState, ts: number, target: string, spellNames: readonly string[]): void {
-  if (!st.charm.petBuffLanding(spellNames, ts)) return
-  // A landing on YOURSELF is a self-buff the DB mislabels, never a pet (the parser emits
-  // target 'self' for the msgCastOnYou form, but the third-person form can still name you when
-  // another player's buff lands on you in the same second).
-  if (target === '' || idKey(target) === st.playerKey) return
-  bindPetClaim(st, target, ts, 'petBuff')
-}
 
 // THE ENGINE NO LONGER CONSUMES `petSay` (JOS-49). The six pet-voiced public sentences used to
 // NOMINATE — pairing one with "…and it is fighting your target" was what let the meter ask about
@@ -237,6 +133,13 @@ function bindPetBuffLanding(st: EngineState, ts: number, target: string, spellNa
 
 function ingestDeath(st: EngineState, ev: DeathEvent): void {
   const key = idKey(ev.name)
+  // A DEAD PET IS NOT A PET (JOS-250). Unconditional and by NAME, unlike the world model's
+  // careful pet-vs-twin disambiguation below: an ally bind is name-keyed to begin with, so if the
+  // log says something of that name died, the honest reading is that the bind is over. Erring
+  // toward ending it is the safe direction here — the failure it prevents is crediting a stranger
+  // with a corpse's damage, and the failure it risks is losing a few seconds of a survivor's.
+  const goneAlly = st.ally.release(key)
+  if (goneAlly) st.log(ev.ts, 'charm', 'dropped', `✕ ${goneAlly.display} died - ${goneAlly.charmer}'s pet is gone`)
   const killerKey = ev.bySelf ? 'you' : ev.killer ? idKey(ev.killer) : undefined
   const res = st.world.death(ev.name, ev.ts, killerKey)
   // Keep the fast pet-name set in lockstep: only drop the name from the
@@ -270,6 +173,9 @@ function ingestWorld(st: EngineState, ev: LogEvent): boolean {
       st.petNames = new Set()
       st.world.reset()
       st.charm.reset()
+      // …and the ally binds with them: they describe people standing beside a character that is
+      // not this one. The friendly set goes too, because `reset()` is a whole-model wipe.
+      st.ally.reset()
       // An epoch severs every active-state span: the beta character's stances, coats and buffs
       // are not this character's. CENSORED, never 'observed' (proc-analytics §3.1 boundaries).
       st.stateTimeline.censorAll(ev.ts)
@@ -299,6 +205,9 @@ function ingestWorld(st: EngineState, ev: LogEvent): boolean {
       const survivors = st.world.zone(ev.ts)
       st.petNames = new Set(survivors.map((i) => i.nameKey))
       st.charm.zone(survivors.map((i) => i.nameKey))
+      // Somebody else's charm cannot survive a zone either, and neither can a cast in flight.
+      // The friendly SET survives (allyCharms.zone) — it is about people, not about the room.
+      st.ally.zone()
       st.log(ev.ts, 'zone', 'info', `▸ entered ${ev.zone}`)
       return true
     }
@@ -307,6 +216,9 @@ function ingestWorld(st: EngineState, ev: LogEvent): boolean {
       return true
     case 'petClaim':
       ingestPetClaim(st, ev)
+      return true
+    case 'allyPetLeader':
+      ingestAllyPetLeader(st, ev)
       return true
     case 'uncharm': {
       // `Your <charm spell> spell has worn off of <mob>` — only the CASTER sees this, so it is
@@ -473,7 +385,7 @@ function foldDamageAnalytics(st: EngineState, f: DamageFold): void {
     agg.windows.fold(fold, active)
     agg.procs.addActiveMs(activeDeltaMs, active)
     if (a.swing) agg.procs.addSwing(active)
-    if (a.proc) agg.procs.addSpellProc({ spell: ev.skill, amount: ev.amount, isHeal: false, active })
+    if (a.proc) agg.procs.addSpellProc({ spell: ev.skill, side: 'damage', amount: ev.amount, active })
   })
   if (p) p.leave()
 }
@@ -490,7 +402,7 @@ function foldHealAnalytics(st: EngineState, ev: HealEvent): void {
   const p = st.probe
   if (p) p.enter(SEC_ANALYTICS)
   foldBoth(st, ev.ts, (agg, active) => {
-    agg.procs.addSpellProc({ spell, amount: ev.amount, isHeal: true, active })
+    agg.procs.addSpellProc({ spell, side: 'heal', amount: ev.amount, active })
   })
   if (p) p.leave()
 }
@@ -631,6 +543,12 @@ function ingestCast(st: EngineState, ev: LogEvent): boolean {
       st.recentCasts.forget(ev.spell)
       st.charm.noteCastFailed(ev.spell, ev.ts)
       return true
+    case 'otherCastBegin':
+      // THE LINE COMBAT NEVER INGESTED (JOS-250 — allyRouting.ts). The only sentence in this log
+      // that says who ELSE is casting what, and therefore the only thing that can name the owner
+      // of a caster-less `<mob> has been charmed.` broadcast.
+      ingestOtherCastBegin(st, ev)
+      return true
     case 'castResumed':
       // `You regain your concentration and continue your casting.` — the interrupted cast is
       // back on and will land, so give it back its claim. Deliberately does NOT re-arm the
@@ -708,10 +626,12 @@ function ingestModifier(st: EngineState, ev: LogEvent): void {
       // buffed entity is. A third disjoint gate over one event, and the only one that binds.
       if (ev.target !== 'self') bindPetBuffLanding(st, ev.ts, ev.target, names)
       routeDispelLanding(st, ev.ts, ev.target, names)
-      // The SAME landing stream also carries the tracked proc-buff spans (§3.2). Two disjoint
-      // curated gates over one event: DISPEL_FAMILY names a lane on a mob, PROC_BUFF_CATALOG
-      // opens a self-buff span. Neither can consume the other's lines.
+      // The SAME landing stream also carries the tracked proc-buff spans (§3.2), and — JOS-246 —
+      // the procs whose ONLY printed evidence IS a landing. Three disjoint curated gates over one
+      // event: DISPEL_FAMILY names a lane on a mob, PROC_BUFF_CATALOG opens a self-buff span, and
+      // SELF_LANDING_PROCS counts a firing. None can consume another's lines.
       routeProcBuffApply(st, ev.ts, ev.target, names)
+      routeSelfLandingProc(st, ev.ts, ev.target, names)
       return
     }
     case 'buffWearOff':
@@ -781,6 +701,9 @@ function ingestOne(st: EngineState, ev: LogEvent, live: boolean): void {
   // driven from the event stream and from snapshot(now) — whichever observes the deadline
   // first. Guarded on an empty-map read, so the ordinary line costs nothing.
   st.sweepCharm(ev.ts)
+  // The ally binds age out on the same log clock (JOS-250) — a charm cannot outlive its own
+  // spell, so the hold is a certainty rather than a heuristic and needs no evidence to fire.
+  st.sweepAlly(ev.ts)
   if (ingestWorld(st, ev)) return
   if (ingestCombat(st, ev)) return
   if (ingestCast(st, ev)) return

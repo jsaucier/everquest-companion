@@ -305,7 +305,7 @@ function ModePane({
     <EffectBrowser
       plan={plan}
       preset={browsing}
-      onClearPreset={() => setBrowsing(null)}
+      onPreset={setBrowsing}
       onSocket={plans.setSocket}
       onOpenLoot={onOpenLoot}
     />

@@ -6,6 +6,7 @@
 import { spellCanonKey } from '../log/parser'
 import { RECONNECT_WINDOW_MS } from '../log/sessionDetector'
 import type { EntityDisposition } from '../combat/entityRules'
+import type { EstimatorSource } from '../../shared/buffTypes'
 import type { HoldGroup } from './buffRounds'
 
 /** Land a pending cast this many ms after castBegin if nothing cleared it first. */
@@ -60,6 +61,12 @@ export const LOGIN_CONFIRM_MS = RECONNECT_WINDOW_MS
  *
  *   'observed' ⇒ 15 s. The number came from this caster's own clean cycles, so the only thing
  *                left to be late is the LINE.
+ *   'cluster'  ⇒ 15 s, for the same reason and with more evidence behind it (JOS-212): a below-
+ *                floor overrule requires three agreeing clean cycles, which is the strongest
+ *                statement this model ever makes about a duration. A cull is still not evidence
+ *                and mints nothing, and the LEARNING RECORD outlives it on the floor's scale
+ *                ({@link learningRecordCapMs}), so a genuinely longer cycle can still be measured
+ *                later and lift the estimate back out.
  *   'db'       ⇒ 60 s. A minute past a stated end is long enough for a line that is merely late
  *                and short enough that a stale row is never a fixture of the window.
  *
@@ -89,8 +96,8 @@ export const LOGIN_CONFIRM_MS = RECONNECT_WINDOW_MS
  * it arrived. And a cull is NOT EVIDENCE: it mints no duration sample and counts as no break,
  * because nothing was observed. That is the whole difference between it and a wear-off.
  */
-export function unwitnessedTimeoutMs(source: 'db' | 'observed' | undefined): number {
-  return source === 'observed' ? 15_000 : 60_000
+export function unwitnessedTimeoutMs(source: EstimatorSource | undefined): number {
+  return source === 'observed' || source === 'cluster' ? 15_000 : 60_000
 }
 
 /**
@@ -150,6 +157,93 @@ export const EMOTE_MIN_OBSERVATIONS = 2
  */
 export const RECENT_SAMPLE_WINDOW = 5
 
+/**
+ * THE BELOW-FLOOR OVERRULE (JOS-212, owner ruling 2026-08-12) — the two numbers that decide when
+ * the app is allowed to believe its own stopwatch over the spell database.
+ *
+ * WHY IT EXISTS. `SpellStats.estimateFor` treats the DB duration as a hard FLOOR on the argument
+ * that a beneficial buff's real duration is never below its base, because AA and focus only
+ * EXTEND. That is true of the game the wiki describes. The committed spells.json is a CLASSIC-ERA
+ * scrape and EverQuest Legends re-tiered spells, so for a whole population of rows the floor is
+ * simply a wrong number — and the floor, being a max, is unfalsifiable by any amount of evidence.
+ * The reported symptom (JOS-212) is a Shield of Fire bar drawing 15:00 for a spell whose own log
+ * says 6:48, twice, to within half a percent.
+ *
+ * WHY A CLUSTER AND NOT A SINGLE SAMPLE. The floor's counterexample is real and must survive: a
+ * buff you click off whenever you happen to need it mints short samples that are not durations at
+ * all, and the estimator must not collapse onto them. Measured over the owner's whole log
+ * (1.59M lines, 66 learned rows, 20 of them below their floor) the two populations SEPARATE on the
+ * spread of the top three clean cycles:
+ *
+ *   TIMERS RUNNING OUT   Celerity 0.3% · Feedback 1.3% · Alacrity 2.2% · Cajoling Whispers 2.3% ·
+ *                        Beguile 7.4% · Charm 7.9% · Tashina 8.6%
+ *   ────────── the gap the threshold sits in ──────────
+ *   BUFFS BEING CLICKED  Quickness 12.2% · Languid Pace 13.2% · Improved Invisibility 29.4% ·
+ *                        Invisibility 161.4% · Invisibility Vs Undead 172.4%
+ *
+ * So {@link BELOW_FLOOR_MAX_SPREAD} is 10%: it is the empty middle of that measurement, not a
+ * round number somebody liked. {@link BELOW_FLOOR_MIN_SAMPLES} is 3 because two agreeing cycles
+ * are also what two click-offs of the same habit look like — and because the owner's ruling names
+ * it. The cost is stated: a spell is drawn at its DB floor until its third clean cycle lands, and
+ * then self-heals (Shield of Fire's report is exactly one cycle short of the evidence bar).
+ *
+ * THE POOL IS THE RECENCY WINDOW, AND THAT CHANGES THE ANSWER FOR THREE SPELLS. The table above
+ * is the top three of ALL of each spell's clean samples; the rule reads the last
+ * {@link RECENT_SAMPLE_WINDOW} clean cycles instead. Re-measured through the rule as built
+ * (2026-08-12, 1.60M lines, both halves of the model): FOUR rows flip — Alacrity 11:00 ⇒ 6:58,
+ * Celerity 16:00 ⇒ 15:01, Feedback 15:00 ⇒ 14:45, Tashina 11:00 ⇒ 5:04 — and the CHARM family does
+ * NOT, because its recent cycles scatter (Charm 1271%, Beguile 89.6%, Cajoling Whispers 40.8%).
+ * Charm breaks; that is what charm does. Keeping the window is deliberate on two grounds: it is
+ * the estimator's own law, and an all-time top-three is an order statistic that gets tighter as n
+ * grows for ANY distribution — Charm's three luckiest holds out of 52 sit 7.9% apart the way the
+ * three tallest people in a stadium are all about the same height. The window is what stops "cast
+ * it enough times" from being a way to defeat the floor.
+ *
+ * WHAT IS DELIBERATELY *NOT* GATED: a minimum below-floor MARGIN. Feedback sits 1% under its row
+ * and flips, moving a 15:00 bar to 14:51. If that 1% is really a systematic land-to-fade shortfall
+ * rather than a shorter spell, the estimate is wrong by nine seconds in the direction of expiring
+ * early — which is the harmless direction, and the honest one: it is what the log measured.
+ */
+export const BELOW_FLOOR_MIN_SAMPLES = 3
+export const BELOW_FLOOR_MAX_SPREAD = 0.1
+
+/**
+ * The relative spread of a set of samples: (max - min) / min. The measure the population above was
+ * separated on — a RATIO, so one threshold serves a 44-second mez and a 27-minute invisibility.
+ */
+export function relativeSpread(ms: readonly number[]): number {
+  if (ms.length === 0) return 0
+  let lo = ms[0]
+  let hi = ms[0]
+  for (const v of ms) {
+    if (v < lo) lo = v
+    if (v > hi) hi = v
+  }
+  return lo > 0 ? (hi - lo) / lo : Number.POSITIVE_INFINITY
+}
+
+/**
+ * THE CLUSTER TEST, pure: given the CLEAN samples of one recency window, is the largest of them
+ * corroborated well enough to overrule a DB floor? Returns that largest sample when it is, else
+ * null.
+ *
+ * THE SET TESTED IS THE TOP {@link BELOW_FLOOR_MIN_SAMPLES} BY VALUE, and the top always includes
+ * the number the app would draw — so the rule reads as: *the duration we are about to believe must
+ * be corroborated by the next two longest clean cycles we have.* Shorter samples in the window are
+ * ignored rather than counted against it, because a short cycle is exactly what an early
+ * termination is, and demanding that the click-offs agree too would make the rule unsatisfiable
+ * for the spells it exists for. What a click-off habit CANNOT fake is three near-identical
+ * maxima.
+ *
+ * CENSORED SAMPLES NEVER ENTER (the caller filters them): the log named a cause for those endings,
+ * so they are lower bounds on the duration and can neither corroborate a cluster nor break one.
+ */
+export function corroboratedMax(cleanWindow: readonly number[]): number | null {
+  if (cleanWindow.length < BELOW_FLOOR_MIN_SAMPLES) return null
+  const top = [...cleanWindow].sort((a, b) => b - a).slice(0, BELOW_FLOOR_MIN_SAMPLES)
+  return relativeSpread(top) <= BELOW_FLOOR_MAX_SPREAD ? top[0] : null
+}
+
 /** The activated-AA name whose burst of self-buff landing messages is trusted confident. */
 export const QUICK_BUFF = 'quick buff'
 /** How long after a Quick Buff activation its burst applies are attributed to it. */
@@ -208,7 +302,17 @@ export function instanceSpellKey(iKey: string): string {
  * The clean-cycle bookkeeping that decides whether a span may be learned from lives there too.
  */
 export interface OpenCast {
+  /**
+   * The spell's IDENTITY — the DB name a resolved landing carries (JOS-238), the joined family
+   * when the anchors could not narrow one. Never the ranked cast text; that is {@link castName}.
+   */
   spell: string
+  /**
+   * The RANKED text the cast line spelled (`Swift Like the Wind IV`), when a named anchor resolved
+   * this landing and the log wrote something the DB name does not (JOS-238). DISPLAY ONLY: nothing
+   * keys, matches, learns or emits off it — see `AdmittedLanding.spell` for what that cost before.
+   */
+  castName?: string
   /** rank-stripped spell key — the LINE, and half of the learner's key. */
   spellKey: string
   /** the entity this instance is on ('self' or a canonical name key). */

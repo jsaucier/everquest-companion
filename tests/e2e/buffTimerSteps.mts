@@ -79,3 +79,18 @@ export async function setTimerGrouping(overlay: Page, grouping: 'none' | 'target
     grouping
   )
 }
+
+/**
+ * Show or hide the buffs that never expire (JOS-215) — the footer's `perm` chip, through the same
+ * `overlay:setConfig` IPC it lands on, for the same reason `setTimerGrouping` above does: a hidden
+ * always-on-top window has no pointer to press a button with.
+ */
+export async function setShowPermanent(overlay: Page, show: boolean): Promise<void> {
+  await overlay.evaluate(
+    (v) =>
+      (window as unknown as { eqOverlay: { setConfig: (p: unknown) => Promise<unknown> } }).eqOverlay.setConfig({
+        showPermanent: v
+      }),
+    show
+  )
+}

@@ -8,7 +8,9 @@
 //   * the four steps that measure THE EFFECT LIST — the era filter, the non-equippable escape
 //     hatch, the focus-family fold and JOS-42's readability — which are all the same
 //     measurement (how tall is the list, what is on its rows) asked four ways, plus the DOM
-//     helpers that measurement needs.
+//     helpers that measurement needs, and
+//   * the two JOS-210 steps, which are that same measurement asked about the ITEM NARROWING: does
+//     it survive a kind switch (the bug), and can any item in the DB produce one (the feature).
 //
 // Everything downstream of "a donor has been added" — the Inventory tab, the host picker, the
 // socket preset, the Farm rollup and the Loot deep link — stays in the spec, because those steps
@@ -37,6 +39,13 @@ export const HOST_WORN = '[data-testid="planner-host-worn"]'
 export const INVENTORY_HELP = '[data-testid="planner-inventory-help"]'
 export const SOCKET_BROWSE = '[data-testid="planner-socket-browse"]'
 export const PRESET_CHIP = '[data-testid="planner-preset-chip"]'
+/** JOS-210 — the filter bar's own door to the item narrowing, and what it becomes once filled. */
+export const ITEM_FILTER = '[data-testid="planner-item-filter"]'
+export const ITEM_CHIP = '[data-testid="planner-item-chip"]'
+export const ITEM_SEARCH = '[data-testid="planner-item-search"] input'
+export const ITEM_HIT = '[data-testid="planner-item-hit"]'
+/** JOS-67 — the sentence an empty effect list answers with, which JOS-210 taught to name the item. */
+export const EFFECTS_EMPTY = '[data-testid="planner-effects-empty"]'
 export const EXPLAINER = '[data-testid="planner-explainer"]'
 export const EXPLAINER_OPEN = '[data-testid="planner-explainer-open"]'
 export const STATE_CHIP = '[data-testid="planner-state-chip"]'
@@ -346,6 +355,168 @@ export async function stepFocusFamilies(page: Page): Promise<void> {
   }
   await page.click(SOCKET_PROC, { timeout: 15_000 })
   await until(async () => (await countOf(page, `${EFFECT_ROW}[data-axis="effect"]`)) > 0, 20_000)
+}
+
+/**
+ * 6c-i. ADD SAYS REPLACE WHEN IT WOULD REPLACE (JOS-42 refinement 3).
+ *
+ * Asserted UNDER A PRESET, because that is the only place the target socket is unambiguous: you
+ * clicked one socket of one item, so every row on screen would write to exactly that socket, and
+ * the button can therefore be checked against the socket's own state.
+ *
+ * The direction that matters is the FALSE REPLACE — a button warning about an overwrite that
+ * would not happen teaches the user to ignore the warning — so "empty socket ⇒ nothing says
+ * Replace" is asserted flat. The other direction allows one honest exception: a row whose donor
+ * and effect are ALREADY what sits there replaces nothing (it is chipped "in set"), so a preset
+ * showing only that row legitimately offers no Replace at all.
+ *
+ * It lives here rather than in the spec for the standing reason — the spec is AT the max-lines
+ * budget and the rule is to SPLIT, never ratchet — and it belongs to this half: it is a DOM
+ * measurement of the effect list, and the spec still owns when it is taken.
+ */
+export async function checkReplaceLabels(page: Page, occupied: boolean): Promise<void> {
+  const labels = await page.evaluate(
+    (s) => Array.from(document.querySelectorAll(s)).map((b) => (b as HTMLElement).innerText.trim()),
+    ADD_BUTTON
+  )
+  if (labels.length === 0) {
+    note('the preset matched no addable donor — the replace-label step is skipped this run')
+    return
+  }
+  const replace = labels.filter((l) => l.toLowerCase() === 'replace').length
+  if (!occupied) {
+    check(
+      'an empty socket is never offered as a Replace — the add button only warns about a real overwrite',
+      replace === 0,
+      `${String(replace)} of ${String(labels.length)} buttons said Replace over an empty socket`
+    )
+    return
+  }
+  const inSet = await page.evaluate(
+    () => Array.from(document.querySelectorAll('.MuiChip-label')).filter((e) => e.textContent === 'in set').length
+  )
+  if (replace === 0 && inSet >= labels.length) {
+    note('every donor the preset offers is already the one in this socket — nothing here would replace anything')
+    return
+  }
+  check(
+    'browsing an OCCUPIED socket, the add button says Replace instead of Add to set',
+    replace > 0,
+    `${String(replace)} of ${String(labels.length)} buttons said Replace (${String(inSet)} already in set)`
+  )
+}
+
+// ---- the item narrowing (JOS-210) --------------------------------------------------------
+
+const KINDS = ['proc', 'worn', 'focus', 'click'] as const
+
+const kindTab = (kind: string): string => `[data-testid="planner-socket-${kind}"]`
+
+/**
+ * THE ITEM FILTER SURVIVES SWITCHING EFFECT KINDS (JOS-210, the bug half).
+ *
+ * Reported by the owner: narrow the browser to an item from your set, switch from Proc to Worn, and
+ * the item is gone. The mechanism was one shared change handler — every filter-bar write, the four
+ * kind tabs included, cleared the preset — so this asserts the ONE thing that could not happen
+ * before: the chip is still on screen after the tab moves, naming the kind that is now showing.
+ *
+ * Only an app can see it: the drop was in the handler wiring, not in any pure function, so nothing
+ * a node test can import was ever wrong. Called from the socket-view step, which is the only place
+ * a preset exists, and it leaves the browser on the kind it found it on.
+ */
+export async function stepKindSwitchKeepsItem(page: Page, socket: string): Promise<void> {
+  if (socket === '') {
+    note('the browsed socket did not name its kind — the kind-switch step is skipped this run')
+    return
+  }
+  const other = KINDS.find((k) => k !== socket) ?? 'worn'
+  await page.click(kindTab(other), { timeout: 15_000 })
+  const kept = await until(async () => (await countOf(page, PRESET_CHIP)) > 0, 10_000)
+  check(
+    'switching effect kinds KEEPS the item the browser is narrowed to (JOS-210)',
+    kept,
+    `${socket} → ${other}`
+  )
+  if (kept) {
+    const label = (await textOf(page, PRESET_CHIP)).replace(/\s+/g, ' ').trim()
+    check(
+      '…and the chip names the kind now on screen, so the add target is the socket you are reading',
+      label.toLowerCase().includes(other),
+      `chip "${label}" after switching to ${other}`
+    )
+  }
+  // Leave it where the caller found it: the replace-label check above ran against that socket.
+  await page.click(kindTab(socket), { timeout: 15_000 })
+  await until(async () => (await textOf(page, PRESET_CHIP)).toLowerCase().includes(socket), 10_000)
+}
+
+/**
+ * ANY WORN ITEM FINDS ITS COMPATIBLE EFFECTS (JOS-210, the feature half).
+ *
+ * The other direction through the same narrowing: the browser could already be filtered to an item,
+ * but only to one your set already plans a host for. This types a name into the filter bar's own
+ * picker — which reaches every item the committed DB carries — and then asks the three things that
+ * make it a filter rather than a search box:
+ *
+ *   * it NARROWS (a filter can only ever remove rows, so the list is never taller than it was, and
+ *     one item's worth of legal effects is not the whole corpus),
+ *   * it SURVIVES the kind tabs, exactly as the preset now does, and
+ *   * clearing it gives the whole corpus back — the height it started at, to the pixel.
+ *
+ * MEASURED FROM A FRESH MOUNT, which is why the spec re-enters the tab before calling this: the
+ * scroll box floors its own scrollHeight at its clientHeight, so a list that is already short
+ * (a preset's leftovers, say) would answer the same number before and after and prove nothing.
+ *
+ * "sword" is a query the committed corpus certainly answers; if it somehow does not, the step says
+ * so and stops rather than inventing a second guess. Ends with the filter cleared.
+ */
+export async function stepItemFilter(page: Page): Promise<void> {
+  if (!check('the filter bar offers to narrow the list by an item', (await countOf(page, ITEM_FILTER)) > 0)) return
+  const before = await listHeight(page)
+  await page.click(ITEM_FILTER, { timeout: 15_000 })
+  if (!check('…and it opens a search over the whole item database', await until(async () => (await countOf(page, ITEM_SEARCH)) > 0, 10_000))) {
+    return
+  }
+  await page.fill(ITEM_SEARCH, 'sword', { timeout: 15_000 })
+  await until(async () => (await countOf(page, ITEM_HIT)) > 0, 10_000)
+  if ((await countOf(page, ITEM_HIT)) === 0) {
+    note('the item index answered nothing for "sword" — the item-filter step is skipped this run')
+    await page.keyboard.press('Escape')
+    return
+  }
+  await page.click(ITEM_HIT, { timeout: 15_000 })
+  if (!check('picking an item narrows the browser to it', await until(async () => (await countOf(page, ITEM_CHIP)) > 0, 10_000))) {
+    return
+  }
+  // The chip is the app's own word for which item is being filled — read the name from there
+  // rather than from the hit row, whose text also carries the slot chip beside it.
+  const name = (await textOf(page, ITEM_CHIP)).replace(/\s+/g, ' ').trim()
+  const narrowed = await listHeight(page)
+  check(
+    'the item filter can only REMOVE rows — it never invents an effect for an item',
+    narrowed <= before,
+    `list ${String(before)}px → ${String(narrowed)}px for "${name}"`
+  )
+  // …and it removes SOME: one item shares a slot with a slice of the corpus, never all of it. When
+  // that slice is empty the list says so NAMING THE ITEM, which is the same claim by other means.
+  const empty = (await textOf(page, EFFECTS_EMPTY)).replace(/\s+/g, ' ').trim()
+  check(
+    'narrowing to one item actually narrows — and an empty answer names the item, not the filters',
+    narrowed < before || empty.includes(name),
+    narrowed < before ? `${String(before)}px → ${String(narrowed)}px` : `empty state reads "${empty}"`
+  )
+
+  for (const kind of ['worn', 'click', 'proc'] as const) {
+    await page.click(kindTab(kind), { timeout: 15_000 })
+    const kept = await until(async () => (await countOf(page, ITEM_CHIP)) > 0, 10_000)
+    if (!check(`the item filter survives the ${kind} tab (JOS-210)`, kept)) return
+  }
+
+  await page.click(`${ITEM_CHIP} .MuiChip-deleteIcon`, { timeout: 15_000 })
+  const cleared = await until(async () => (await countOf(page, ITEM_CHIP)) === 0, 10_000)
+  check('clearing the item filter hands the browser back', cleared)
+  const restored = await until(async () => (await listHeight(page)) === before, 15_000)
+  check('…with the whole corpus in it again', restored, `${String(await listHeight(page))}px vs ${String(before)}px`)
 }
 
 /**

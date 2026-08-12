@@ -16,14 +16,15 @@
 // The list is a FIXED-height scroll box for the standing reason (AGENTS.md): a popover that grows
 // with its hit count would walk off the screen.
 
-import { type JSX, useDeferredValue, useEffect, useState } from 'react'
+import { type JSX, useDeferredValue, useState } from 'react'
 import { Box, Chip, CircularProgress, Popover, Stack, TextField, Typography } from '@mui/material'
 import type { ClassAbbr } from '@shared/classCombo'
 import type { EquipSlot, PlannerItemHit } from '@shared/planner/types'
 import { itemIconUrl } from '../../lib/ItemWindow'
+// The search itself is shared with the filter bar's item picker (JOS-210) — one round trip policy,
+// one minimum query length, two popovers that ask the index different questions about the answer.
+import { MIN_QUERY, useItemSearch } from './plannerPreset'
 
-/** Shortest query worth a round trip — one letter matches thousands of items and says nothing. */
-const MIN_QUERY = 2
 const LIST_MAX_H = 260
 
 /**
@@ -41,37 +42,6 @@ export function hostFits(
   if (slot !== null && !hit.slots.includes(slot)) return false
   if (planClasses.length === 0 || hit.classes.length === 0) return true
   return hit.classes.some((c) => planClasses.includes(c))
-}
-
-interface HitsState {
-  hits: PlannerItemHit[]
-  loading: boolean
-}
-
-/** One search per settled query. An in-flight answer for an older query is dropped, not shown. */
-function useHostSearch(query: string, open: boolean): HitsState {
-  const [state, setState] = useState<HitsState>({ hits: [], loading: false })
-  useEffect(() => {
-    if (!open || query.trim().length < MIN_QUERY) {
-      setState({ hits: [], loading: false })
-      return
-    }
-    let alive = true
-    setState((prev) => ({ hits: prev.hits, loading: true }))
-    void window.eq
-      .plannerSearchItems(query.trim())
-      .then((hits) => {
-        if (alive) setState({ hits, loading: false })
-      })
-      .catch(() => {
-        /* main never rejects; an empty list is the honest answer */
-        if (alive) setState({ hits: [], loading: false })
-      })
-    return () => {
-      alive = false
-    }
-  }, [query, open])
-  return state
 }
 
 export interface HostPickerProps {
@@ -130,7 +100,7 @@ export default function HostPicker({ slot, label, planClasses, anchor, onClose, 
   const [text, setText] = useState('')
   const query = useDeferredValue(text)
   const open = anchor !== null
-  const { hits, loading } = useHostSearch(query, open)
+  const { hits, loading } = useItemSearch(query, open)
   const usable = hits.filter((h) => hostFits(h, slot, planClasses))
 
   return (

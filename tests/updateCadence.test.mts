@@ -12,14 +12,19 @@ import assert from 'node:assert/strict'
 import {
   BACKOFF_BASE_MS,
   CHECK_INTERVAL_MS,
+  FEED_PARSE_MESSAGE,
   JITTER_FRACTION,
+  MAX_UPDATE_MESSAGE_CHARS,
   STARTUP_DELAY_MS,
   STARTUP_JITTER_MS,
   MAX_DOWNLOAD_ATTEMPTS,
   compareVersions,
+  describeUpdateFailure,
+  isFeedParseError,
   isNewerVersion,
   isStaleVersion,
   nextCheckDelayMs,
+  shouldRetryCheck,
   updateChipState
 } from '../src/shared/update'
 import type { UpdateStatus } from '../src/shared/types'
@@ -209,6 +214,139 @@ test('checkedAt rides through EVERY state (the chip line never blanks mid-downlo
     const s = updateChipState({ state, version: '9.9.9', percent: 10, checkedAt: 1234 }, CURRENT)
     assert.equal(s.checkedAt, 1234, `${state} must carry checkedAt`)
   }
+})
+
+// ------------------------------------------------------ malformed feed bodies
+//
+// JOS-211. The reported failure was the literal sentence `Unexpected end of JSON
+// input` in Preferences. Nothing in this repo calls JSON.parse on a feed — the
+// call is builder-util-runtime's, inside the code that FORMATS an HTTP error:
+//
+//     if (statusCode >= 400) {
+//       const isJson = contentType?.includes("json")
+//       reject(createHttpError(response, `… Data: ${isJson ? safeStringifyJson(JSON.parse(data)) : data}`))
+//     }                                                        ^^^^^^^^^^^^^^^^
+//
+// so on a >= 400 response advertising json with an empty/short body, the parse
+// error REPLACES the HttpError and arrives at us naked.
+//
+// `bodyFailure` below is that exact move — JSON.parse over a real response body,
+// with whatever the running Node version throws handed straight to our classifier.
+// Pinning the MESSAGES those bodies produce would be pinning V8's wording (it
+// changed in Node 20); pinning that they are HANDLED is the contract.
+
+/** What builder-util-runtime throws when it formats an error over `body`. */
+const bodyFailure = (body: string): unknown => {
+  try {
+    JSON.parse(body)
+  } catch (e) {
+    return e
+  }
+  throw new Error('body parsed cleanly — not a failure case')
+}
+
+/** The three response bodies a feed hiccup actually produces. */
+const BAD_BODIES: Record<string, string> = {
+  // An edge/proxy that answers 429 or 503 with no body at all. THE reported case.
+  'empty body': '',
+  // A connection closed mid-body: valid JSON as far as it goes, and it stops.
+  'truncated JSON body': '{"tag_name":"v0.22.0","assets":[{"name":"latest.y',
+  // A CDN/captive-portal error page served under a json content-type.
+  'non-JSON body (HTML error page)':
+    '<!DOCTYPE html><html><head><title>503 Service Unavailable</title></head><body><h1>Error</h1></body></html>'
+}
+
+for (const [label, body] of Object.entries(BAD_BODIES)) {
+  test(`${label}: recognised as a feed parse failure, never shown raw`, () => {
+    const err = bodyFailure(body)
+    assert.ok(isFeedParseError(err), `${label} must classify as a feed parse failure`)
+
+    const message = describeUpdateFailure(err)
+    assert.equal(message, FEED_PARSE_MESSAGE)
+    // The whole point: not one word of the parser survives into the UI.
+    assert.ok(!/JSON|token|position/i.test(message), `parser wording leaked: ${message}`)
+    // It must say what happened AND that it is worth trying again.
+    assert.match(message, /update/i)
+    assert.match(message, /later|again/i)
+  })
+
+  test(`${label}: earns exactly ONE retry`, () => {
+    const err = bodyFailure(body)
+    assert.equal(shouldRetryCheck(err, 0), true, 'the first unreadable body is retried')
+    assert.equal(shouldRetryCheck(err, 1), false, 'a second one gives up — never a loop')
+    assert.equal(shouldRetryCheck(err, 2), false)
+  })
+}
+
+test('electron-updater WRAPS some parse failures — those are the same failure', () => {
+  // The wrapped shapes, verbatim from electron-updater@6.8.9. Their messages embed a
+  // whole atom feed / a stack trace, so even when they parse they must never be the
+  // caption: a Preferences line is not a place to print 7 kB of XML.
+  const feed = Object.assign(new Error('Cannot parse releases feed: SyntaxError: x,\nXML:\n<feed>…</feed>'), {
+    code: 'ERR_UPDATER_INVALID_RELEASE_FEED'
+  })
+  const info = Object.assign(new Error('Cannot parse update info from latest.yml …: rawData: null'), {
+    code: 'ERR_UPDATER_INVALID_UPDATE_INFO'
+  })
+  for (const err of [feed, info]) {
+    assert.ok(isFeedParseError(err))
+    assert.equal(describeUpdateFailure(err), FEED_PARSE_MESSAGE)
+  }
+  // getLatestTagName's wrapper covers BOTH a parse failure and a repo with no release,
+  // so the code alone cannot decide — the interpolated text does.
+  const parsed = Object.assign(
+    new Error('Unable to find latest version on GitHub (…): SyntaxError: Unexpected end of JSON input'),
+    { code: 'ERR_UPDATER_LATEST_VERSION_NOT_FOUND' }
+  )
+  const missing = Object.assign(
+    new Error('Unable to find latest version on GitHub (…): HttpError: 404 Not Found'),
+    { code: 'ERR_UPDATER_LATEST_VERSION_NOT_FOUND' }
+  )
+  assert.ok(isFeedParseError(parsed), 'a parse failure inside the wrapper is still a parse failure')
+  assert.ok(!isFeedParseError(missing), 'a genuine 404 must keep its own message')
+})
+
+test('a failure that NAMES something actionable keeps its own words', () => {
+  // The counterpart risk: hiding every error behind one soothing sentence. A user
+  // (or a triage report) is better off seeing these, and they are never retried
+  // here — the exponential backoff already owns them.
+  for (const text of [
+    'getaddrinfo ENOTFOUND github.com',
+    'net::ERR_INTERNET_DISCONNECTED',
+    'sha512 checksum mismatch'
+  ]) {
+    const err = new Error(text)
+    assert.equal(isFeedParseError(err), false, `${text} is not a parse failure`)
+    assert.equal(describeUpdateFailure(err), text)
+    assert.equal(shouldRetryCheck(err, 0), false, 'only unreadable bodies get the extra attempt')
+  }
+})
+
+test('every message is ONE bounded line — no stacks, no feed dumps in a caption', () => {
+  const stacky = new Error(`Cannot check for updates: boom\n    at doCheckForUpdates (AppUpdater.js:1:1)`)
+  assert.equal(describeUpdateFailure(stacky), 'Cannot check for updates: boom')
+
+  const huge = new Error(`HttpError: 503 ${'x'.repeat(5_000)}`)
+  const message = describeUpdateFailure(huge)
+  assert.ok(message.length <= MAX_UPDATE_MESSAGE_CHARS, `${message.length} chars is a wall of text`)
+  assert.ok(message.startsWith('HttpError: 503'), 'the informative head survives the truncation')
+  assert.ok(FEED_PARSE_MESSAGE.length <= MAX_UPDATE_MESSAGE_CHARS)
+
+  // Absent / shapeless failures still produce a sentence rather than "undefined".
+  assert.equal(describeUpdateFailure(undefined), 'unknown error')
+  assert.equal(describeUpdateFailure(null), 'unknown error')
+  assert.equal(describeUpdateFailure(new Error('   \n  ')), 'unknown error')
+  assert.equal(describeUpdateFailure('plain string failure'), 'plain string failure')
+  assert.equal(isFeedParseError(null), false)
+})
+
+test('the readable failure still renders as the QUIET chip state (product rule)', () => {
+  // Hardening the message must not promote a failed check into a loud one: the only
+  // loud state is 'ready'. The message survives for Preferences and nowhere else.
+  const s = updateChipState({ state: 'error', message: FEED_PARSE_MESSAGE, checkedAt: 7 }, CURRENT)
+  assert.equal(s.kind, 'quiet')
+  assert.equal(s.kind === 'quiet' && s.failed, true)
+  assert.equal(s.kind === 'quiet' && s.message, FEED_PARSE_MESSAGE)
 })
 
 // --------------------------------------------------- lastCheckedAt formatting

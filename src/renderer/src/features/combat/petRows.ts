@@ -292,9 +292,39 @@ export type MeterPanel =
  * A drill as the builder takes it: a source. It is exactly the shape the overlay persists
  * (`OverlayDrill`), so that surface hands its stored value straight in; the Combat tab and the
  * Overview card translate their richer union with `dashboardData.meterDrill`.
+ *
+ * `name` is the CROSS-FIGHT identity (JOS-240) and is optional everywhere: the overlay does not
+ * persist one, and a token stored by an older build has none. See `resolveSubject`.
  */
 export interface MeterDrill {
   entityId: string
+  /** the drilled row's display name, when the caller recorded it. */
+  name?: string
+}
+
+/**
+ * WHICH ROW A DRILL IS POINTING AT — by id, then by NAME (JOS-240).
+ *
+ * The id is tried first and always wins, so nothing about an ordinary in-fight drill changes: the
+ * exact row the user clicked is the exact row that opens, even when two same-named entities are
+ * both in the segment (a pull that spanned two summons legitimately carries both).
+ *
+ * The NAME fallback exists because half the ids in this list are WORLD INSTANCES. 'you',
+ * `member:<key>` and `heal:<key>` are the same string in every fight; `pet:<instanceId>` is minted
+ * per summon and an incoming mob's id per spawn. So "keep my pet's breakdown open while I flip
+ * between fights" is an id match in the lucky case and a name match in the real one — and after a
+ * restart re-folds the log, always a name match. Matching on the exact display name is the same
+ * identity the ability expansions already use (`abilityKey` is `category|name`) and the same one
+ * the mob drill has always used.
+ *
+ * It is a FALLBACK and never a widening: with no name recorded, or no row bearing it, this returns
+ * undefined and the panel degrades to level 1 exactly as it did before — the JOS-105 rule, intact.
+ * Ties go to the first (highest-ranked) row, which is the one a reader means by the name.
+ */
+function resolveSubject(entities: SourceView[], drill: MeterDrill): SourceView | undefined {
+  const byId = entities.find((e) => e.id === drill.entityId)
+  if (byId || drill.name === undefined || drill.name === '') return byId
+  return entities.find((e) => e.name === drill.name)
 }
 
 /**
@@ -309,9 +339,13 @@ export interface MeterDrill {
  * level-1 bar of its own while combine is on is still a perfectly good drill subject (it is a
  * line item inside your breakdown, and a persisted drill straight into it must still resolve).
  *
- * A STALE DRILL DEGRADES TO LEVEL 1, never to a blank list: an entity id that resolves to nothing
+ * A STALE DRILL DEGRADES TO LEVEL 1, never to a blank list: a token that resolves to nothing
  * renders the source list. The caller's stored value is untouched, so the drill re-applies the
- * moment the data is back.
+ * moment the data is back — which is what lets the Combat tab keep a drill across a fight change
+ * (JOS-240) instead of throwing it away: a fight without that subject shows the clean source list
+ * and the next fight that HAS it opens drilled again.
+ *
+ * "Resolves" is `resolveSubject` above: the id, then the recorded name.
  */
 /**
  * WHAT THE HEADLINE OVER *THIS* PANEL COVERS — the one derivation every UNLABELLED damage
@@ -355,7 +389,7 @@ export function panelTotals(panel: MeterPanel, total: number, dps: number): { to
 }
 
 export function meterPanel(entities: SourceView[], combine: boolean, drill: MeterDrill | null): MeterPanel {
-  const subject = drill ? entities.find((e) => e.id === drill.entityId) : undefined
+  const subject = drill ? resolveSubject(entities, drill) : undefined
   if (!subject) return { level: 1, sources: meterSources(entities, combine) }
   // Pets nest into YOUR row only: a pet inside a pet would be a fiction, and an enemy's row in
   // the Incoming direction has no pets of yours in it at all.

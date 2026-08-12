@@ -31,7 +31,7 @@ import { DEFAULT_TOAST_CONFIG, normalizeToastConfig } from '../shared/toast'
 import { normalizePerfHudPrefs, type PerfHudPrefs } from '../shared/perf'
 import { normalizeGraphicsPrefs, type GraphicsPrefs } from '../shared/graphicsPrefs'
 import { normalizeBuffTrustPrefs, type BuffTrustPrefs } from '../shared/buffTrust'
-import { isTimerOverlayKind, normalizeTimerGrouping } from '../shared/buffTimers'
+import { applyTimerOverlayKnobs } from '../shared/buffTimers'
 // The XP overlay's two persisted knobs (JOS-195) — each validated by the module that owns its
 // meaning, never by a predicate written here.
 import { normalizeXpRows } from '../shared/xpOverlay'
@@ -51,18 +51,17 @@ import { ALERT_TRIGGER_MIGRATION_VERSION, migrateAlertTriggers } from './data/al
 // The persisted SHAPE lives in ./storeShape.ts (this file is at its factoring ceiling). Nothing
 // moved but the declaration; every accessor below is still written against it.
 import type { StoreShape } from './storeShape'
+// The main window's remembered size, position and maximized state (JOS-248). The type and its
+// normalizer live next door because the module is PURE — see windowState.ts. Re-exported here so
+// every existing importer (storeShape.ts, windows.ts) keeps the door it already used.
+import { normalizeWindowState, type WindowBounds } from './windowState'
+
+export type { WindowBounds }
 
 const emptyProgress: ProgressState = {
   inventory: {},
   completedQuests: [],
   inventorySource: undefined
-}
-
-export interface WindowBounds {
-  x: number
-  y: number
-  width: number
-  height: number
 }
 
 
@@ -132,12 +131,23 @@ export const STORE_READY_MS = performance.now()
  */
 export const settingsStore = store
 
+/**
+ * The main window's remembered state, or `undefined` when there is none to remember (JOS-248).
+ *
+ * Read through the normalizer and written through the SAME one, like every other setting in this
+ * file: a store hand-edited to `width: "big"` answers `undefined` here, which the caller already
+ * has an answer for (the default size), rather than reaching a BrowserWindow constructor.
+ */
 export function getWindowBounds(): WindowBounds | undefined {
-  return store.get('windowBounds')
+  return normalizeWindowState(store.get('windowBounds'))
 }
 
 export function setWindowBounds(b: WindowBounds): void {
-  store.set('windowBounds', b)
+  const next = normalizeWindowState(b)
+  // A state that does not normalize is not written. There is no sensible partial write here — the
+  // rectangle is the value — and clobbering a good remembered position with a bad one would be the
+  // one failure mode the user cannot undo without finding the JSON.
+  if (next) store.set('windowBounds', next)
 }
 
 function allProgress(): Record<string, ProgressState> {
@@ -481,13 +491,11 @@ export function setOverlayConfig(kind: OverlayKind, patch: Partial<OverlayConfig
   // toast kind carries one; the meters must not grow a stray blob from a malformed patch.
   if (kind === 'toast') next.toast = normalizeToastConfig({ ...DEFAULT_TOAST_CONFIG, ...next.toast })
   else delete next.toast
-  // The row ARRANGEMENT belongs to the two timer windows and to nothing else (JOS-140). It is
-  // rebuilt rather than trusted, on the same argument as the drill above: a renderer patch must
-  // not be able to widen what is persisted, and an absent value is a real answer — it means "the
-  // window's own default", which differs between buffs and debuffs.
-  const grouping = normalizeTimerGrouping(next.grouping)
-  if (grouping && isTimerOverlayKind(kind)) next.grouping = grouping
-  else delete next.grouping
+  // THE TWO TIMER WINDOWS' OWN KNOBS — the row arrangement (JOS-140) and the permanent-buff switch
+  // (JOS-215). Both are rebuilt rather than trusted, on the same argument as the drill above; the
+  // rule lives beside `isTimerOverlayKind` in shared/buffTimers.ts, which is what "which kinds
+  // carry this knob" is a fact about.
+  applyTimerOverlayKnobs(kind, next)
   // THE XP WINDOW'S TWO KNOBS (JOS-195), rebuilt rather than trusted — the same argument as the
   // drill and the grouping above: a renderer patch must not be able to widen what is persisted, and
   // ABSENT is a real answer for both (every row; this session). `normalizeXpRows` drops unknown row
@@ -676,10 +684,16 @@ export function getAlertPrefs(): AlertPrefs {
   return { ...DEFAULT_ALERT_PREFS, ...(store.get('alertPrefs') ?? {}) }
 }
 
+/**
+ * Persist the global alert prefs, re-clamped. `alwaysPlayAll` is written ONLY when true (JOS-222)
+ * so a store with the audio throttle on stays byte-identical to one written before the preference
+ * existed — `getAlertPrefs` defaults the absent key, so off and absent are the same answer.
+ */
 export function setAlertPrefs(prefs: AlertPrefs): AlertPrefs {
   const next: AlertPrefs = {
     globalVolume: Math.max(0, Math.min(1, prefs.globalVolume)),
-    muted: prefs.muted
+    muted: prefs.muted,
+    ...(prefs.alwaysPlayAll === true ? { alwaysPlayAll: true } : {})
   }
   store.set('alertPrefs', next)
   return next

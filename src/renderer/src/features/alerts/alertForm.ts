@@ -23,6 +23,7 @@
 
 import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 'react'
 import type { AlertDef, AlertTrigger, SoundPack } from '@shared/types'
+import { normalizeEarlyWarnSec } from '@shared/earlyWarning'
 import {
   blankCondition,
   type CombineMode,
@@ -64,6 +65,13 @@ export interface AlertForm {
   /** What the cooldown is measured per — one clock for the alert, or one per mob. */
   cooldownScope: CooldownScope
   setCooldownScope: (v: CooldownScope) => void
+  /**
+   * How many seconds EARLY this alert fires (JOS-216). 0 is the form's spelling of "off" — the
+   * def's own is an absent key, and `defFromForm` does that translation — because the control is a
+   * number field and an empty one has to mean something.
+   */
+  earlyWarnSec: number
+  setEarlyWarnSec: (v: number) => void
   /** The Speech block's own sub-form (voice-alerts §4) — see SpeechBlock.tsx. */
   speech: SpeechForm
 }
@@ -78,6 +86,7 @@ interface FormSetters {
   setVolume: (v: number) => void
   setCooldownMs: (v: number) => void
   setCooldownScope: (v: CooldownScope) => void
+  setEarlyWarnSec: (v: number) => void
 }
 
 /** Fill the whole form from `initial` (edit) or from blanks + the preset pack (add). */
@@ -92,6 +101,7 @@ function hydrateForm(s: FormSetters, initial: AlertDef | null, packs: SoundPack[
     s.setVolume(1)
     s.setCooldownMs(DEFAULT_COOLDOWN_MS)
     s.setCooldownScope('alert')
+    s.setEarlyWarnSec(0)
     return
   }
   s.setName(initial.name)
@@ -108,6 +118,7 @@ function hydrateForm(s: FormSetters, initial: AlertDef | null, packs: SoundPack[
   s.setVolume(initial.volume ?? 1)
   s.setCooldownMs(initial.cooldownMs ?? DEFAULT_COOLDOWN_MS)
   s.setCooldownScope(initial.cooldownScope ?? 'alert')
+  s.setEarlyWarnSec(initial.earlyWarnSec ?? 0)
 }
 
 export function useAlertForm(
@@ -123,6 +134,7 @@ export function useAlertForm(
   const [volume, setVolume] = useState(1)
   const [cooldownMs, setCooldownMs] = useState(DEFAULT_COOLDOWN_MS)
   const [cooldownScope, setCooldownScope] = useState<CooldownScope>('alert')
+  const [earlyWarnSec, setEarlyWarnSec] = useState(0)
   // The Speech block hydrates itself on the same `open` edge (its deps are `[open, initial]`,
   // which is why it never carried this bug).
   const speech = useSpeechForm(open, initial)
@@ -151,7 +163,8 @@ export function useAlertForm(
         setSoundId,
         setVolume,
         setCooldownMs,
-        setCooldownScope
+        setCooldownScope,
+        setEarlyWarnSec
       }
       hydrateForm(setters, initial, packs)
       return
@@ -194,8 +207,16 @@ export function useAlertForm(
     setCooldownMs,
     cooldownScope,
     setCooldownScope,
+    earlyWarnSec,
+    setEarlyWarnSec,
     speech
   }
+}
+
+/** The def's early-warning key, or nothing at all when the form says off (JOS-216). */
+function earlyWarnFields(sec: number): { earlyWarnSec?: number } {
+  const normalized = normalizeEarlyWarnSec(sec)
+  return normalized === undefined ? {} : { earlyWarnSec: normalized }
 }
 
 export function triggerFromForm(mode: CombineMode, conditions: ConditionDraft[]): AlertTrigger {
@@ -229,6 +250,10 @@ export function defFromForm(f: AlertForm, initial: AlertDef | null): AlertDef {
     // Omitted at its default, like the speech fields below: a def that never asked for per-mob
     // scope saves byte-identically to how it always did, so import dedupe keeps matching it.
     ...(f.cooldownScope === 'target' ? { cooldownScope: 'target' as const } : {}),
+    // Likewise omitted when off (JOS-216): `normalizeEarlyWarnSec` turns 0, a blank field and an
+    // out-of-range number into undefined, and an absent key is what "fire when it lands" has always
+    // been — so an alert without a warning still saves the bytes it always did.
+    ...earlyWarnFields(f.earlyWarnSec),
     note: initial?.note,
     // audio / speech / alwaysPlay, each omitted at its default so a sound-only alert saves
     // byte-identically to how it always did (SpeechBlock.speechFieldsFor).

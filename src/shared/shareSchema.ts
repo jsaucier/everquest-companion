@@ -22,6 +22,7 @@ import type {
   SpeechMode
 } from './types'
 import { ALERT_AUDIO_ACTIONS, MAX_SPEECH_CHARS, SPEECH_MODES } from './speechText'
+import { normalizeEarlyWarnSec } from './earlyWarning'
 
 /** Human-readable prefix + format generation. Bump the digit only for a BREAKING format. */
 export const SHARE_PREFIX = 'EQC1-'
@@ -349,6 +350,23 @@ export function sanitizeAlertDef(v: unknown): AlertDef | null {
     sound
   }
   if (r.volume !== undefined) def.volume = clamp01(r.volume, 1)
+  applyTimingFields(def, r)
+  const note = clampStr(r.note, SHARE_LIMITS.maxNoteChars).trim()
+  if (note) def.note = note
+  applyVoiceFields(def, r)
+  return def
+}
+
+/**
+ * Copy the TIMING keys onto a def in place — how often it may fire, what that is counted per, and
+ * how early it fires (JOS-216).
+ *
+ * Its own function for the same reason `applyVoiceFields` is: `sanitizeAlertDef` is at the
+ * factoring ceiling. The three share the rule the whole file reads by — write a key ONLY when it is
+ * present, legal, and not the default, so an alert that asked for none of it sanitizes to the
+ * byte-identical object it always did (import dedupe hashes these fields; see sanitizeAlertDef).
+ */
+function applyTimingFields(def: AlertDef, r: Record<string, unknown>): void {
   if (typeof r.cooldownMs === 'number' && Number.isFinite(r.cooldownMs)) {
     def.cooldownMs = Math.max(0, Math.min(600000, Math.round(r.cooldownMs)))
   }
@@ -356,10 +374,10 @@ export function sanitizeAlertDef(v: unknown): AlertDef | null {
   // 'alert'), so a shared alert that rate-limits per mob keeps doing so on the other machine
   // instead of quietly reverting to one clock — and an ordinary alert sanitizes byte-identically.
   if (r.cooldownScope === 'target') def.cooldownScope = 'target'
-  const note = clampStr(r.note, SHARE_LIMITS.maxNoteChars).trim()
-  if (note) def.note = note
-  applyVoiceFields(def, r)
-  return def
+  // The offset survives a share when it is a number THIS build would have offered, and is dropped
+  // otherwise — `normalizeEarlyWarnSec` is the one place that decides, at all three inlets.
+  const earlyWarnSec = normalizeEarlyWarnSec(r.earlyWarnSec)
+  if (earlyWarnSec !== undefined) def.earlyWarnSec = earlyWarnSec
 }
 
 /**

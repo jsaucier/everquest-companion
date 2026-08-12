@@ -21,7 +21,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  AA_RATE_TITLE,
   AA_RESPEC_CAPTION,
+  ACTIVE_TIME_TITLE,
   NONE,
   OFFLINE_CAPTION,
   OFFLINE_TITLE,
@@ -35,6 +37,7 @@ import {
   offlineText,
   rangeHeroes,
   unstatedCaption,
+  withActiveTime,
   witnessedText,
   zoneStatRows
 } from '../src/renderer/src/features/leveling/rangeStatsRows'
@@ -381,4 +384,40 @@ test('the unstated footnote appears only when it is true', () => {
   const note = unstatedCaption(stats({ expSamples: 40, expUnstated: 1 }))
   assert.match(note ?? '', /^\* 1 experience line stated no percentage/, 'singular')
   assert.match(unstatedCaption(stats({ expUnstated: 22 })) ?? '', /22 experience lines stated no percentage/)
+})
+
+test('the active-time definition answers the question a user actually asked (JOS-249)', () => {
+  // A 0.22.0 reporter asked whether "active time" was AFK removal or out-of-combat removal. It is
+  // NEITHER, so the sentence has to (a) state what it IS and (b) close out both guesses by name —
+  // otherwise the reader supplies the wrong one and every rate in the app reads as a claim it is
+  // not making.
+  assert.match(ACTIVE_TIME_TITLE, /^Active time = /)
+  // The three streams `idleSpans` walks, in the same words `idleRuleCaption` already uses.
+  assert.match(ACTIVE_TIME_TITLE, /experience, credited kill, or loot line/)
+  // The logout half — `activeMs` subtracts offline as well as idle.
+  assert.match(ACTIVE_TIME_TITLE, /logged out/)
+  // Both wrong guesses, refused out loud.
+  assert.match(ACTIVE_TIME_TITLE, /not an AFK check/)
+  assert.match(ACTIVE_TIME_TITLE, /not out-of-combat time/)
+  // The threshold is READ from the classifier's own constant, never typed in beside it: a second
+  // copy of 5 would go on saying 5 the day the measurement moved it.
+  assert.ok(
+    ACTIVE_TIME_TITLE.includes(`over ${IDLE_GAP_MS / MIN} minutes`),
+    `the sentence must quote IDLE_GAP_MS: ${ACTIVE_TIME_TITLE}`
+  )
+})
+
+test('withActiveTime appends the definition rather than replacing what a surface already said', () => {
+  assert.equal(withActiveTime('Motes per hour.'), `Motes per hour. ${ACTIVE_TIME_TITLE}`)
+  // The one title in this file that already had a sentence keeps it, and gains the definition.
+  assert.match(AA_RATE_TITLE, /^AA completions and ability points per hour of active time\. Active time = /)
+})
+
+test('the levels-per-hour hero card is the only one that hovers the definition', () => {
+  const heroes = rangeHeroes(stats({ activeMs: 2 * HOUR, levelsPerHourActive: 1.42, expSamples: 12 }))
+  const rateCard = heroes.find((h) => h.id === 'rate')
+  assert.match(rateCard?.title ?? '', /Active time = /, 'the rate card divides by it, so it says what it is')
+  for (const h of heroes.filter((c) => c.id !== 'rate')) {
+    assert.equal(h.title, undefined, `${h.id} has no active-time denominator and so carries no hover`)
+  }
 })

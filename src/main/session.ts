@@ -28,7 +28,6 @@ import { installCharacterName } from './log/rulesets'
 import { scanLog } from './log/scanHistory'
 import { createSlicer } from './log/replaySlicer'
 import { saveUserOverlay } from './data/overlayPersistence'
-import { restoreFold, saveFold } from './foldCache/attach'
 import { loadInventory } from './inventory/parseInventory'
 import { watchOutputKind, type OutputKindWatch } from './outputs'
 import {
@@ -254,6 +253,12 @@ function watchForFirstLog(): void {
 function resetWorldFor(ref: CharacterRef): void {
   seq = 0
   registry.reset()
+  // THE MESSAGE OVERLAY IS GAME KNOWLEDGE AND SURVIVES `reset()` — but the counts THIS log
+  // accounts for are about to be re-stated in full by the scan below, so its bucket is discarded
+  // and re-filed rather than added to (JOS-231: seeding the fold with its own previous output is
+  // what doubled every count on every launch). Before the scan, and per character, because the
+  // bucket key is the character.
+  buffsModule.beginOverlaySource(characterId(ref))
   epoch.reset()
   // The offline-gap detector is per-LOG state (a rolling window of recent timestamps + the
   // pending camp), so it resets alongside the epoch detector: a new character's first login
@@ -354,12 +359,13 @@ function startHeartbeat(): void {
   registry.tick(Date.now())
   tickTimer = setInterval(() => {
     registry.tick(Date.now())
-    // Debounced overlay persistence (Task #36): the miner accretes from the live tail; snap
-    // it to userData every ~60s so the user's learned messages survive a restart. Cheap —
-    // overlaySnapshot() builds a small object; the write is best-effort.
+    // Debounced overlay persistence (Task #36): the miner accretes from the live tail; snap the
+    // per-source REGISTER to userData every ~60s so the user's learned messages survive a restart
+    // (JOS-231 — the register, never the served view, or the next launch's fold re-imports its own
+    // output). Cheap: a small object, and the write is best-effort.
     if (++overlaySaveTick >= 60) {
       overlaySaveTick = 0
-      saveUserOverlay(buffsModule.overlaySnapshot())
+      saveUserOverlay(buffsModule.overlayRegister())
     }
   }, 1000)
 }
@@ -498,29 +504,13 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
   registry.beginReplay()
   const slicer = createSlicer()
   let scan: ScanResult
-  // THE CHECKPOINT (JOS-208), and note WHERE it sits: after `resetWorldFor` put every module at
-  // zero and inside the replay bracket, so a restore is folded into exactly the state a cold replay
-  // would have started from and nothing it produces can be pushed. `restoreFold` answers null for
-  // every doubt there is — flag off, no cache, a cache from another build or another log, a module
-  // that refused its blob — and null is the path this function has always taken.
-  //
-  // ALL IT CHANGES IS WHERE THE SCAN STARTS. The scan below still runs, still freezes EOF, still
-  // returns the offset the tailer resumes at, and still ends in the same `finally`; it simply reads
-  // [B, EOF) instead of [0, EOF). That is the entire feature at this seam, and it is why the
-  // handoff, the slicing and the replay gate are untouched.
-  const resumed = await restoreFold(ref)
-  if (resumed) seq = resumed.seq
-  // WHERE THE COUNT NOW COMES FROM. `scan.seq` is the seq the stream REACHED, and it used to be
-  // the number of lines parsed for one reason only: `resetWorldFor` had just set `seq` to 0. A
-  // restored fold starts the scan part-way up that counter, so the count is a DIFFERENCE. Every
-  // reader of it — the parse counter, the startup profile's `eventsReplayed` — means "what this
-  // launch folded", which after a restore is honestly the tail alone.
+  // `resetWorldFor` has just set `seq` to 0, so the reached seq IS the number of events folded —
+  // but the count is written as a DIFFERENCE anyway, because "what this launch folded" is what
+  // every reader of it means (the parse counter, the startup profile's `eventsReplayed`) and a
+  // difference stays honest if the scan ever starts from somewhere other than zero again.
   const startSeq = seq
   try {
-    scan = await scanLog(ref.logPath, bus, seq, {
-      slicer,
-      ...(resumed ? { startOffset: resumed.offset } : {})
-    })
+    scan = await scanLog(ref.logPath, bus, seq, { slicer })
     // The replay's whole cost, in one call — counted here rather than per line inside the fold so
     // the replay's inner loop is untouched.
     noteParsed(scan.seq - startSeq)
@@ -549,7 +539,14 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
   startTailer(ref.logPath, scan.endOffset)
   startHeartbeat()
 
-  // Watch this character's inventory export so a fresh /outputfile auto-reloads.
+  // READ THE DUMP, THEN FOLLOW IT (JOS-253) — the same two-step the log itself gets, in the same
+  // order. `scanHistory` above replays what the log already holds and only then hands the offset
+  // to the tailer; the inventory export had the follow half and not the read half, because the
+  // watcher is armed with `ignoreInitial: true` (outputs/watch.ts) and a file that was rewritten
+  // while the app was closed never changes again. So a player who typed `/outputfile inventory`
+  // between sessions was tailed against a dump this app had never opened, with the store still
+  // holding whatever the last run loaded — and the only way out was a button.
+  loadInventoryNow(ref, 'startup')
   startInventoryWatch(ref)
 
   // Push whatever the modules folded during replay (mainly the character module's
@@ -563,12 +560,11 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
   // that genuinely survived the rebuild (a charm, an Ensnare) on screen in the app and absent
   // from the floating window whose entire job is to show it.
   //
-  // AND THE GO-LIVE SWEEP IS ALREADY HERE (JOS-208), which is why the checkpoint needed no new
-  // ordering seam: `startHeartbeat()` above runs ONE `registry.tick(Date.now())` before arming its
-  // interval (JOS-149's fix, for exactly this hazard in its cold-replay form), and it runs BEFORE
+  // AND THE GO-LIVE SWEEP IS ALREADY HERE: `startHeartbeat()` above runs ONE
+  // `registry.tick(Date.now())` before arming its interval (JOS-149's fix), and it runs BEFORE
   // this `flushNow()` and this `sendWorldRebuilt`. So whatever real time invalidated while the app
-  // was closed is swept before the first publish, and the first snapshot a restored fold ever shows
-  // is judged against now — identically to a cold one.
+  // was closed is swept before the first publish, and the first snapshot the user sees is judged
+  // against now.
   registry.flushNow()
   sendWorldRebuilt(character)
   // Against the scan's FROZEN SIZE, not its `endOffset`: the mark is the tailer's offset, which is
@@ -604,7 +600,7 @@ function startInventoryWatch(ref: CharacterRef): void {
     { name: ref.name, server: ref.server },
     {
       onChange: () => {
-        reloadInventoryNow(ref)
+        loadInventoryNow(ref, 'watch')
       },
       onError: (err) => {
         logConsoleError('[everquest-companion] inventory watch error', err)
@@ -627,13 +623,25 @@ export function inventoryWrittenAt(file: string): number | null {
   return outputFilesModule.writtenAt(file)
 }
 
-/** Re-read the dump and push it, guarded against a stale watcher firing after a switch. */
-function reloadInventoryNow(ref: CharacterRef): void {
+/**
+ * Read the dump and push it, guarded against a stale watcher firing after a switch.
+ *
+ * ONE FUNCTION FOR BOTH HALVES OF "follows itself" (JOS-253): the read at session start and the
+ * re-read the watcher triggers are the same act on the same file, and the only thing that differs
+ * is what the log line says happened. Splitting them would be two places to forget the push.
+ *
+ * A missing dump is silence, not an error: on a machine where `/outputfile inventory` has never
+ * been typed there is nothing to load, and the surfaces already render that as the never-run
+ * state (the `/outputfile` registry's own line).
+ */
+function loadInventoryNow(ref: CharacterRef, why: 'startup' | 'watch'): void {
   if (character?.logPath !== ref.logPath) return
   const res = loadInventory(character.name, character.server, inventoryWrittenAt)
   if (!res) return
   setInventory(activeCharId(), res.counts, res.source)
-  logInfo(`[everquest-companion] Inventory auto-reloaded: ${res.path}`)
+  logInfo(
+    `[everquest-companion] Inventory ${why === 'startup' ? 'loaded at startup' : 'auto-reloaded'}: ${res.path}`
+  )
   sendToMain(IPC.onInventoryReload, { path: res.path, loadedAt: res.loadedAt })
   sendToMain(IPC.onProgress, getProgress(activeCharId()))
 }
@@ -684,24 +692,4 @@ export function stopSession(): void {
   inventoryWatch?.close()
   stopWatchingForFirstLog()
   stopHeartbeat()
-}
-
-/**
- * WRITE THE FOLD CHECKPOINT (JOS-208). Called on a CLEAN shutdown, before `stopSession`.
- *
- * `Tailer.checkpointOffset()` is the byte the fold's knowledge reaches — the end of the last
- * COMPLETE line the live tail emitted, never the read cursor (a trailing partial line has been
- * folded by nobody). `seq` is this session's counter at the same instant, and the two are read
- * together, from a process that is no longer folding anything, so they cannot disagree.
- *
- * SYNCHRONOUS, like every other teardown step, and for the reason index.ts states about all of
- * them: a quit step that can hang can leave a windowless zombie holding the single-instance lock.
- * A `false` is not a failure to handle — no flag, no tail, no writable directory, a log that moved
- * — because the write timing is a pragmatic and not a correctness need.
- */
-export function saveFoldCheckpoint(): boolean {
-  if (!character || !tailer) return false
-  const offset = tailer.checkpointOffset()
-  if (offset <= 0) return false
-  return saveFold(character, offset, seq)
 }

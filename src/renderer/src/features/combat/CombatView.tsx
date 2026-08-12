@@ -176,12 +176,17 @@ function DashboardGrid({
  * abilities you had expanded inside it, and it survives a restart the way the overlay's has all
  * along.
  *
- * A DRILL IS STILL PER-FIGHT AND PER-DIRECTION — but that is enforced on the CHANGE HANDLERS
- * (below, in CombatView) and no longer by an effect keyed on `selection`/`mode`. An effect fires
- * on MOUNT, which is precisely the moment this view has just hydrated a stored drill; and
- * `selection` arrives asynchronously from main (useGlobalFight), so it would fire a second time a
- * frame later. Either firing wipes the value the ticket exists to keep. The overlay learned this
- * first and says so in OverlayMeter.tsx.
+ * …AND IT IS NO LONGER PER-FIGHT (JOS-240, owner): drill your own row on one pull, flip to the
+ * next pull, and you are still reading your own row. A drill is a QUESTION, and the fight picker
+ * above it exists so the same question can be asked of another fight. It is still PER-DIRECTION —
+ * enforced on the mode handler, `undrilling` below — and a fight that has no such subject shows
+ * the clean source list while the memory waits for one that does.
+ *
+ * That rule lives on the CHANGE HANDLER and never in an effect keyed on `selection`/`mode`. An
+ * effect fires on MOUNT, which is precisely the moment this view has just hydrated a stored drill;
+ * and `selection` arrives asynchronously from main (useGlobalFight), so it would fire a second
+ * time a frame later. Either firing wipes the value the ticket exists to keep. The overlay learned
+ * this first and says so in OverlayMeter.tsx.
  */
 function useDashboardDrill(view: 'dash' | 'timeline'): DrillMemoryApi {
   const memory = useDrillMemory('combat')
@@ -207,19 +212,38 @@ function useDashboardDrill(view: 'dash' | 'timeline'): DrillMemoryApi {
 }
 
 /**
- * THE FOUR NAVIGATIONS THAT MAKE A DRILL STOP MEANING ANYTHING, and the one place they undrill.
+ * THE ONE NAVIGATION THAT MAKES A DRILL STOP MEANING ANYTHING — and it is no longer the fight.
  *
- * A drill names a source (or a mob) INSIDE one fight, read in one direction. Pick another fight,
- * flip Fight↔Overall, switch Outgoing↔Incoming↔Healing, or follow a deep link here from another
- * tab, and the subject you were reading is not on screen any more — so the meter goes back to
- * level 1, exactly as it always did.
+ * IT USED TO BE FOUR (JOS-116): pick another fight, flip Fight↔Overall, switch
+ * Outgoing↔Incoming↔Healing, or follow a deep link here from another tab, and the meter went back
+ * to level 1. The premise was that "the subject you were reading is not on screen any more" — true
+ * of the DIRECTION, and false of the other three, which change WHICH SEGMENT the same question is
+ * asked of. Comparing your own breakdown across two pulls is the whole reason a fight picker sits
+ * above a drillable meter, and it meant re-clicking into the same row every single time (JOS-240,
+ * owner).
  *
- * WHAT CHANGED IN JOS-116 IS WHERE THAT LIVES: on the HANDLERS, not in an effect keyed on
- * `selection`/`mode`. An effect cannot tell a user's click from a mount, and this view now mounts
- * holding a stored drill — so the effect that used to enforce this rule would clear the value the
- * ticket exists to keep, twice (once on mount, once when the global fight id arrives from main a
- * frame later). Only a genuine navigation undrills. The overlay reached the same conclusion first
- * and OverlayMeter.tsx states it at length.
+ * SO ONLY `setMode` UNDRILLS NOW, because the three directions are three different lists of
+ * subjects: Outgoing ranks you and your allies, Incoming ranks the mobs hitting you (and offers no
+ * drill at all), Healing ranks healers. Carrying a token sideways between them is not "the same
+ * row in another fight", it is a token that means nothing where it lands.
+ *
+ * WHAT REPLACES THE OTHER THREE IS RESOLUTION, NOT MEMORY-CLEARING. The drill is a token, and
+ * `petRows.meterPanel` has always resolved it against whatever segment is on screen and degraded
+ * to level 1 when it resolves to nothing (the JOS-105 rule) — so a fight lacking that subject
+ * already renders the clean source list, without anybody wiping the stored value. JOS-240 only had
+ * to stop the wiping and make the token's identity survive the trip: it now carries the row's NAME
+ * beside its id, because half these ids are per-spawn world instances (`petRows.resolveSubject`).
+ *
+ * The FIGHT SELECTION IS GLOBAL (useCombat/useGlobalFight: it lives in main and the overlays share
+ * it), so the clear was never even reliable — a fight picked in an overlay moved this view's
+ * selection and this handler never ran. One behavior in both directions is the fix, not a second
+ * clear somewhere else.
+ *
+ * WHERE THIS LIVES IS STILL JOS-116'S ANSWER: on the HANDLER, never in an effect keyed on `mode`.
+ * An effect cannot tell a user's click from a mount, and this view mounts holding a stored drill —
+ * so the effect that used to enforce this rule cleared the value the ticket existed to keep, twice
+ * (once on mount, once when the global fight id arrived from main a frame later). The overlay
+ * reached the same conclusion first and OverlayMeter.tsx states it at length.
  */
 interface Navigation {
   setSelection: (v: string) => void
@@ -229,17 +253,17 @@ interface Navigation {
 }
 
 function undrilling(nav: Navigation, setDrill: (d: Drill | null) => void): Navigation {
-  const clear =
-    <T,>(f: (v: T) => void) =>
-    (v: T): void => {
-      setDrill(null)
-      f(v)
-    }
   return {
-    setSelection: clear(nav.setSelection),
-    setScope: clear(nav.setScope),
-    setMode: clear(nav.setMode),
-    focusFight: clear(nav.focusFight)
+    // Three segment navigations that KEEP the drill (JOS-240) — the subject is resolved against
+    // the new segment, and a segment without it shows level 1 while the memory waits.
+    setSelection: nav.setSelection,
+    setScope: nav.setScope,
+    focusFight: nav.focusFight,
+    // …and the one that does not: a direction change is a different set of subjects entirely.
+    setMode: (m: MeterMode): void => {
+      setDrill(null)
+      nav.setMode(m)
+    }
   }
 }
 
@@ -293,7 +317,8 @@ export default function CombatView({
   // WHERE YOU HAD DRILLED TO — persisted, so a tab switch (which unmounts this whole view) no
   // longer throws it away, and neither does a restart (JOS-116).
   const { drill, setDrill, isOpen, setOpen } = useDashboardDrill(view)
-  // …and the four navigations that make a drill meaningless go back to level 1 first.
+  // …and the ONE navigation that makes a drill meaningless — the direction — goes to level 1
+  // first. Picking another fight no longer does (JOS-240): see `undrilling`.
   const { setSelection, setScope, setMode, focusFight } = undrilling(
     { setSelection: combat.setSelection, setScope: combat.setScope, setMode: setModeState, focusFight: combat.focusFight },
     setDrill
