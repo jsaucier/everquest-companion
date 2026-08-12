@@ -44,6 +44,8 @@ import { ingestAllyPetLeader, ingestForeignCharm, ingestOtherCastBegin } from '.
 // …and its sibling: the three lines that bind one of YOUR pets, extracted VERBATIM by the same
 // split (petClaims.ts). Two ownership features, two modules, one dispatch switch.
 import { bindPetBuffLanding, ingestPetClaim } from './petClaims'
+// …and the coaching nudge that exists BECAUSE those three routes are all there are (JOS-258).
+import { isPetSummonSpell } from './petNudge'
 import { CC_HOLD_MS } from './encounter'
 import { Agg, type DamageEvent } from './aggregate'
 import type { WindowFold } from './procWindows'
@@ -534,6 +536,12 @@ function ingestCast(st: EngineState, ev: LogEvent): boolean {
     case 'castBegin':
       st.recentCasts.note(ev.spell, ev.ts)
       st.charm.noteCastBegin(ev.spell, ev.ts)
+      // …AND THE THIRD READER OF THE SAME EXCLUSIVITY (JOS-258). A pet SUMMON is knowable from
+      // this line and only from this line — the summon itself prints nothing the log can attribute
+      // — so a summon with no bind behind it is the one moment the meter can honestly say it is
+      // about to miss a pet. LIVE ONLY: a summon from four hours ago is not news, and the whole
+      // point of `hydrating` is that a replayed moment must not be dressed up as the present.
+      if (!st.hydrating && isPetSummonSpell(ev.spell)) st.petNudge.noteSummonCast(ev.ts)
       return true
     case 'castFizzle':
     case 'castInterrupted':
@@ -542,6 +550,9 @@ function ingestCast(st: EngineState, ev: LogEvent): boolean {
       // it were the cast. An interrupt can still RECOVER, which is what `castResumed` is for.
       st.recentCasts.forget(ev.spell)
       st.charm.noteCastFailed(ev.spell, ev.ts)
+      // The same argument, for the nudge: a summon that never resolved summoned nothing, and a
+      // nudge about a pet that does not exist is exactly the staleness the ruling forbids.
+      if (isPetSummonSpell(ev.spell)) st.petNudge.noteCastFailed()
       return true
     case 'otherCastBegin':
       // THE LINE COMBAT NEVER INGESTED (JOS-250 — allyRouting.ts). The only sentence in this log
@@ -704,6 +715,9 @@ function ingestOne(st: EngineState, ev: LogEvent, live: boolean): void {
   // The ally binds age out on the same log clock (JOS-250) — a charm cannot outlive its own
   // spell, so the hold is a certainty rather than a heuristic and needs no evidence to fire.
   st.sweepAlly(ev.ts)
+  // …and the pet nudge times out on it too (JOS-258), from here and from snapshot(now), for the
+  // reason the other two do: whichever observes the deadline first should be the one that acts.
+  st.petNudge.sweep(ev.ts)
   if (ingestWorld(st, ev)) return
   if (ingestCombat(st, ev)) return
   if (ingestCast(st, ev)) return

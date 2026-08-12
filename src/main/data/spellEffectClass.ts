@@ -66,6 +66,7 @@ import { spellCanonKey } from '../log/parseCommon'
  */
 export type SpellEffectClass =
   | 'charm'
+  | 'summonPet'
   | 'mez'
   | 'root'
   | 'snare'
@@ -97,6 +98,24 @@ const EFFECT_RULES: readonly EffectRule[] = [
     klass: 'charm',
     test: /^charm\b/i,
     note: 'Both phrasings: "Charm up to level 25" (17 rows) and "Charm (up to L37)" (7). 24 rows, 23 names, and it is the JOS-250 audit roster exactly.'
+  },
+  {
+    klass: 'summonPet',
+    // JOS-258. THE PET SUMMON, read the same way — and the reason it is a rule here rather than a
+    // `spellType === 'Pet'` test is that the wiki's TYPE column is narrower than its own effect
+    // list: 83 rows are typed Pet, 104 rows say `Summon Pet:` in so many words, and the 18 the type
+    // column misses include every Vocarate/Greater Vocaration (the magician's top elementals) and
+    // `Zumaik\`s Animation`. Reading what the spell DOES finds them; reading how somebody filed it
+    // does not — which is the whole argument of this module, applied one class further.
+    //
+    // THREE HEADS, all measured, because the necromancer's two top pets are spelled differently:
+    // `Summon Pet: Level 19 Skeletal Pet` (98 rows), `Summon Skeleton Pet: skel_pet_43_` (Minion of
+    // Shadows, Servant of Bones) and `Summon Spectre Pet` (Emissary of Thule). DELIBERATELY NOT in
+    // the family: `Call Pet` (Summon Companion — it TELEPORTS the pet you already have and summons
+    // nothing), `Pet Power Increase`, `Decrease Pet Size by 50%` (Tiny Companion) and the whole
+    // `Summon Item` head, which is 141 rows away from anything with a name of its own.
+    test: /^summon (pet|spectre pet|skeleton pet)\b/i,
+    note: '104 rows / 102 canonical names; 101 of the rows (99 names) are player-castable. Both the Self forms and the one Single form (Flaming Sword of Xuzl) count - a summon is a summon whoever the wiki says it targets.'
   },
   {
     klass: 'mez',
@@ -267,6 +286,22 @@ export function charmRoster(spells: readonly SpellEntry[], opts?: RosterOptions)
  * is not a hold, and the whole point of deriving the roster is that this distinction now comes from
  * the effect line rather than from remembering the incident.
  */
+/**
+ * THE PET-SUMMON ROSTER (JOS-258): every spell whose effect list says it summons you a pet.
+ *
+ * `targetOnly` is OFF here and that is the point of the override. The roster the charm reader wants
+ * refuses `targetType: 'Self'` because its consumer is a sentence about a spell you cast on
+ * something else; a pet summon is cast on NOBODY — 103 of the 104 rows are `Self` — and its
+ * consumer is `You begin casting <Spell>.`, a line about the caster. Same data, opposite gate,
+ * which is exactly why the gate is an argument rather than a property of the class.
+ *
+ * The CASTABLE gate stays on: `Manifest Elements`, `Mistwalker` and `Summon Golin` are NPC-only, so
+ * no player ever prints a cast line for one.
+ */
+export function petSummonRoster(spells: readonly SpellEntry[], opts?: RosterOptions): Set<string> {
+  return effectRoster(spells, 'summonPet', { targetOnly: false, ...opts })
+}
+
 export function holdRoster(spells: readonly SpellEntry[], opts?: RosterOptions): Set<string> {
   const out = effectRoster(spells, 'mez', opts)
   for (const k of effectRoster(spells, 'root', opts)) out.add(k)

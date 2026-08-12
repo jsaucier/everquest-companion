@@ -900,6 +900,24 @@ export interface CurrentTarget {
   lastTs: number
 }
 
+/**
+ * THE PET NUDGE (JOS-258) — present ONLY while the meter wants to say one sentence about a pet it
+ * cannot see, and absent in every other state.
+ *
+ * The engine arms this on the player's own pet-summon cast and clears it the moment any of the
+ * three petClaims.ts routes binds a pet; if none does, it draws for a fixed span and then times
+ * out on its own. The owner's ruling is that staleness and repetition are the failure modes here,
+ * so ABSENCE is the normal value and the renderer has no dismiss state of its own to keep: it
+ * renders exactly what the field says, poll by poll.
+ */
+export interface PetSummonNudge {
+  /** epoch ms of the `You begin casting <a pet summon>.` line that armed it. */
+  summonedTs: number
+  /** epoch ms at which it stops being shown. Carried so the UI can say nothing about a nudge whose
+   *  window closed between two polls, without re-deriving the engine's constants. */
+  expiresTs: number
+}
+
 export interface CombatSnapshot {
   selectedId: string
   selected: SegmentView | null
@@ -948,6 +966,14 @@ export interface CombatSnapshot {
    * silently hiding people (law 1 — unknown must not hide).
    */
   roster: RosterSnap
+  /**
+   * THE ONE-SENTENCE COACHING NUDGE for a summoned pet nothing has bound yet (JOS-258). Absent
+   * almost always — see PetSummonNudge. It is deliberately NOT a revival of the deleted
+   * `petClaims` field below: that one asked the user a QUESTION about an entity and acted on the
+   * answer, which is the detector JOS-49 cut. This states a fact about the game's own log and asks
+   * for nothing; the meter learns the pet only through the same three routes it always did.
+   */
+  petNudge?: PetSummonNudge
   // NOTE: there is deliberately NO `petClaims` here any more (JOS-49). The snapshot used to carry
   // "IS THIS THING YOURS?" — unbound pet-shaped entities for the meter to ask about, plus the
   // names the user had claimed. The owner cut the question: "if you just have to pet attack once,

@@ -261,6 +261,9 @@ export class CombatEngine {
       // outlive its own spell, and the deadline must be observed by whichever of the two readers
       // reaches it first.
       this.st.sweepAlly(now)
+      // …and the pet nudge (JOS-258), which is a pure display timer: the log can go quiet for a
+      // minute at a time and a sentence on the screen must still come off it when it said it would.
+      this.st.petNudge.sweep(now)
       evalClosure(this.st, now)
     }
     const st = this.st
@@ -289,7 +292,11 @@ export class CombatEngine {
       // snapshot; teaching the module transport to reach them as well would be a second path to
       // the same five names, and two paths can disagree. The scope chip's label and the rows it
       // filters are then guaranteed to describe one roster, read in one call.
-      roster: st.rosterSnap()
+      roster: st.rosterSnap(),
+      // THE PET NUDGE (JOS-258) — undefined in every state but the one, which is what keeps the
+      // "no persistent banner" promise structural. It reads the SAME `now` the sweep above just
+      // used, so a nudge can never survive the poll that expired it.
+      petNudge: st.petNudge.view(now)
     }
   }
 

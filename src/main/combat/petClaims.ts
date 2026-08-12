@@ -60,6 +60,11 @@ function bindPetClaim(st: EngineState, name: string, ts: number, via: ClaimVia):
   st.notePet(key)
   // The claim is also the corroboration a provisional charm bind was waiting for.
   st.charm.notePetEvidence(key)
+  // …and it is the ANSWER to the JOS-258 nudge, whichever of the three routes produced it. A bound
+  // pet needs no coaching, so the nudge dismisses EARLY here — and one that arrives inside the
+  // grace window means it was never drawn at all. All three routes go through this function, which
+  // is the whole reason there is one place to say this.
+  st.petNudge.noteBound()
   const what = promote ? 'charm claim' : 'pet claim'
   st.log(ts, promote ? 'charm' : 'pet', 'info', `⚡ ${what} ${st.world.label(inst)} [${inst.instanceId}]${CLAIM_NOTE[via]}`)
   // SINGLE-PET SUCCESSION (JOS-54): claiming a NEW summoned pet retires the previous one inside

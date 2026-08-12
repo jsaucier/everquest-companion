@@ -26,6 +26,7 @@ import { CharmModel } from './charmModel'
 import { AllyCharms } from './allyCharms'
 import { SpecialAttacks } from './specialAttacks'
 import { RecentCasts } from './procDetect'
+import { PetNudgeState } from './petNudge'
 import { EMPTY_ROSTER, EMPTY_ROSTER_VIEW, type RosterSnap, type RosterView } from '../../shared/roster'
 import type { ClassifiedLine, CoatSlot } from '../../shared/combat'
 
@@ -223,6 +224,14 @@ export class EngineState {
    */
   specials = new SpecialAttacks()
   /**
+   * THE ONE-SENTENCE NUDGE FOR AN UNBOUND SUMMONED PET (JOS-258, petNudge.ts).
+   *
+   * It is a DISPLAY timer and nothing else: it attributes no damage, opens no encounter, enters no
+   * roster and is read by exactly one field of the snapshot. Armed by the player's own pet-summon
+   * cast, cleared by any of the three petClaims.ts binds, and expired by its own clock.
+   */
+  petNudge = new PetNudgeState()
+  /**
    * THE ENGINE'S OWN ATTRIBUTION SEAM (JOS-59, foldProbe.ts). Undefined on every boot and in
    * every test; installed only by `CombatEngine.attachFoldProbe`, which only the bench calls.
    * Read as `const p = this.probe; if (p) …` on the hot paths — one field read and one branch.
@@ -283,6 +292,7 @@ export class EngineState {
     this.recentCasts.clear()
     this.quickBuffTs = 0
     this.specials.reset()
+    this.petNudge.reset()
   }
 
   log(ts: number, cat: string, role: ClassifiedLine['role'], text: string): void {
