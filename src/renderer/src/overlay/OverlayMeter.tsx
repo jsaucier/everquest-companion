@@ -1,6 +1,6 @@
 import { type JSX, useState } from 'react'
 import type { OverlayKind } from '@shared/types'
-import type { CombatSnapshot, SegmentView } from '@shared/combat'
+import type { CombatSnapshot, PetSummonNudge, SegmentView } from '@shared/combat'
 import { formatRate } from '../lib/formatRate'
 import { formatTime } from '../lib/formatDate'
 import { LIVE_SELECTION, scopeOptions, type ScopeOption } from '../features/combat/dashboardData'
@@ -9,6 +9,7 @@ import { type OverlaySelectRow } from './OverlaySelect'
 import { OverlayHeader } from './OverlayHeader'
 import { MeterBars } from './meterBars'
 import { MeterPane } from './scopeFloor'
+import { PetNudgeCard } from './petNudgeCard'
 import { TextScaleStepper } from './TextScaleStepper'
 import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
 import { useOverlayCombat } from './useOverlayCombat'
@@ -126,6 +127,19 @@ function meterView(
   }
 }
 
+/**
+ * THE PET NUDGE (JOS-258), gated the way every other live signal on this surface is.
+ *
+ * No local state and no dismiss anywhere in the renderer: the engine decides, per poll, whether the
+ * sentence exists — and it stops existing on its own. Suppressed while the log is still folding for
+ * the reason `meterView` blanks everything else then: a summon replayed out of a months-old log is
+ * a historical moment, not something to tell somebody about now.
+ */
+function liveNudge(snap: CombatSnapshot | null): PetSummonNudge | undefined {
+  if (!snap || snap.hydrating) return undefined
+  return snap.petNudge
+}
+
 export default function OverlayMeter(): JSX.Element {
   // `kind` comes from the preload bridge (read from the window's ?kind= query). Fall back to
   // 'fight' if the bridge is momentarily absent (e.g. an HMR reload before the preload re-runs).
@@ -238,6 +252,7 @@ export default function OverlayMeter(): JSX.Element {
           label: chipLabel(meterScope, roster),
           title: `${SCOPE_HINT[meterScope]}. Change it in Preferences > Combat.`
         }}
+        notice={<PetNudgeCard nudge={liveNudge(snap)} />}
       >
         <MeterBars
           seg={seg}

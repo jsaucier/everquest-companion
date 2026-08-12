@@ -67,6 +67,9 @@ import { stepPinnedScroll } from './overlayScrollSteps.mjs'
 // …and JOS-187's: an overlay whose monitor went away, and the rule that the store keeps the
 // rectangle the user chose while the screen gets the one that fits.
 import { stepOverlayDisplay } from './overlayDisplaySteps.mjs'
+// …and JOS-258's: the one-sentence nudge for a summoned pet nothing has bound, which lives on this
+// same window's content background and takes itself off again.
+import { stepPetNudge } from './overlayPetNudgeSteps.mjs'
 
 /** The overlay open-state this spec's second launch runs against (`overlays.fight` in the store). */
 interface OverlayBridge {
@@ -631,6 +634,9 @@ async function main(): Promise<void> {
     await setLocked(ov, false)
     await stepTitleBarRoom(ov)
     await stepTotalOnPanel(ov, await longestFightName(page))
+    // LAST of the steps that APPEND to the tailed log, deliberately: every measurement above is
+    // taken against the staged fixture exactly as committed, and this one writes a line into it.
+    await stepPetNudge(log, ov)
     // Everything below closes and reopens the very window every step above holds `ov` for, so `ov`
     // is dead from here on — both of these find their own overlay page.
     await stepOverlayDisplay(app, page)

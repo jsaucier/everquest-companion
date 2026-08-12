@@ -109,6 +109,7 @@ export function MeterPane({
   scope,
   locked,
   capture,
+  notice,
   children
 }: {
   textScale: number
@@ -117,6 +118,15 @@ export function MeterPane({
   locked?: boolean
   /** the named-reason sensor from useOverlayChrome */
   capture?: (reason: CaptureReason, active: boolean) => void
+  /**
+   * A TIMED OVERLAY ON THE CONTENT BACKGROUND (JOS-258 — overlay/petNudgeCard.tsx).
+   *
+   * It comes in as a slot rather than as a prop describing the thing, so this file keeps owning
+   * ONE question — where the pane's absolutely-positioned furniture is allowed to sit — without
+   * learning anything about pets. The damage meter fills it; the healing meter passes nothing, and
+   * that asymmetry is deliberate: an unbound pet's missing row is a DAMAGE row.
+   */
+  notice?: React.ReactNode
   children: React.ReactNode
 }): JSX.Element {
   return (
@@ -136,6 +146,7 @@ export function MeterPane({
         {children}
       </OverlayContent>
       <ScopeFloor {...scope} />
+      {notice}
     </div>
   )
 }
