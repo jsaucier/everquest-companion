@@ -2,19 +2,39 @@
 //
 // TWO TIMERS, and they answer different questions, which is why they are not one:
 //
-//   * THE HEARTBEAT (5 min) is COLLECTION. It records `sessionHeartbeat` into the local ring so
+//   * THE HEARTBEAT (10 min) is COLLECTION. It records `sessionHeartbeat` into the local ring so
 //     "how long do sessions actually last" survives a process that is killed rather than closed
 //     — a `sessionEnd` that never fires is exactly the data point you most want. It runs
 //     whenever the user's switch is on, endpoint or no endpoint, because nothing it does leaves
 //     the machine.
 //
-//   * THE FLUSH (60 s) is NETWORK. It starts only when `telemetryFlushEnabled` says so: not
+//   * THE FLUSH (5 min) is NETWORK. It starts only when `telemetryFlushEnabled` says so: not
 //     under e2e, not without an endpoint, not with the switch off, and NOT BEFORE THE FIRST-RUN
 //     NOTICE HAS RENDERED. Same discipline as `startQueueFlush` — one predicate (net.ts),
 //     shared by the starter and the worker, because two copies of a network gate is how one of
 //     them drifts.
 //
 // Both timers are `unref`'d, so neither can be the reason the process stays alive.
+//
+// WHY THOSE TWO NUMBERS AND NOT THE ORIGINAL 60 s / 5 min (JOS-269, owner cost ruling 2026-08-12).
+// Every flush is ONE request through API Gateway, Lambda and DSQL — the three meters that cost
+// money — and the free tier had a month in sight (Lambda at 911k of 1M). Nothing here is a click
+// stream: every event is a COUNTER DELTA that the ingest Lambda sums server-side into a day's row,
+// so ten deltas in one batch aggregate to exactly what ten batches of one would have. Batching is
+// therefore free of information loss, and 60 s → 5 min is ~5x fewer requests from an active
+// client while 5 min → 10 min halves the idle floor.
+//
+// WHAT IT DOES COST, stated rather than hidden: TIME RESOLUTION on a session that is KILLED. A
+// clean exit still reports `sessionEnd` with the exact uptime; a process that dies is only known
+// to have lived as long as its last heartbeat said, so the worst-case understatement of such a
+// session goes from just under 5 minutes to just under 10. That is a coarsening of the tail of the
+// duration histogram, not a change to what is collected — the events, their fields and their
+// buckets are untouched, and telemetry CONTENT is owner law that this ticket does not get to move.
+//
+// AND ONE THING THAT MUST NOT MOVE WITH IT: the "not now" arm of `flushTelemetry` below. The
+// server's throttle is being halved in the same release, so 429 gets MORE likely, not less — the
+// buffer keeps its records and the next tick tries again, exactly as before. A longer flush period
+// makes that patience cheaper, never optional.
 //
 // WIRED INTO STARTUP from `src/main/index.ts` (the composition root), immediately beside
 // `startQueueFlush()`, and stopped from `window-all-closed` beside `stopQueueFlush()`.
@@ -58,10 +78,14 @@ import { takeErrorReports } from './errorReports'
 import { readRing, writeRing } from './ring'
 import { getTelemetryPrefs } from '../store'
 
-/** Batch cadence. Counts, not click streams — 60 s is the plan's number (T5). */
-export const FLUSH_INTERVAL_MS = 60 * 1000
-/** Session heartbeat cadence (T5): the "is anyone using it right now" pulse. */
-export const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000
+/** Batch cadence. Counts, not click streams — 5 min (JOS-269; the plan's T5 number was 60 s, and
+ *  the header says why one request in five minutes buys the same numbers for a fifth of the bill). */
+export const FLUSH_INTERVAL_MS = 5 * 60 * 1000
+/** Session heartbeat cadence: the "is anyone using it right now" pulse, 10 min (JOS-269; T5 said
+ *  5). A MULTIPLE OF THE FLUSH ON PURPOSE — a heartbeat tick always coincides with a flush tick, so
+ *  the pulse rides out on the same timer turn that records it rather than waiting for the next one,
+ *  and `liveSessions.ts` can keep reading one heartbeat per session per bucket. */
+export const HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000
 
 /**
  * Send the batch this tick has to send, and return it once the server has ACCEPTED it (null
@@ -128,7 +152,8 @@ function startupField(): { startup?: StartupReplayStats } {
  * in it — is what says "a client on this build is capable of reporting". Emitting only on a bad
  * session would make a healthy build look exactly like a build that predates this code, and the
  * panel could never honestly separate "no errors" from "no data". The cost is one extra ring
- * record per five minutes, which is nothing; the alternative costs the question its answer.
+ * record per ten minutes (JOS-269 halved the rate this is written at, and it was already
+ * nothing); the alternative costs the question its answer.
  *
  * It is a SEPARATE `recordEvent` rather than a field on the session event because `healthCounters`
  * is an existing kind in the shipped contract — the ingest Lambda already validates it — so this
@@ -149,7 +174,7 @@ function reportHealth(): void {
  * same argument read from the other side. `healthCounters` is written even when every count is
  * zero because the report ITSELF is the per-version "a client on this build can report at all"
  * signal, and `healthReports` is the denominator every rate is divided by. That denominator
- * already exists — so an empty `errorReport` every five minutes would add a ring record saying
+ * already exists — so an empty `errorReport` every ten minutes would add a ring record saying
  * something `healthReports` has already said, and would spend the 500-entry buffer doing it.
  *
  * `recordEvent` IS THE GATE, here as everywhere: the user's switch is checked there, once, and
@@ -193,13 +218,19 @@ function startTimers(prefs: TelemetryPrefs): void {
   heartbeat = setInterval(() => {
     // The heartbeat is also what DRAINS the parsed-line delta (collector.ts): the counter is
     // reported by the same event that proves the session was still alive to do the parsing, so a
-    // killed process loses at most the last five minutes of it.
+    // killed process loses at most the last ten minutes of it (JOS-269; it was five). A LOST TAIL
+    // IS NOT A MISCOUNT of an ordinary exit — `stopTelemetry` drains the same counter below — so
+    // what widened is only how much a CRASH can swallow, and a counter is the shape that survives
+    // that best.
     recordEvent({
       t: 'sessionHeartbeat',
       uptimeMs: sessionUptimeMs(),
       linesParsed: takeLinesParsed(),
       // …and this launch's startup replay, on the first heartbeat after it finished (JOS-57).
-      // Drained, so exactly one report carries it: one launch is one reading.
+      // Drained, so exactly one report carries it: one launch is one reading. THE 10-MINUTE
+      // HEARTBEAT DOES NOT ENDANGER THAT — the drain is a race between this and `sessionEnd`,
+      // whichever fires first, and `takeStartupReplay` empties the slot either way. A longer
+      // heartbeat only shifts WHICH of the two carries it; it can never lose or duplicate it.
       ...startupField()
     })
     reportHealth()
@@ -334,10 +365,12 @@ export function stopTelemetry(): void {
       durationMs: uptime,
       viewsVisited: viewsVisited(),
       // The tail of the line delta: everything parsed since the last heartbeat. Without it every
-      // session under five minutes would report zero lines, and short sessions are common.
+      // session under ten minutes would report zero lines, and short sessions are common — MORE of
+      // them fall in that band now that the heartbeat is 10 min (JOS-269), which makes this drain
+      // load-bearing for a larger share of sessions rather than a rarer edge.
       linesParsed: takeLinesParsed(),
-      // …and the startup reading, if no heartbeat got there first — which is the common case,
-      // since most sessions end before the five-minute mark.
+      // …and the startup reading, if no heartbeat got there first — which is the common case, and
+      // more common still now: most sessions end before the ten-minute mark.
       ...startupField()
     })
     // The tail of the health deltas, on the same terms as the line delta beside it. Inside the

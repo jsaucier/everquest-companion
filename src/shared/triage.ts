@@ -451,8 +451,10 @@ export type TriageDownloads =
  * is not a day.
  *
  * ITS SOURCE IS THE CloudWatch EMF METRIC `EQCompanion/Telemetry · Heartbeats` (Channel=prod),
- * which the ingest Lambda emits per accepted batch. One heartbeat per open session per five
- * minutes, so the Sum over a 300-second period IS the number of sessions that were alive in it.
+ * which the ingest Lambda emits per accepted batch. One heartbeat per open session per HEARTBEAT
+ * PERIOD — ten minutes since JOS-269 — so the Sum over a 600-second period IS the number of
+ * sessions that were alive in it. The period is the client's cadence restated, never a chosen
+ * granularity: `liveSessions.ts BUCKET_MS` says what happens if the two drift apart.
  * Deliberately channel-split rather than cohort-split (a CloudWatch metric's identity is its
  * dimension set; adding Cohort would orphan every dashboard widget).
  *
@@ -468,7 +470,8 @@ export type TriageDownloads =
 export type TriageLiveSessions =
   | {
       available: true
-      /** Sessions alive in the last COMPLETE 5-minute bucket. Zero is a real answer. */
+      /** Sessions alive in the last COMPLETE heartbeat-length bucket (10 min). Zero is a real
+       *  answer. */
       activeNow: number
       /** End of that bucket, ms — what "now" actually means in this number. */
       asOfMs: number

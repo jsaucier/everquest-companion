@@ -38,8 +38,9 @@
 // filed `telemetry.json parse failed; starting empty`, which a temp-and-rename write is supposed
 // to make impossible — but renaming a file whose bytes are still only in the page cache is exactly
 // how an "atomic" write still ends up truncated after an unclean shutdown, and a machine with a
-// full disk is a machine having a bad day. One extra syscall, on a file written a few times a
-// minute, buys the guarantee the rename was already claiming.
+// full disk is a machine having a bad day. One extra syscall, on a file written a handful of times
+// per timer round (JOS-269 stretched those rounds to 5 and 10 minutes, so the syscall is rarer
+// still), buys the guarantee the rename was already claiming.
 //
 // THIS FILE IMPORTS `node:fs` AND NOTHING ELSE — no Electron, no app paths, no logger — so
 // `ring.ts`'s file half stays the thin shell its header promises, and this half is node-testable
@@ -138,11 +139,36 @@ export function writeFileDurable(dir: string, path: string, data: string, io: Du
 
 // ------------------------------------------------------------------ the storm gate
 
-/** First pause after a failed write. Long enough that a 5-minute heartbeat and a flush cannot
- *  both re-file the same failure, short enough that freeing the disk is noticed within a minute. */
+/**
+ * First pause after a failed write.
+ *
+ * RE-DERIVED, AND DELIBERATELY UNCHANGED, WHEN THE CADENCES MOVED (JOS-269: flush 60 s → 5 min,
+ * heartbeat 5 min → 10 min). The old sentence justified 30 s as "long enough that a 5-minute
+ * heartbeat and a flush cannot both re-file the same failure", which read as if this constant were
+ * a function of those two periods. It is not, and the new numbers make that plain: what this pause
+ * has to swallow is a BURST OF WRITES THAT ARRIVE TOGETHER, not the gap between two timers.
+ *
+ * The bursts are the same two they always were, and both are sub-second:
+ *   * a heartbeat tick fires three `recordEvent` writes back to back (`sessionHeartbeat`,
+ *     `healthCounters`, and any error reports), and — because 10 min is a MULTIPLE of the 5-minute
+ *     flush — the flush's `retireBatch` write lands in the same timer turn. Four doomed writes
+ *     inside a millisecond; 30 s coalesces them into one filed failure, with three orders of
+ *     magnitude to spare;
+ *   * user activity (view switches, feature flips, funnel steps) writes on no schedule at all,
+ *     and a person clicking around a full disk was the shape behind the ~100-occurrence
+ *     fingerprint in the fleet evidence above.
+ *
+ * The longer cadences make this gate LESS load-bearing, never more: the timers now touch the disk
+ * a fifth as often, so the doomed-write rate they contribute fell with them. 30 s stays because it
+ * is still the shortest pause that flattens a burst while a freed disk is noticed on the very next
+ * write — and moving it would change durability behaviour in a ticket that is only allowed to
+ * change cadence.
+ */
 export const WRITE_RETRY_BASE_MS = 30_000
 /** The ceiling the doubling stops at. A session that has been failing for a quarter of an hour is
- *  not about to be rescued by trying more often. */
+ *  not about to be rescued by trying more often. (The ladder now CLIMBS more slowly in wall-clock
+ *  terms — it advances one rung per failed write, and the timers supply those five times less
+ *  often — which is the gate working, not drifting: fewer attempts is fewer occurrences filed.) */
 export const WRITE_RETRY_MAX_MS = 15 * 60_000
 
 /** How long to wait after `n` consecutive failures: 30s, 1m, 2m, 4m… capped. `n <= 0` is "now". */

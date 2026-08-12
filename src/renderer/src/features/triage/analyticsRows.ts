@@ -97,7 +97,11 @@ export function liveTiles(live: TriageLiveSessions | undefined): StatTile[] {
     return [{ label: 'Live now', value: '-', note: live.reason }]
   }
   const tiles: StatTile[] = [
-    { label: 'Live now', value: formatNum(live.activeNow), note: 'sessions in the last 5 min' }
+    // THE WINDOW IN THIS NOTE IS `liveSessions.ts BUCKET_MS`, WHICH IS THE CLIENT'S HEARTBEAT
+    // CADENCE (10 min since JOS-269, 5 before it). It is spelled out rather than imported because
+    // this is the renderer and that constant lives in main; the note is what the tile PROMISES,
+    // so the two move together or the tile is lying about its own window.
+    { label: 'Live now', value: formatNum(live.activeNow), note: 'sessions in the last 10 min' }
   ]
   if (live.avgAgeMs === null) return tiles
   tiles.push({
