@@ -491,9 +491,22 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   (`BuffInstances.onOfflinePause`; the S5 fixture proves it to the second); a
   debuff you left on a mob is a timer in the WORLD and is never shifted
   (`modules/buffTimers.ts` takes an EXPLICIT no-op on `offlineGap`). **The
-  boundary is evidence, not a timeout**: every login prints a reconnect
-  preamble first, so `modules/buffsSession.ts` holds the question open for
-  `LOGIN_CONFIRM_MS` and drops pre-hole instances only if no login turns up.
+  boundary is evidence, not a timeout — AND SINCE JOS-262 THERE IS NO TIMEOUT
+  LEFT ANYWHERE IN IT.** Every login prints a reconnect preamble, whose LENGTH
+  is a client-side duration; while the anchor was a 30s window and the hole's
+  answer a 30s timer, a slow-loading machine got no pause at all (measured:
+  31s of preamble = no `offlineGap` emitted; the heartbeat wiping the previous
+  session's buffs seconds before the `Welcome`). Both constants are gone. ONE
+  shared predicate decides both halves: `sessionDetector.ts inWorldEvidence` —
+  a line that could ONLY have been printed for THIS character. It anchors
+  `fromTs`, and `modules/buffsSession.ts` rules a hole unexplained only when
+  such a line arrives with no intervening login. **"Typed" is NOT the test and
+  the log says so**: other players' combat lands in the preamble (two `death`
+  events 2s before the Aug 07 Welcome), so a stranger's kill proves the CLIENT
+  is connected and nothing about you. The priced cost: `fromTs` stays a LOWER
+  bound, so a gap never under-states an absence and runs long by the trailing
+  run of lines that name nobody — 24s across an ordinary camp (the countdown
+  ticks are `unknown`), 56 min in the worst AFK park measured over 45 logins.
   **And the learner refuses BOTH halves of a cycle that spans an absence**
   (`spannedGap`) — both err LONG, the direction law 5's recency-weighted MAX
   is most sensitive to. Censor, never correct. Zoning is not a logout; death
