@@ -183,14 +183,16 @@ function inPanelCount(page: Page, sel: string): Promise<number> {
   )
 }
 
-/** Leave for the Overview and confirm the Combat view really unmounted. */
-async function leaveCombat(page: Page): Promise<boolean> {
+/** Leave for the Overview and confirm the Combat view really unmounted. Exported because every
+ *  persisted view pref owes the same proof (AGENTS.md: assert the view was GONE first), and two
+ *  copies of "did the tab actually unmount" is exactly how one of them ends up not asserting it. */
+export async function leaveCombat(page: Page): Promise<boolean> {
   await page.click('[data-testid="nav-overview"]', { timeout: 30_000 })
   return settleGone(page, DASH, { timeoutMs: 15_000 })
 }
 
 /** …and back, waiting for the dashboard rather than for a clock. */
-async function returnToCombat(page: Page): Promise<boolean> {
+export async function returnToCombat(page: Page): Promise<boolean> {
   await page.click('[data-testid="nav-combat"]', { timeout: 30_000 })
   return (await settleCount(page, DASH)) === 1
 }

@@ -76,6 +76,7 @@ import { meterRows, stepDrillAcrossFights, stepDrillRoundTrip } from './drill.mj
 import {
   clickScope,
   clickView,
+  stepChartLegendToggles,
   stepFrozenList,
   stepHealingDimension,
   stepMeterDrill,
@@ -565,6 +566,11 @@ async function main(): Promise<void> {
     // 13. HOVER on the real charts (crosshair + shared tooltip + the drag seam) — see the
     //     harness, which owns the steps: this file is at its factoring ceiling.
     await checkChartHover(page)
+    // 13a. THE DPS LEGEND IS A CONTROL (JOS-264) — straight after the hover, because it needs the
+    //      same thing that step does (a selection whose curve is actually drawn) and it hands the
+    //      chart back exactly as it found it. Before the live-pull steps: they change what the
+    //      curve is drawing, and this asserts the DRAWING.
+    await stepChartLegendToggles(page)
     // 14. THE PET NOBODY ASKS ABOUT (JOS-49) — an unbound pet is invisible and silent, and one
     //     `/pet attack` puts it on the meter. LAST, because it scripts a pull and leaves it OPEN
     //     so the assertions read a live meter. Nothing below it may assume a quiet log.

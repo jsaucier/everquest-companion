@@ -20,6 +20,7 @@ import type { Page } from 'playwright-core'
 import {
   check,
   closePicker,
+  combatText,
   countOf,
   listedValues,
   note,
@@ -32,7 +33,7 @@ import {
   type Snap,
   type SnapEntity
 } from './appHarness.mjs'
-import { drilled, meterRows } from './drill.mjs'
+import { drilled, leaveCombat, meterRows, returnToCombat } from './drill.mjs'
 import {
   RETIRED_SCOPE_CHIP,
   SCOPE_LABEL_SEL,
@@ -587,6 +588,91 @@ const petRowFor = (s: Snap, name: string): SnapEntity | undefined =>
  * unit test installs it by hand; only a real launch proves the product does — and the harness
  * tails `eqlog_Primitive_freeport.txt`, so the answer has to name Primitive to work at all.
  */
+// ── THE DPS LEGEND SWITCHES ITS OWN LINES OFF (JOS-264) ────────────────────────────────────
+//
+// From a report of the chart read from across a room: four curves plus four marker colours in one
+// small plot, and the ask was to be able to put some of it away. The geometry is node-tested
+// (tests/dpsChartLines.test.mts) and so is the stored vocabulary (tests/combatPrefs.test.mts).
+// What only the real app can show is the part those two cannot see:
+//   * the legend entry is WIRED to the drawing — a click removes that line's element from the SVG;
+//   * hiding is REVERSIBLE, because the entry it was made from is still on screen (dimmed) rather
+//     than deleted. A legend that removed its own entries would be a one-way door, and no unit
+//     test can tell "styled as off" from "gone";
+//   * it SURVIVES THE TAB SWITCH, which is the whole reason this is a stored pref rather than a
+//     useState (AGENTS.md: prove it by navigating and asserting the view was GONE first);
+//   * and ALL LINES OFF renders a card, not a crash or an empty box.
+//
+// It leaves the legend exactly as it found it, so no step after this one inherits a hidden line.
+
+const LEGEND_KEYS = ['out', 'pet', 'group', 'inc'] as const
+const DPS_PLOT = '[data-testid="dps-plot"]'
+const legendSel = (k: string): string => `[data-testid="chart-legend-${k}"]`
+const lineSel = (k: string): string => `[data-testid="dps-line-${k}"]`
+
+/** '1' when the entry says its line is hidden, '0' when drawn, '' when there is no such entry —
+ *  the control's own account of the state, which is what the user reads off the strip. */
+function legendHidden(page: Page, k: string): Promise<string> {
+  return page.evaluate((sel) => document.querySelector(sel)?.getAttribute('data-hidden') ?? '', legendSel(k))
+}
+
+/** The curve entries this fight actually has. `pet`/`group`/`incoming` appear only when the fight
+ *  had one, so the set is log-dependent and is read rather than assumed. */
+async function legendEntries(page: Page): Promise<string[]> {
+  const found: string[] = []
+  for (const k of LEGEND_KEYS) {
+    if ((await countOf(page, legendSel(k))) === 1) found.push(k)
+  }
+  return found
+}
+
+export async function stepChartLegendToggles(page: Page): Promise<void> {
+  // The outgoing entry exists whenever the curve is drawn at all; no curve is a NOTE, the same
+  // convention the hover step uses for a ringless or damage-free selection.
+  if ((await countOf(page, legendSel('out'))) === 0) {
+    note('the DPS-over-time curve is not drawn for this selection - its legend is not asserted this run')
+    return
+  }
+  const entries = await legendEntries(page)
+  check('every drawn line has a legend entry', entries.includes('out'), entries.join(' · '))
+
+  // 1. ONE CLICK TAKES A LINE OFF THE PLOT — and leaves the entry that says so.
+  await page.click(legendSel('out'), { timeout: 15_000 })
+  check('clicking a legend entry takes its line off the chart', await settleGone(page, lineSel('out'), { timeoutMs: 10_000 }))
+  check('…and the shaded area under it goes with it, not on its own', (await countOf(page, '[data-testid="dps-area"]')) === 0)
+  check(
+    'THE ENTRY STAYS IN THE LEGEND, DIMMED — hidden is a state you can see and undo',
+    (await countOf(page, legendSel('out'))) === 1 && (await legendHidden(page, 'out')) === '1',
+    `entry ${String(await countOf(page, legendSel('out')))}, data-hidden=${await legendHidden(page, 'out')}`
+  )
+
+  // 2. …AND IT SURVIVES THE TAB SWITCH. A `useState` here would pass every check above and lose
+  //    the choice on the way to the Overview tab — the JOS-90/97/116 bug, which is why the value
+  //    is a renderer pref.
+  const left = await leaveCombat(page)
+  if (check('leaving the Combat tab unmounts it', left) && (await returnToCombat(page))) {
+    const still = await settle(() => legendHidden(page, 'out'), (v) => v === '1', { timeoutMs: 10_000 })
+    check('A HIDDEN LINE SURVIVES LEAVING AND RETURNING TO THE COMBAT TAB', still === '1', `data-hidden=${still}`)
+    check('…and the line is still off the plot, not merely remembered', (await countOf(page, lineSel('out'))) === 0)
+  }
+
+  // 3. REVERSIBLE from the entry it left behind.
+  await page.click(legendSel('out'), { timeout: 15_000 })
+  check('clicking the dimmed entry draws its line again', (await settleCount(page, lineSel('out'), 1, { timeoutMs: 10_000 })) === 1)
+  check('…and the entry reads as drawn again', (await legendHidden(page, 'out')) === '0')
+
+  // 4. EVERY LINE OFF is a legal state: a note where the plot was, the legend still under it.
+  for (const k of entries) await page.click(legendSel(k), { timeout: 15_000 })
+  check('with every line hidden the card draws no plot at all', await settleGone(page, DPS_PLOT, { timeoutMs: 10_000 }))
+  check('…and says so, rather than rendering an empty box', /every line is hidden/i.test(await combatText(page)))
+  check('…with the whole legend still there to switch one back on', (await legendEntries(page)).length === entries.length)
+  check('…and the dashboard still standing', (await countOf(page, '[data-testid="combat-dashboard"]')) === 1)
+
+  // 5. Put it back the way it was found.
+  for (const k of entries) await page.click(legendSel(k), { timeout: 15_000 })
+  const back = await settleCount(page, DPS_PLOT, 1, { timeoutMs: 10_000 })
+  check('switching them back on restores the chart', back === 1 && (await countOf(page, lineSel('out'))) === 1)
+}
+
 export async function stepPetAnswersWhoLeads(page: Page, log: FixtureLog): Promise<void> {
   const asked = playPetLeaderAnswer(log)
   check('the harness asked the new pet who its leader is', asked === PET_LEADER_LINES, `${String(asked)} lines`)

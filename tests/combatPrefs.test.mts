@@ -35,14 +35,20 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  CHART_LINE_KEYS,
   DEFAULT_METER_SCOPE,
+  DPS_LINE_KEYS,
+  HIDDEN_LINES_KEY,
   METER_SCOPE_KEY,
   NO_DRILL,
   abilityKey,
   drillKey,
   parseDrillMemory,
+  parseHiddenLines,
   readMeterScope,
   serializeDrillMemory,
+  serializeHiddenLines,
+  toggleHiddenLine,
   withAbility,
   withDrill,
   type DrillMemory
@@ -253,4 +259,64 @@ test('an ability opens and closes idempotently, and a no-op click writes nothing
 test('the ability key is the bars own key — category then name', () => {
   assert.equal(abilityKey('melee', 'Kick'), 'melee|Kick')
   assert.equal(abilityKey('slay', 'Slay Undead'), 'slay|Slay Undead')
+})
+
+// ── JOS-264: which of the DPS curve's lines are drawn ────────────────────────────────────
+
+test('nothing hidden is an ABSENT key, both ways round', () => {
+  // The fresh-install state and the state you reach by switching the last line back on must be
+  // the SAME bytes in storage — one shape of "draw everything", so no future reader can find a
+  // second one and treat it differently. Same argument as the drill's absent-key default above.
+  assert.deepEqual(parseHiddenLines(null), [])
+  assert.deepEqual(parseHiddenLines(''), [])
+  assert.equal(serializeHiddenLines([]), null)
+  assert.equal(serializeHiddenLines(toggleHiddenLine(['pet'], 'pet')), null)
+  // The key is namespaced with the rest of the combat view prefs, which is what makes it free.
+  assert.equal(HIDDEN_LINES_KEY, 'eq.combat.chartHidden')
+})
+
+test('a stored hidden set round-trips, in legend order however it was clicked', () => {
+  assert.equal(serializeHiddenLines(['pet', 'inc']), 'pet,inc')
+  assert.deepEqual(parseHiddenLines('pet,inc'), ['pet', 'inc'])
+  // Canonical order is restored on write, so the same SET is always the same string — two users
+  // who hid the same two lines in opposite orders have identical storage.
+  assert.equal(serializeHiddenLines(['inc', 'pet']), 'pet,inc')
+  assert.equal(serializeHiddenLines(['slow', 'out']), 'out,slow')
+  for (const k of CHART_LINE_KEYS) {
+    assert.deepEqual(parseHiddenLines(serializeHiddenLines([k])), [k], `${k} must survive a round trip`)
+  }
+})
+
+test('an unreadable token is dropped, never the whole set — one bad name cannot blank the chart', () => {
+  // The JOS-105 degrade rule, and the failure it is aimed at: a key written by a future build (a
+  // fifth line) or hand-edited must not resolve to "hide everything" or to an error. Whatever IS
+  // recognised still applies, and nothing else does.
+  assert.deepEqual(parseHiddenLines('pet,heals,inc'), ['pet', 'inc'])
+  assert.deepEqual(parseHiddenLines('nonsense'), [])
+  assert.deepEqual(parseHiddenLines(',,,'), [])
+  assert.deepEqual(parseHiddenLines(' pet , inc '), ['pet', 'inc'], 'whitespace is not part of a name')
+  assert.deepEqual(parseHiddenLines('pet,pet'), ['pet'], 'a repeat is one line, not two')
+  assert.deepEqual(parseHiddenLines('PET'), [], 'the names are exact — a case-folded guess is a guess')
+})
+
+test('EVERY line hidden is a legal, storable state', () => {
+  // The all-off case has to survive a restart like any other: the card answers it with a note and
+  // its legend, and a set that refused to store it would quietly redraw lines the user switched off.
+  const all = [...CHART_LINE_KEYS]
+  const raw = serializeHiddenLines(all)
+  assert.ok(raw)
+  assert.deepEqual(parseHiddenLines(raw), all)
+  // …and the four CURVES alone, which is the state that empties the plot while the marker ticks
+  // still have kinds to draw.
+  assert.deepEqual(parseHiddenLines(serializeHiddenLines([...DPS_LINE_KEYS])), [...DPS_LINE_KEYS])
+})
+
+test('toggling one line leaves the others exactly where they were', () => {
+  assert.deepEqual(toggleHiddenLine([], 'inc'), ['inc'])
+  assert.deepEqual(toggleHiddenLine(['inc'], 'inc'), [])
+  assert.deepEqual(toggleHiddenLine(['inc'], 'pet'), ['pet', 'inc'])
+  assert.deepEqual(toggleHiddenLine(['pet', 'inc'], 'inc'), ['pet'])
+  // A marker kind is toggled by the same function as a curve — one mechanism, so the legend can
+  // never grow an entry that looks clickable and is not.
+  assert.deepEqual(toggleHiddenLine(['out'], 'slow'), ['out', 'slow'])
 })

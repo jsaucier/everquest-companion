@@ -19,7 +19,7 @@ import { useCallback, useMemo, useRef, type ReactNode } from 'react'
 import { Box, ButtonBase, Stack, Typography } from '@mui/material'
 import type { TimelineView } from '@shared/combat'
 import { formatRate } from '../../lib/formatRate'
-import type { ChartLineKey } from './combatPrefs'
+import type { ChartLineKey, DpsLineKey } from './combatPrefs'
 import { ApproxChip, DashCard, QuietNote, fmtDur } from './combatShared'
 import { approxNote, buildDpsSeries, type DpsSeries } from './dashboardData'
 import {
@@ -83,7 +83,59 @@ function ChartHeaderStats({
   )
 }
 
-/** The three curves + the marker ticks + the y-max readout, in one SVG, under a hover layer. */
+/**
+ * The curves, in painting order: incoming, then the two components of the outgoing sum, then the
+ * headline line on top of its own fill.
+ *
+ * ONE TABLE rather than four hand-written blocks, because each line now has to answer the same
+ * question twice over — did this fight have one, and is the legend hiding it — and four copies of
+ * that is four places for the answers to diverge. `dpsChart` has already folded both into a single
+ * `string | null`, so all this does is draw what is there.
+ *
+ * The testids name the LINES by the legend's own keys (`dps-line-<key>`): whether a line is on the
+ * plot is a user-visible choice now, and an e2e counting `polyline` elements would be counting the
+ * marker ticks' pennants too.
+ */
+const LINE_STYLE: { key: DpsLineKey; color: string; width: number; opacity?: number }[] = [
+  { key: 'inc', color: INC_COLOR, width: 1, opacity: 0.5 },
+  { key: 'pet', color: PET_COLOR, width: 1.2, opacity: 0.85 },
+  // The group's own contribution is drawn like the pet's, for the same reason: the headline curve
+  // is the sum, and this says how much of it was somebody else's.
+  { key: 'group', color: GROUP_COLOR, width: 1.2, opacity: 0.85 },
+  { key: 'out', color: OUT_COLOR, width: 1.8 }
+]
+
+function CurveLines({ chart }: { chart: DpsChart }): React.JSX.Element {
+  const points: Record<DpsLineKey, string | null> = {
+    out: chart.outLine,
+    pet: chart.petLine,
+    group: chart.groupLine,
+    inc: chart.incLine
+  }
+  return (
+    <>
+      {chart.outArea !== null && (
+        <polygon points={chart.outArea} fill={OUT_COLOR} opacity={0.16} data-testid="dps-area" />
+      )}
+      {LINE_STYLE.map(({ key, color, width, opacity }) =>
+        points[key] === null ? null : (
+          <polyline
+            key={key}
+            points={points[key]}
+            fill="none"
+            stroke={color}
+            strokeWidth={width}
+            opacity={opacity}
+            vectorEffect="non-scaling-stroke"
+            data-testid={`dps-line-${key}`}
+          />
+        )
+      )}
+    </>
+  )
+}
+
+/** The curves + the marker ticks + the y-max readout, in one SVG, under a hover layer. */
 function DpsCurve({
   chart,
   series,
@@ -124,50 +176,9 @@ function DpsCurve({
         height={CHART_H}
         preserveAspectRatio="none"
         style={{ display: 'block' }}
+        data-testid="dps-plot"
       >
-        {chart.outArea && <polygon points={chart.outArea} fill={OUT_COLOR} opacity={0.16} />}
-        {chart.incLine && (
-          <polyline
-            points={chart.incLine}
-            fill="none"
-            stroke={INC_COLOR}
-            strokeWidth={1}
-            opacity={0.5}
-            vectorEffect="non-scaling-stroke"
-          />
-        )}
-        {chart.petLine && (
-          <polyline
-            points={chart.petLine}
-            fill="none"
-            stroke={PET_COLOR}
-            strokeWidth={1.2}
-            opacity={0.85}
-            vectorEffect="non-scaling-stroke"
-          />
-        )}
-        {/* Your group's own contribution, under the same outgoing line — drawn like the pet's
-            for the same reason: the headline curve is the sum, and this says how much of it was
-            somebody else's. */}
-        {chart.groupLine && (
-          <polyline
-            points={chart.groupLine}
-            fill="none"
-            stroke={GROUP_COLOR}
-            strokeWidth={1.2}
-            opacity={0.85}
-            vectorEffect="non-scaling-stroke"
-          />
-        )}
-        {chart.outLine && (
-          <polyline
-            points={chart.outLine}
-            fill="none"
-            stroke={OUT_COLOR}
-            strokeWidth={1.8}
-            vectorEffect="non-scaling-stroke"
-          />
-        )}
+        <CurveLines chart={chart} />
         {/* Markers LAST so a tick is never buried under the area fill. */}
         <MarkerTicks markers={markers} />
       </svg>
@@ -196,7 +207,7 @@ function MarkerTicks({ markers }: { markers: readonly PlacedMarker[] }): React.J
   return (
     <>
       {markers.map(({ m, x }, i) => (
-        <g key={`${m.kind}|${m.t}|${i}`} opacity={0.9}>
+        <g key={`${m.kind}|${m.t}|${i}`} opacity={0.9} data-testid="dps-tick" data-kind={m.kind}>
           <line
             x1={x}
             x2={x}
