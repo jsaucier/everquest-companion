@@ -95,6 +95,8 @@ const LOADED = '[data-testid="posky-inventory-fresh-loaded"]'
 /** The command itself, and the HOW affordance the ticket kept (subdued, not absent). */
 const COMMAND = '[data-testid="posky-inventory-fresh-command"]'
 const HOW = '[data-testid="posky-inventory-fresh-steps-toggle"]'
+/** What HOW opens: the numbered steps, on a surface of their own over the list. */
+const STEPS = '[data-testid="posky-inventory-fresh-steps"]'
 /** THE CONTROL THAT NO LONGER EXISTS (JOS-268). Named here only so its absence can be asserted. */
 const RELOAD = '[data-testid="posky-reload-inventory"]'
 /** The dropdown the line now belongs to, and whose value decides whether it is drawn at all. */
@@ -295,6 +297,37 @@ async function stepItIsUnderstated(page: Page): Promise<void> {
   check('…and the HOW affordance is still there, in a quiet voice', how === 'How', how)
 }
 
+/**
+ * ASKING HOW MOVES NOTHING EITHER — the steps open OVER the list, not through it.
+ *
+ * The whole line is an overlay, and the panel it opens is inside that overlay, so the five steps
+ * are drawn on a surface of their own above the quest rows. If the steps ever went back into flow
+ * they would shove the entire tab down by five lines on a click, which is the loudest version of
+ * the defect this ticket is about.
+ */
+async function stepAskingHowMovesNothing(page: Page, before: Layout): Promise<void> {
+  await page.click(HOW, { timeout: 15_000 })
+  const steps = await settle(
+    () => countOf(page, STEPS),
+    (n) => n === 1,
+    { timeoutMs: 8_000 }
+  )
+  if (!check('the HOW affordance opens the steps', steps === 1, `panels=${String(steps)}`)) return
+  const after = await layout(page)
+  check(
+    '…over the rows below, not through them (nothing moved)',
+    after.counts !== null && after.counts === before.counts,
+    `counts top was ${String(before.counts)}, now ${String(after.counts)}`
+  )
+  await page.click(HOW, { timeout: 15_000 })
+  const closed = await settle(
+    () => countOf(page, STEPS),
+    (n) => n === 0,
+    { timeoutMs: 8_000 }
+  )
+  check('…and the same affordance closes them again', closed === 0, `panels=${String(closed)}`)
+}
+
 /** The never-run pair: the player has typed nothing and we have loaded nothing, said separately. */
 async function stepNeverRun(page: Page): Promise<void> {
   const age = await slot(page, AGE)
@@ -431,6 +464,7 @@ async function main(): Promise<void> {
       const base = await stepDefaultSaysNothing(page)
       await stepInventorySourceRevealsIt(page, base)
       await stepItIsUnderstated(page)
+      await stepAskingHowMovesNothing(page, base)
       await stepNeverRun(page)
       readAt = await stepAutoLoads(page, log.installDir)
       await stepItLeavesWithoutMoving(page, base)

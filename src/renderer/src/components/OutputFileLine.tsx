@@ -181,6 +181,11 @@ const QUIET: LineChrome = {
     pl: 2.5,
     pr: 1,
     py: 0.5,
+    // The ROW is `nowrap` (the caller's overlay box is sized by it and the stamps must not stack),
+    // and the steps must not inherit that: five one-line imperatives at the width of the longest
+    // one is a panel that runs off the side of a narrow window.
+    whiteSpace: 'normal',
+    maxWidth: 380,
     bgcolor: 'background.paper',
     border: 1,
     borderColor: 'divider',
