@@ -39,9 +39,9 @@ variable "triage_principal_arn" {
 }
 
 variable "monthly_budget_usd" {
-  description = "AWS Budgets monthly cost limit for the account. Notifications at 50/80/100% go to the ops topic."
+  description = "AWS Budgets monthly cost limit for the account. Notifications at 50/80/100% go to the ops topic. Owner 2026-08-12: raised 10 -> 100 as the intent threshold; the real spend ceiling is the telemetry route throttle (~$1/day at 5 rps)."
   type        = number
-  default     = 10
+  default     = 100
 }
 
 variable "lambda_reserved_concurrency" {
@@ -107,15 +107,15 @@ variable "telemetry_reserved_concurrency" {
 }
 
 variable "telemetry_route_rate_limit" {
-  description = "Steady-state rate (rps) for POST /v1/telemetry. Wider than feedback's because every install is a caller on a 60s flush timer, not a human pressing a button."
+  description = "Steady-state rate (rps) for POST /v1/telemetry. Wider than feedback's because every install is a caller on a flush timer, not a human pressing a button. Owner 2026-08-12: halved 10 -> 5 alongside the client flush going 60s -> 5min (JOS-269); throttled callers buffer and retry by design, and unanswered 429s are unbilled, so this is the account's de facto spend ceiling (~$1/day worst case)."
   type        = number
-  default     = 10
+  default     = 5
 }
 
 variable "telemetry_route_burst_limit" {
-  description = "Burst capacity for POST /v1/telemetry."
+  description = "Burst capacity for POST /v1/telemetry. Halved with the rate limit (owner 2026-08-12)."
   type        = number
-  default     = 20
+  default     = 10
 }
 
 variable "default_max_events_per_id_per_day" {
