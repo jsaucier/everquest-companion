@@ -191,6 +191,12 @@ export type BreakTriggerKind = 'cc' | 'uncharm' | 'buffFade' | 'buffWearOff' | '
  * (the alert EDITOR asks the same question, to caption the field honestly). The two must stay
  * identical, and `tests/earlyWarning.test.mts` pins the equality against the real compiled matcher
  * — the same arrangement `shared/spellLines.ts`'s RANK_TAIL_RE has with the parser's.
+ *
+ * IT IS KEY-BLIND, AND ITS ONE CALLER ASKS ABOUT `refresh` (below). The JOS-259 rank fold that
+ * makes a literal matcher rank-blind belongs to the `spell` key alone, so it lives in
+ * `compileFieldMatch`/`accepts` where the key is known and NOT here: `refresh` is 'true', not a
+ * spell name, and folding it would be a fold over nothing. A caller that ever wants to ask this
+ * about a `spell` spec must ask for the fold too, or it will be asking the older question.
  */
 export function matcherAccepts(spec: string, value: string): boolean {
   if (spec.length >= 2 && spec.startsWith('/') && spec.endsWith('/')) {

@@ -23,6 +23,12 @@
 // Alert defs are owned by the store; the module holds a live copy that main keeps
 // in sync (setDefs) whenever the user saves/deletes an alert.
 //
+// A LITERAL `where.spell` MATCHER IS RANK-BLIND (JOS-259). A spell alert fires for ALL RANKS of
+// that spell — the owner's ruling, and the domain law behind it is that an upgraded spell never
+// downgrades. Both sides of the compare fold through `spellLineKey`, so `Elemental Maelstrom`,
+// `Elemental Maelstrom II` and `Elemental Maelstrom III` are one def's business. `/regex/` specs
+// are untouched. The argument, and its scope, are on `accepts` below.
+//
 // CAPTURE GROUPS (JOS-103). A trigger's regexes may declare NAMED groups, and what they capture
 // rides out on `FiredAlert.captures` so a spoken alert can say it ("Puma on Fail"). THIS FILE IS
 // ONE OF THE TWO ENFORCEMENT POINTS — read the threat model in shared/alertCaptures.ts before
@@ -56,6 +62,10 @@ import {
   type BreakTriggerKind
 } from '../../shared/earlyWarning'
 import type { LogEvent } from '../../shared/logEvents'
+// The repo-wide rank fold (JOS-259). `spellLineKey` is shared/'s mirror of the parser's
+// `spellCanonKey` — tests/spellLines.test.mts pins the two equal — and it is what makes a literal
+// `where.spell` matcher rank-blind; see `accepts`.
+import { spellLineKey } from '../../shared/spellLines'
 import type {
   AlertDef,
   AlertFireRecord,
@@ -93,7 +103,7 @@ const COOLDOWN_KEY_CAP = 500
 
 /**
  * A compiled matcher value: the predicate, plus the RegExp it compiled to when the spec was
- * written in `/regex/` form.
+ * written in `/regex/` form, plus the rank-folded key when it is a LITERAL `spell` matcher.
  *
  * The regex is kept BESIDE the predicate rather than behind it because a named capture group is
  * only readable from the RegExp itself (`exec().groups`) — see `fieldMatches`. Nothing else about
@@ -103,6 +113,13 @@ const COOLDOWN_KEY_CAP = 500
 interface CompiledMatch {
   test: (fieldValue: string) => boolean
   re?: RegExp
+  /**
+   * `spellLineKey(spec)` — set ONLY for a literal matcher on the `spell` key, and only when the
+   * fold leaves something to compare (a spec that is nothing but a roman numeral folds to '' and
+   * is left alone rather than turned into a wildcard). Absent everywhere else, which is what keeps
+   * `caster`, `target`, `refresh` and every `/regex/` spec byte-for-byte what they were.
+   */
+  lineKey?: string
 }
 
 /**
@@ -110,8 +127,11 @@ interface CompiledMatch {
  * is a case-insensitive regex; anything else is a case-insensitive exact match on
  * the stringified field. Invalid regex falls back to literal equality so a bad
  * def degrades gracefully instead of throwing in the hot path.
+ *
+ * A LITERAL `spell` MATCHER IS RANK-BLIND (JOS-259, owner ruling 2026-08-12) — see `accepts`.
+ * The key is passed in because that fold belongs to the `spell` field and to nothing else.
  */
-function compileFieldMatch(spec: string): CompiledMatch {
+function compileFieldMatch(spec: string, key: string): CompiledMatch {
   if (spec.length >= 2 && spec.startsWith('/') && spec.endsWith('/')) {
     const body = spec.slice(1, -1)
     try {
@@ -124,7 +144,54 @@ function compileFieldMatch(spec: string): CompiledMatch {
     }
   }
   const lower = spec.toLowerCase()
-  return { test: (v) => v.toLowerCase() === lower }
+  const test = (v: string): boolean => v.toLowerCase() === lower
+  if (key !== 'spell') return { test }
+  const lineKey = spellLineKey(spec)
+  return lineKey ? { test, lineKey } : { test }
+}
+
+/**
+ * WHETHER A COMPILED MATCHER ACCEPTS ONE PIECE OF TEXT — exact as it always was, plus the RANK
+ * FOLD for a literal `spell` matcher.
+ *
+ * THE RULE (JOS-259, owner ruling 2026-08-12 — "rank-blind matching, full stop"): a spell alert
+ * fires for ALL RANKS OF THE SPELL. EQ Legends re-tiers the classic spells as roman-numeral ranks
+ * of one base name, and only SOME of the lines a spell prints carry the suffix — `castBegin` and
+ * `resist` keep it (`You begin casting Elemental Maelstrom II.` / `<mob> resisted your Elemental
+ * Maelstrom II!`), while the wear-off/fade family prints the bare name. So a def pinned to one
+ * spelling was an alert that half the spell's own lines could never satisfy: the reporter's
+ * resisted alert for `Elemental Maelstrom` went silent the day they unlocked rank II, while their
+ * fade alert — pinned to the same string, matched against a line that never carried a suffix —
+ * kept working. Folding both sides through `spellLineKey` (the repo-wide rank fold, mirrored from
+ * the parser's `spellCanonKey`) makes every line of one spell answer to one def.
+ *
+ * IT WIDENS ONLY, AND ONLY FOR LITERALS. The fold is a superset of the old case-insensitive
+ * equality it replaces, so a def pinned to `Elemental Maelstrom II` still fires on II — it now
+ * also fires on I and on III, which is the ruling. A `/regex/` spec is USER-AUTHORED PATTERN and
+ * is left exactly alone: someone who wrote `/Maelstrom II$/` asked a narrower question on purpose,
+ * and rewriting their intent is not ours to do.
+ *
+ * SCOPE: THE `spell` KEY, WHICH IS EVERY KEY THE ALERT SURFACE AUTHORS. `castBegin`, `castFizzle`,
+ * `castInterrupted`, `resist`, `cc`, `uncharm`, `heal`, `buffApply`, `buffFade`, `buffWearOff` and
+ * the derived `buffExpired` all spell it `spell` (alertsFields.ts SPELL_FIELD_BY_KIND), so one
+ * key folds them all and they cannot disagree about which def owns a line. The two other fields
+ * that name a spell-ish thing are left alone because the fold would be a provable no-op there:
+ * `poisonProc.strike` and `poisonCoat.poison` draw from shared/poisons.ts, whose 40-odd names
+ * carry no roman-numeral rank at all. The one field this deliberately does NOT reach is
+ * `damage.skill`, which is a spell name for dtype 'spell'/'dot' and a melee verb otherwise —
+ * MEASURED, one spell prints both spellings there (`You hit a kiraikuei … by Elemental Maelstrom.`
+ * vs `A kiraikuei has taken 74 damage from your Elemental Maelstrom II.`), so widening it is a
+ * real question and an owner call, not a corollary of this one.
+ *
+ * NO UPGRADE-OFFER COMPENSATION. The offer strip (shared/spellLines.ts `detectRankUpgrades`) is
+ * untouched by this: the ruling is that no offer is needed to keep an alert firing, and the
+ * domain law behind it is that once you upgrade a spell it never downgrades, even on a loadout
+ * swap. An offer that still appears is now a convenience, never the thing standing between a user
+ * and a sound.
+ */
+function accepts(f: CompiledMatch, text: string): boolean {
+  if (f.test(text)) return true
+  return f.lineKey !== undefined && spellLineKey(text) === f.lineKey
 }
 
 /** One compiled `where` entry: the event field it names and the matcher it compiled to. */
@@ -170,15 +237,19 @@ function mergeCaptures(
  * The JOS-84 spell widening captures from the CANDIDATE NAME that satisfied the matcher, for the
  * same reason `matchedSpellName` reports that name rather than the event's best-effort pick: the
  * text the pattern matched is the text it named.
+ *
+ * The JOS-259 rank fold rides inside `accepts`, so it applies to the field's own value and to
+ * every candidate name alike — a candidate list that spells a rank cannot be a second way for one
+ * spell to have two identities.
  */
 function fieldMatches(ev: LogEvent, f: CompiledField): ConditionHit | null {
   const raw = (ev as unknown as Record<string, unknown>)[f.key]
   if (raw == null) return null
   const text = fieldText(raw)
-  if (f.test(text)) return capturesFrom(f, text)
+  if (accepts(f, text)) return capturesFrom(f, text)
   // Only the `spell` key widens, and only when the event carries candidates (JOS-84).
   if (f.key !== 'spell') return null
-  const hit = spellCandidateNames(ev).find((n) => f.test(n))
+  const hit = spellCandidateNames(ev).find((n) => accepts(f, n))
   return hit === undefined ? null : capturesFrom(f, hit)
 }
 
@@ -225,7 +296,7 @@ function compileCondition(t: AlertTriggerPrimitive): CompiledCondition {
   if (t.type === 'event') {
     const fields: CompiledField[] = Object.entries(t.where ?? {}).map(([key, spec]) => ({
       key,
-      ...compileFieldMatch(spec)
+      ...compileFieldMatch(spec, key)
     }))
     return { event: { kind: t.kind, fields } }
   }
@@ -255,6 +326,11 @@ function compileCondition(t: AlertTriggerPrimitive): CompiledCondition {
  * and a regex-shaped matcher resolves to the first candidate it accepts — the honest answer when
  * one sentence is five spells, since the log itself does not say which.
  *
+ * IT ASKS THE SAME QUESTION THE MATCH DID (`accepts`, not `test`), so the JOS-259 rank fold cannot
+ * split the two apart: a def pinned to `Elemental Maelstrom` that fired on a line naming
+ * `Elemental Maelstrom II` keeps the event's own pick and SAYS the rank it saw. Announcing the
+ * def's spelling instead would be reporting the alert back to the user rather than the log.
+ *
  * Runs once per FIRE, never per compiled alert per event: firings are rare, matching is not.
  */
 function matchedSpellName(c: CompiledAlert, ev: LogEvent, base: string | undefined): string | undefined {
@@ -264,8 +340,8 @@ function matchedSpellName(c: CompiledAlert, ev: LogEvent, base: string | undefin
   for (const cond of c.conditions) {
     if (cond.event?.kind !== ev.kind) continue
     const f = cond.event.fields.find((x) => x.key === 'spell')
-    if (!f || f.test(base)) continue
-    const hit = names.find((n) => f.test(n))
+    if (!f || accepts(f, base)) continue
+    const hit = names.find((n) => accepts(f, n))
     if (hit !== undefined) return hit
   }
   return base
