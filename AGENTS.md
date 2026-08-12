@@ -1018,6 +1018,29 @@ the full per-lane evidence lives in docs/agents-archive.md.
     a hit (a Quick Buff burst can never bind off one cast). This fixes the
     UPGRADED pet: a new name means succession triggers on the successor's
     claim, and an unordered successor had none.
+  **AND THE APP NOW SAYS SO, ONCE, AND THEN STOPS** (JOS-258, owner ruling
+  2026-08-12 — option (a), explicitly NOT a reopening of JOS-49). The blind
+  spot is still accepted; what changed is that the meter no longer stays
+  silent about it. `combat/petNudge.ts` arms on the player's own pet-summon
+  cast (`spellEffectClass.ts`'s derived `summonPet` class — 104 effect rows
+  against the 83 `spellType: Pet` files, the gap being the magician's
+  Vocarates and the necro's three differently-spelled pets; `Call Pet` is
+  excluded, it moves a pet rather than making one) and the overlay meter
+  draws ONE sentence on its content background: *Pet summoned - order it
+  once or type /pet who leader so the meter can see it.* **STALENESS AND
+  REPETITION ARE THE FAILURE MODES, so the whole feature is a timeout**:
+  a 10s GRACE (the p2 fixture measures the summon→tell fast path at SIX
+  seconds — a nudge drawn and yanked teaches nobody anything), a 45s SHOW,
+  and a 5m QUIET after one is ignored. ONE SLOT, so chain-summoning cannot
+  stack nudges; cleared by any `bindPetClaim` (all three routes, one seam),
+  by a fizzle/interrupt, or by its own clock — swept from the event stream
+  AND from `snapshot(now)`, the `sweepCharm` pattern. Armed only when
+  `hydrating` is false. **IT COACHES, IT NEVER ADOPTS** — the unbound pet's
+  damage is still dropped at routing while the sentence is up, and
+  `tests/petSummonNudge.test.mts` asserts exactly that beside the timings.
+  The renderer holds NO dismiss state: the snapshot's `petNudge` is absent
+  in every state but the one, which is what makes "no persistent banner"
+  structural rather than a promise.
   A pet-claim tell from a name EVER seen charmed re-arms the charmed set,
   never the permanent one (`everCharmed`). STILL NOT CLOSED, named: a pet
   its owner neither buffs nor orders stays invisible (order it once), and
