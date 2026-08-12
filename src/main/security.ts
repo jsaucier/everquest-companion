@@ -28,37 +28,76 @@
 import { sep } from 'node:path'
 
 /**
- * The complete set of hosts a link in this app may open in the user's browser.
+ * One entry in the external-link allowlist: a host, and OPTIONALLY the one subtree of that host
+ * links may point into.
+ *
+ * A rule with no `pathPrefix` is host-wide — every path on that host is openable. A rule WITH
+ * one is scoped: the URL's (already WHATWG-normalized) pathname must BE that prefix or sit
+ * under it, segment-aware, so `…-evil` is not "under" `…-companion` any more than
+ * `rendererEVIL` is inside `renderer` (isInsideDir, below, is the same idea for the disk).
+ */
+export interface ExternalLinkRule {
+  /** Exact hostname, lowercase ASCII — compared against `new URL().hostname`, never matched. */
+  readonly host: string
+  /** Absolute path, NO trailing slash. Omitted = the whole host. */
+  readonly pathPrefix?: string
+}
+
+/**
+ * The complete set of links this app may open in the user's browser.
  *
  *   eqlwiki.com          — every in-app external link today (`shared/wiki.ts wikiPageUrl`):
  *                          the item dialog's Source link, PoskyView's class-quest links and
- *                          the event-log overlay's headline links.
+ *                          the event-log overlay's headline links. Host-wide: the producer is
+ *                          a page TITLE, so the path is exactly the part this app cannot
+ *                          predict, and the wiki is the whole point of the link.
  *   www.eqlwiki.com      — same site; the wiki answers on both.
  *   wiki.project1999.com — the other wiki this app already talks to (boss portraits, see
  *                          imageCache.ts's IMAGE_URL_ALLOWLIST). Listed so a future boss link
  *                          works, not because one exists today.
- *   github.com           — the releases page, from the What's new panel (JOS-254). Widened on
- *                          purpose and with the smallest possible new power: the ONE link that
- *                          uses it is a constant in the renderer bundle, not text this app did
- *                          not author, and github.com is already where every build of this app
- *                          comes from (the updater's own feed, src/main/updater.ts). It is the
- *                          host the user would have typed by hand to answer the question the
- *                          panel is there to answer, and the panel exists so that they do not
- *                          have to.
+ *   github.com           — REPO-SCOPED (owner ruling, JOS-263), reviewing the widening JOS-254
+ *                          made for the What's new panel's releases link. github.com is not one
+ *                          site the way a wiki is: it is every repo anyone has ever pushed,
+ *                          including whatever a "download this fix" page would be. The app has
+ *                          exactly ONE reason to send anybody there — its own project — and the
+ *                          ONE link that uses it is a constant in the renderer bundle
+ *                          (`GITHUB_RELEASES_URL`), not text this app did not author. So the
+ *                          entry is written as the thing it is for: this repo's subtree, where
+ *                          every build of this app already comes from (the updater's own feed,
+ *                          src/main/updater.ts). github.com's ROOT, and every other owner and
+ *                          repo on it, is refused like any host that is not on this list.
  *
- * Adding a host here is a deliberate decision to let renderer-supplied text cause the OS to
- * open something. Deliberately NOT shared with imageCache's list: that one governs what the
- * MAIN process will fetch bytes from, this one governs what the OS will be asked to open —
- * two different powers that should be widened independently.
+ * Adding an entry here is a deliberate decision to let renderer-supplied text cause the OS to
+ * open something, and the narrowest entry that serves the link is the one to write. Deliberately
+ * NOT shared with imageCache's list: that one governs what the MAIN process will fetch bytes
+ * from, this one governs what the OS will be asked to open — two different powers that should be
+ * widened independently.
  */
-export const EXTERNAL_LINK_ALLOWLIST: readonly string[] = [
-  'eqlwiki.com',
-  'www.eqlwiki.com',
-  'wiki.project1999.com',
-  'github.com'
+export const EXTERNAL_LINK_ALLOWLIST: readonly ExternalLinkRule[] = [
+  { host: 'eqlwiki.com' },
+  { host: 'www.eqlwiki.com' },
+  { host: 'wiki.project1999.com' },
+  { host: 'github.com', pathPrefix: '/jmoyers/everquest-companion' }
 ]
 
-const ALLOWED_LINK_HOSTS = new Set(EXTERNAL_LINK_ALLOWLIST)
+const ALLOWED_LINK_RULES = new Map(EXTERNAL_LINK_ALLOWLIST.map((r) => [r.host, r] as const))
+
+/**
+ * Is `pathname` the allowed subtree itself, or something inside it?
+ *
+ * SEGMENT-AWARE, never a bare `startsWith`: `/jmoyers/everquest-companion-evil/x` shares the
+ * prefix's characters and is a DIFFERENT repo, so the boundary is the separator. The prefix
+ * itself passes (the repo's own front page is the same page the releases link's parent is).
+ *
+ * Nothing here has to defend against traversal: `new URL()` has already resolved `..` — and its
+ * `%2e%2e` spellings — out of `pathname` before we see it, so `…/everquest-companion/../../x`
+ * arrives as `/x` and never matches. The href we hand back is that same normalized URL, so what
+ * we return is always what we tested. Case-SENSITIVE by design: the one producer is a lowercase
+ * constant, and GitHub's own case-insensitive redirect is not a reason for this list to guess.
+ */
+function isUnderPathPrefix(pathname: string, prefix: string): boolean {
+  return pathname === prefix || pathname.startsWith(`${prefix}/`)
+}
 
 /** Longest URL we will even look at. Real links are ~60 chars; this only exists so a
  *  megabyte of `<a href>` can't be pushed through `new URL()`. */
@@ -80,6 +119,10 @@ const MAX_LINK_LEN = 2048
  *                            `evil-eqlwiki.com` must fail, and they do. `new URL()`
  *                            lowercases + punycodes the host, so a homoglyph domain can
  *                            never compare equal to an ASCII entry.
+ *   * the entry's PATH SCOPE — for an entry that has one (github.com, JOS-263): the host is
+ *                            necessary but not sufficient, and the path must be inside the one
+ *                            subtree the entry names. A host-wide entry skips this check
+ *                            because it has nothing to say about paths.
  *
  * The href is returned rather than the caller's raw string so what we open is what we
  * validated (WHATWG normalization already applied), never the original spelling.
@@ -95,7 +138,9 @@ export function allowedExternalUrl(raw: unknown): string | null {
   if (u.protocol !== 'https:') return null
   if (u.username !== '' || u.password !== '') return null
   if (u.port !== '') return null
-  if (!ALLOWED_LINK_HOSTS.has(u.hostname)) return null
+  const rule = ALLOWED_LINK_RULES.get(u.hostname)
+  if (!rule) return null
+  if (rule.pathPrefix !== undefined && !isUnderPathPrefix(u.pathname, rule.pathPrefix)) return null
   return u.toString()
 }
 

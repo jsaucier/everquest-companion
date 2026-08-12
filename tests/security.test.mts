@@ -44,9 +44,15 @@ test('allowedExternalUrl accepts exactly the links the app produces today', () =
     allowedExternalUrl('https://eqlwiki.com/Plane_of_Sky?action=raw#Quests'),
     'https://eqlwiki.com/Plane_of_Sky?action=raw#Quests'
   )
-  // Every allowlisted host, exactly as listed.
-  for (const host of EXTERNAL_LINK_ALLOWLIST) {
-    assert.equal(allowedExternalUrl(`https://${host}/x`), `https://${host}/x`)
+  // Every allowlisted entry, exactly as listed — host-wide entries at the root, scoped entries
+  // inside their own subtree. A scoped entry ALSO refuses the bare host, so no entry can quietly
+  // become host-wide without this loop going red.
+  for (const rule of EXTERNAL_LINK_ALLOWLIST) {
+    const url = `https://${rule.host}${rule.pathPrefix ?? ''}/x`
+    assert.equal(allowedExternalUrl(url), url, url)
+    if (rule.pathPrefix !== undefined) {
+      assert.equal(allowedExternalUrl(`https://${rule.host}/x`), null, rule.host)
+    }
   }
   // An explicit :443 is redundant — WHATWG strips it, so this is the default port, not a
   // different service.
@@ -57,19 +63,67 @@ test('allowedExternalUrl accepts exactly the links the app produces today', () =
     allowedExternalUrl('https://github.com/jmoyers/everquest-companion/releases'),
     'https://github.com/jmoyers/everquest-companion/releases'
   )
+  // The subtree, not just that one leaf: query + fragment survive, and the repo's own front page
+  // (the prefix itself, with or without its trailing slash) is inside its own subtree.
+  assert.equal(
+    allowedExternalUrl('https://github.com/jmoyers/everquest-companion/releases/tag/v0.24.0'),
+    'https://github.com/jmoyers/everquest-companion/releases/tag/v0.24.0'
+  )
+  assert.equal(
+    allowedExternalUrl('https://github.com/jmoyers/everquest-companion/issues?q=is%3Aopen#top'),
+    'https://github.com/jmoyers/everquest-companion/issues?q=is%3Aopen#top'
+  )
+  assert.equal(
+    allowedExternalUrl('https://github.com/jmoyers/everquest-companion'),
+    'https://github.com/jmoyers/everquest-companion'
+  )
+  assert.equal(
+    allowedExternalUrl('https://github.com/jmoyers/everquest-companion/'),
+    'https://github.com/jmoyers/everquest-companion/'
+  )
+})
+
+test('the github.com entry is scoped to THIS repo, not to the host (JOS-263)', () => {
+  // The owner's ruling on the JOS-254 widening: github.com is not one site the way a wiki is, so
+  // the entry buys exactly one repo's subtree. Everything else on the host is refused — starting
+  // with the root, which is what an unscoped host entry would have opened.
+  assert.equal(allowedExternalUrl('https://github.com/'), null)
+  assert.equal(allowedExternalUrl('https://github.com'), null)
+  assert.equal(allowedExternalUrl('https://github.com/jmoyers'), null)
+  assert.equal(allowedExternalUrl('https://github.com/other/repo'), null)
+  assert.equal(allowedExternalUrl('https://github.com/other/repo/releases/download/v1/x.exe'), null)
+  // Another owner's repo of the SAME name, and a repo whose name merely starts with ours — the
+  // prefix is segment-aware, never a bare startsWith.
+  assert.equal(allowedExternalUrl('https://github.com/evil/everquest-companion/releases'), null)
+  assert.equal(allowedExternalUrl('https://github.com/jmoyers/everquest-companion-evil/releases'), null)
+  assert.equal(allowedExternalUrl('https://github.com/jmoyers/everquest-companionEVIL'), null)
+  // A path that only LOOKS like it is under the prefix: `..` (and its `%2e%2e` spelling) is
+  // resolved away by `new URL()` before the check, so both of these arrive as `/other/repo`.
+  assert.equal(allowedExternalUrl('https://github.com/jmoyers/everquest-companion/../../other/repo'), null)
+  assert.equal(allowedExternalUrl('https://github.com/jmoyers/everquest-companion/%2e%2e/%2e%2e/other/repo'), null)
+  // An encoded separator is not a separator: `%2f` keeps this ONE segment, and it is not ours.
+  assert.equal(allowedExternalUrl('https://github.com/jmoyers%2feverquest-companion/releases'), null)
+  // The path scope is checked IN ADDITION to the host, never instead of it: our own repo path on
+  // somebody else's host stays shut.
+  assert.equal(allowedExternalUrl('https://evil.com/jmoyers/everquest-companion/releases'), null)
 })
 
 test('widening the allowlist for github.com widened nothing else (JOS-254)', () => {
   // The host is EXACT, so every neighbour of the new entry stays shut — the same guarantee the
   // wiki hosts get, restated for the entry that let renderer text name github at all.
-  assert.equal(allowedExternalUrl('https://github.com.evil.com/jmoyers'), null)
-  assert.equal(allowedExternalUrl('https://evil-github.com/jmoyers'), null)
-  assert.equal(allowedExternalUrl('https://raw.githubusercontent.com/jmoyers/x/main/y'), null)
+  assert.equal(allowedExternalUrl('https://github.com.evil.com/jmoyers/everquest-companion'), null)
+  assert.equal(allowedExternalUrl('https://evil-github.com/jmoyers/everquest-companion'), null)
+  assert.equal(allowedExternalUrl('https://raw.githubusercontent.com/jmoyers/everquest-companion/main/y'), null)
   assert.equal(allowedExternalUrl('https://api.github.com/repos/jmoyers/everquest-companion'), null)
   assert.equal(allowedExternalUrl('https://github.com@evil.com/x'), null)
+  assert.equal(allowedExternalUrl('https://github.com.evil.com/jmoyers'), null)
+  assert.equal(allowedExternalUrl('https://evil-github.com/jmoyers'), null)
   // …and it is still https-only, so the OS can never be asked to run a downloaded release.
+  assert.equal(allowedExternalUrl('http://github.com/jmoyers/everquest-companion/releases'), null)
   assert.equal(allowedExternalUrl('http://github.com/jmoyers'), null)
   assert.equal(allowedExternalUrl('file://github.com/x.exe'), null)
+  // A non-default port is a different service here too.
+  assert.equal(allowedExternalUrl('https://github.com:8443/jmoyers/everquest-companion/releases'), null)
 })
 
 test('allowedExternalUrl refuses every scheme but https — the RCE-adjacent shapes', () => {

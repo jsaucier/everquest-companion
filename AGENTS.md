@@ -607,15 +607,24 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   window added later must not be able to miss it. `will-navigate` allows only the
   bundled renderer dir (or, in dev, the electron-vite server's ORIGIN — the
   server's own URL, so 5173/5174 both work); `setWindowOpenHandler` is
-  deny-always and hands ONLY an allowlisted https host to `shell.openExternal`.
+  deny-always and hands ONLY an allowlisted https URL to `shell.openExternal`.
   **That allowlist is the boundary, not a formality**: link URLs are built from
   WIKI PAGE TITLES (`shared/wiki.ts`), and an unvalidated openExternal would let
   one ask the OS to run `file:///…exe`. Widen `EXTERNAL_LINK_ALLOWLIST`
-  (security.ts) deliberately or not at all — it has been widened ONCE, for
-  `github.com` (JOS-254, the What's new panel's link to the releases page), and
-  that entry's justification is written where it lives: the URL is a constant in
-  the renderer bundle rather than scraped text, and github.com is already where
-  every build of this app comes from. All permissions are denied wholesale
+  (security.ts) deliberately or not at all, **and an entry is a HOST PLUS AN
+  OPTIONAL PATH SCOPE — write the narrowest one that serves the link** (owner
+  ruling, JOS-263). It has been widened ONCE, for `github.com` (JOS-254, the
+  What's new panel's link to the releases page), and that entry is
+  REPO-SCOPED: only `https://github.com/jmoyers/everquest-companion/…` opens,
+  never github.com's root or anyone else's repo. The three wiki entries stay
+  host-wide because a wiki link's PATH is the page title this app cannot
+  predict; github.com is not one site the way a wiki is. The justification is
+  written where it lives: the URL is a constant in the renderer bundle rather
+  than scraped text, and that repo is where every build of this app comes from.
+  The path prefix is matched SEGMENT-AWARE (`…-companion-evil` is not inside
+  `…-companion`) against the WHATWG-normalized pathname, so `..` — and its
+  `%2e%2e` spelling — is already resolved away before the check.
+  All permissions are denied wholesale
   (this app needs none); pure policy lives in `src/main/security.ts` and is
   pinned by `tests/security.test.mts` (no Electron, never skips).
 - Renderer-supplied strings that reach `join()` are validated AT THE IPC

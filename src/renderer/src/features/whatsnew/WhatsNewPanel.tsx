@@ -56,8 +56,10 @@ import { WhatsNewDevRow } from './WhatsNewDevRow'
  * running". The releases page answers it, and it is where the downloads and the tags live for
  * anybody who wants them. It opens in the SYSTEM BROWSER: `target="_blank"` is turned into
  * `shell.openExternal` by main's `setWindowOpenHandler`, which passes only an allowlisted https
- * host — `github.com` is on `EXTERNAL_LINK_ALLOWLIST` (src/main/security.ts) for this link and
- * no other.
+ * URL — and the `github.com` entry on `EXTERNAL_LINK_ALLOWLIST` (src/main/security.ts) is scoped
+ * to THIS repo's subtree (JOS-263), so it opens this link and nothing else on the host. Keep this
+ * constant pointing inside `github.com/jmoyers/everquest-companion/`; anywhere else silently
+ * fails to open.
  *
  * It sits BELOW the scroll box rather than inside it: leaving the app is the last thing on offer
  * here, never the first, and a link that scrolled away with the history would be a door that
