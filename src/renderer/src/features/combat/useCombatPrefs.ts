@@ -20,10 +20,19 @@
 // other, and the other receives a `storage` event carrying the new value. So the overlay reads
 // the SAME key by the SAME hook, and no copy of this preference is ever routed over IPC.
 
-import { useCallback, useSyncExternalStore } from 'react'
+import { useCallback, useMemo, useSyncExternalStore } from 'react'
 // The vocabulary — defaults, guards and degrades — lives in a DOM-free module beside this one so
 // it can be node-tested (combatPrefs.ts says why). This file is the storage half and nothing else.
-import { DEFAULT_METER_SCOPE, METER_SCOPE_KEY, readMeterScope } from './combatPrefs'
+import {
+  DEFAULT_METER_SCOPE,
+  HIDDEN_LINES_KEY,
+  METER_SCOPE_KEY,
+  parseHiddenLines,
+  readMeterScope,
+  serializeHiddenLines,
+  toggleHiddenLine,
+  type ChartLineKey
+} from './combatPrefs'
 import type { MeterScope } from '@shared/roster'
 
 /**
@@ -119,6 +128,27 @@ export function useBoolPref(key: string, dflt: boolean): [boolean, (v: boolean) 
  *  Preferences tab ever writes it. */
 export function useCombinePetRow(): [boolean, (v: boolean) => void] {
   return useBoolPref(COMBINE_PET_ROW_KEY, true)
+}
+
+/**
+ * THE DPS CURVE'S HIDDEN LINES (JOS-264) — the legend's own state, live across every reader.
+ *
+ * The array identity is memoised on the RAW STRING, not rebuilt per render: it is a `useMemo`
+ * dependency of the chart geometry downstream, and a fresh array every render would re-derive the
+ * whole curve on every snapshot tick — the one thing the memo chain in DpsOverTime exists to
+ * prevent. Nothing hidden serializes to an ABSENT key (combatPrefs), so un-hiding the last line
+ * leaves the store exactly as a fresh install found it.
+ */
+export function useHiddenChartLines(): [readonly ChartLineKey[], (k: ChartLineKey) => void] {
+  const [raw, setRaw] = useRawPref(HIDDEN_LINES_KEY)
+  const hidden = useMemo(() => parseHiddenLines(raw), [raw])
+  const toggle = useCallback(
+    (k: ChartLineKey) => {
+      setRaw(serializeHiddenLines(toggleHiddenLine(hidden, k)))
+    },
+    [hidden, setRaw]
+  )
+  return [hidden, toggle]
 }
 
 /**

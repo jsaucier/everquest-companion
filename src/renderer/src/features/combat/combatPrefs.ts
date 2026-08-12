@@ -16,6 +16,7 @@
 
 import { isMeterScope } from '../../../../shared/roster'
 import type { MeterScope } from '@shared/roster'
+import type { TimelineMarkerKind } from '@shared/combat'
 import type { Drill } from './dashboardData'
 
 // ── whose damage (JOS-115) ───────────────────────────────────────────────────────────────
@@ -164,6 +165,76 @@ export function parseDrillMemory(raw: string | null): DrillMemory {
 export function serializeDrillMemory(m: DrillMemory): string | null {
   if (!m.drill && m.abilities.length === 0) return null
   return JSON.stringify({ d: m.drill, a: m.abilities })
+}
+
+// ── which of the DPS curve's lines are drawn (JOS-264) ───────────────────────────────────
+
+/**
+ * THE LINES THE DPS-OVER-TIME CHART IS NOT DRAWING — one key, one comma-separated list.
+ *
+ * From a report of the chart read across a room on a 75-inch TV: four curves plus up to four
+ * marker colours is a lot of ink for one 118-unit-high plot, and the ask was to be able to put
+ * some of it away. The legend is the control (clicking an entry hides its line), so what is
+ * stored is the HIDDEN set — absence means "draw everything", which is what every existing
+ * install has and what a fresh one gets.
+ *
+ * PERSISTED, not session-scoped, and that is the local idiom rather than a new ambition:
+ * `ViewContent` unmounts the Combat tab on every tab switch, so a `useState` here would be the
+ * JOS-90/97/116 bug for the fourth time — a thing the user set on purpose, silently undone by
+ * walking to Overview and back. The storage half already exists (`useRawPref`), so surviving a
+ * restart as well costs nothing and matches the drill sitting beside it.
+ *
+ * A COMMA LIST rather than JSON, for the same reason the boolean prefs are '1'/'0': the value is
+ * four short words at most and should be readable in devtools at a glance
+ * (`eq.combat.chartHidden = "pet,inc"`).
+ */
+export const HIDDEN_LINES_KEY = 'eq.combat.chartHidden'
+
+/** The four CURVES, in the order the legend lists them. `out` is the headline sum (you + pet +
+ *  group) that also owns the area fill and the header's peak stat. */
+export const DPS_LINE_KEYS = ['out', 'pet', 'group', 'inc'] as const
+
+/** The four MARKER KINDS, which are drawn as coloured lines too and carry legend entries of their
+ *  own. They are toggleable for one reason above tidiness: a legend where some entries respond to
+ *  a click and some ignore it teaches that the legend does nothing. `satisfies` keeps this list
+ *  bound to the engine's union without a value import (this module stays DOM- and bundle-free). */
+const MARKER_LINE_KEYS = ['stance', 'invocation', 'coat', 'slow'] as const satisfies readonly TimelineMarkerKind[]
+
+/** Every legend entry that can be switched off, in legend order — which is also the order a
+ *  stored value is written in, so the same hidden set always serializes to the same string. */
+export const CHART_LINE_KEYS = [...DPS_LINE_KEYS, ...MARKER_LINE_KEYS] as const
+
+export type DpsLineKey = (typeof DPS_LINE_KEYS)[number]
+export type ChartLineKey = (typeof CHART_LINE_KEYS)[number]
+
+function isChartLineKey(v: string): v is ChartLineKey {
+  return (CHART_LINE_KEYS as readonly string[]).includes(v)
+}
+
+/**
+ * Parse a stored hidden set. TOTAL, the JOS-105 degrade rule: absent, empty, whitespace, a name
+ * this build does not know (a future line, a hand-edited key) and a repeated name all resolve to
+ * a set of the keys that ARE known. The failure mode being avoided is a chart that draws nothing
+ * because one token in the list was unreadable.
+ */
+export function parseHiddenLines(raw: string | null): readonly ChartLineKey[] {
+  if (raw === null || raw === '') return []
+  const found = new Set(raw.split(',').map((s) => s.trim()).filter(isChartLineKey))
+  return CHART_LINE_KEYS.filter((k) => found.has(k))
+}
+
+/** …and back to a string, or `null` for "store nothing at all" — nothing hidden is what a fresh
+ *  install has, so an explicit un-hide of the last line leaves exactly that state behind. */
+export function serializeHiddenLines(keys: readonly ChartLineKey[]): string | null {
+  const hidden = CHART_LINE_KEYS.filter((k) => keys.includes(k))
+  return hidden.length === 0 ? null : hidden.join(',')
+}
+
+/** Flip ONE line. Canonical order is restored on the way out so the stored string depends on the
+ *  SET and never on the order the user clicked. */
+export function toggleHiddenLine(keys: readonly ChartLineKey[], key: ChartLineKey): readonly ChartLineKey[] {
+  const next = keys.includes(key) ? keys.filter((k) => k !== key) : [...keys, key]
+  return CHART_LINE_KEYS.filter((k) => next.includes(k))
 }
 
 /** True when two drills name the same subject — the test that decides whether the expanded
