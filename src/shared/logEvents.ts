@@ -1007,14 +1007,17 @@ export interface CampAbortEvent extends LogEventBase {
  * prints a RECONNECT PREAMBLE *before* the Welcome — `You are not currently assigned to an
  * adventure.`, `The Marketplace is unavailable at this time. Please try again later.`,
  * `Channel <X> was too full to join`, `Channels: 1=…`, and (because the client is already
- * connected to chat) other players' channel chat. Across all 19 logins in the real log the
- * newest event before the Welcome is 0–2 SECONDS older than it — every single time. Anchoring
- * on it would report a 13-hour absence as a 1-second one and emit ZERO gaps, ever.
+ * connected to chat and receiving zone updates) other players' channel chat AND other players'
+ * COMBAT. Across all 19 logins in the original measurement the newest event before the Welcome
+ * is 0–2 SECONDS older than it — every single time. Anchoring on it would report a 13-hour
+ * absence as a 1-second one and emit ZERO gaps, ever.
  *
- * So `fromTs` is the newest event at least {@link RECONNECT_WINDOW_MS} older than the
- * Welcome — a MEASURED window (the whole preamble fits inside 22s in 19/19 logins; see
- * sessionDetector.ts), in the same family as the model's other measured windows (the ~5s
- * encounter linger, the ~2.5s clicky window). It is a LOWER bound on the true absence.
+ * So `fromTs` is the newest event that could ONLY have been printed because THIS CHARACTER was
+ * in the world (`sessionDetector.ts inWorldEvidence` — JOS-262). It was a 30-second window
+ * until that ticket measured what the window costs: a preamble longer than the constant emits
+ * no gap at all. It is a LOWER bound on the last known in-world instant, so the absence it
+ * implies is never under-stated and can run long by the trailing tail of lines that name
+ * nobody (measured: 24s across an ordinary camp).
  */
 export interface OfflineGapEvent extends LogEventBase {
   kind: 'offlineGap'

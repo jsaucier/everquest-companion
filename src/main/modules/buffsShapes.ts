@@ -4,7 +4,6 @@
 // here holds state, so it is safe to import from any of the buffs modules.
 
 import { spellCanonKey } from '../log/parser'
-import { RECONNECT_WINDOW_MS } from '../log/sessionDetector'
 import type { EntityDisposition } from '../combat/entityRules'
 import type { EstimatorSource } from '../../shared/buffTypes'
 import type { HoldGroup } from './buffRounds'
@@ -28,23 +27,25 @@ export const MAX_SAMPLE_MS = 3 * 60 * 60_000 // 3 hours
  * preamble and then `Welcome to EverQuest Legends!`, so the wipe always ran BEFORE the derived
  * `offlineGap` that explains it — and the buff EQ had frozen with your character was gone by the
  * time anything could pause it. So the hole now only OPENS a question (`BuffsModule` holds the
- * pre-hole buffs, unswept, and stops there); {@link LOGIN_CONFIRM_MS} is how long it waits for the
- * answer.
+ * pre-hole buffs, unswept, and stops there); `modules/buffsSession.ts` states what answers it.
+ *
+ * IT IS THE DROP THRESHOLD, NOT THE HOLD THRESHOLD (JOS-262). Half an hour is how long a log
+ * must go quiet before an unexplained silence means we LOST THE THREAD and the pre-hole rows are
+ * binned. The lighter question — should the hygiene sweep judge a row whose clock a pause may be
+ * about to rewind — starts at the detector's own emit floor (60 s), because that is every absence
+ * a pause can be reported for. See SessionFrame's header for the 20-minute relog that fell into
+ * the band between the two.
  */
 export const SESSION_GAP_MS = 30 * 60_000 // 30 minutes
 
-/**
- * How long a log hole waits to be explained by a login before it is ruled UNEXPLAINED and the
- * pre-hole buffs are dropped after all (JOS-134).
- *
- * It is deliberately the detector's OWN {@link RECONNECT_WINDOW_MS} rather than a second number:
- * that window is the measured span of the reconnect preamble (longest observed 22 s over all 19
- * logins in the real log — see sessionDetector.ts), and the two constants are answering the same
- * question from opposite ends. The detector looks BACK from the Welcome to find the last instant
- * the character was in the world; this looks FORWARD from the hole for the Welcome. Sharing the
- * constant is what makes it impossible for them to disagree about how long a preamble can be.
- */
-export const LOGIN_CONFIRM_MS = RECONNECT_WINDOW_MS
+// THERE USED TO BE A `LOGIN_CONFIRM_MS` HERE, AND IT WAS A TIMER (JOS-134 → deleted by JOS-262).
+// It was the detector's own reconnect window read from the other end: the hole looked FORWARD for
+// a `Welcome` for 30 s of event time and, failing to find one, ruled itself unexplained. The
+// sharing was sound and the timer was not — a wall-clock heartbeat could run it out on a log that
+// had simply not printed the login yet, which is the app-started-while-the-game-loads defect.
+// What replaced it is not another constant: `modules/buffsSession.ts` waits for EVIDENCE (the
+// detector's `inWorldEvidence`), and the sharing argument survives intact — one predicate, so the
+// two halves cannot disagree about what being in the world means.
 
 /**
  * THE UNWITNESSED-EXPIRY TIMEOUT — ONE RULE FOR EVERY ROW THAT IS NOT YOURS.

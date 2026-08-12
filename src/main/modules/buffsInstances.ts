@@ -521,9 +521,10 @@ export class BuffInstances {
    *
    * A log hole that no login ever explains means we lost the thread rather than that the
    * character left, and the old blanket wipe is still the honest answer for what was standing
-   * when it opened. It is SCOPED rather than blanket only because the ruling arrives up to
-   * {@link LOGIN_CONFIRM_MS} after the hole did, and anything cast inside that window is
-   * evidence from this side of it — the hole says nothing about a buff raised after it.
+   * when it opened. It is SCOPED rather than blanket because the ruling arrives AFTER the hole
+   * did — it waits for in-world evidence (JOS-262), and that evidence can be a cast — and
+   * anything raised on this side of the hole is evidence from this side of it: the hole says
+   * nothing at all about a buff that landed after it.
    */
   dropPredating(ts: number): void {
     let changed = false

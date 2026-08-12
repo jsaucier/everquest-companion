@@ -29,7 +29,8 @@ import type { LogEvent } from '../src/shared/logEvents'
 import { SessionDetector } from '../src/main/log/sessionDetector'
 import { BuffsModule } from '../src/main/modules/buffs'
 import { BuffTimersModule } from '../src/main/modules/buffTimers'
-import { LOGIN_CONFIRM_MS, MAX_SAMPLE_MS, SESSION_GAP_MS } from '../src/main/modules/buffsShapes'
+import { MAX_SAMPLE_MS, SESSION_GAP_MS, unwitnessedTimeoutMs } from '../src/main/modules/buffsShapes'
+import { OFFLINE_GAP_MIN_MS } from '../src/main/log/sessionDetector'
 import { loadSpellDb } from '../src/main/data/spellDb'
 import { installSpellDb } from '../src/main/log/rulesets'
 import type { BuffsSnap } from '../src/shared/types'
@@ -96,6 +97,19 @@ function castAndLand(
   } as LogEvent)
 }
 
+/**
+ * THE CHARACTER IS SEEN AT `ts` — one line the game could only have printed for him.
+ *
+ * It is a skill-up because that is the cheapest such line to write, and the KIND is what
+ * matters: since JOS-262 the absence is anchored on lines that NAME this character, and an
+ * `unknown` (chat, an NPC's shout, the camp countdown) is deliberately not one. Where these
+ * tests used to advance the clock with `{kind:'unknown'}` they now say who was there — which is
+ * also what a real log does, several times a second, the whole time you are playing.
+ */
+function seen(send: (ev: Sent) => void, ts: number): void {
+  send({ kind: 'skillUp', ts, skill: 'Hide', value: 5 } as LogEvent)
+}
+
 /** The one active row for `spell`, or undefined. */
 function rowOf(snap: BuffsSnap, spell: string): BuffsSnap['active'][number] | undefined {
   return snap.active.find((a) => a.spell.toLowerCase() === spell.toLowerCase())
@@ -143,10 +157,18 @@ test('a buff camped overnight is still up at login, resumed where it stopped', (
   send({ kind: 'sessionStart', ts: welcome } as LogEvent)
   const back = rowOf(mod.snapshot().state, SWIFT)
   assert.ok(back, 'the buff EQ froze with the character is up when the character is back')
-  assert.equal(back.startedTs, land + (welcome - lastTick))
-  // 14m08s of the 16-minute timer had run before the camp completed, so that is what the bar
-  // reads at the login instant — not the 13h57m of wall clock that had passed.
-  assert.equal(welcome - back.startedTs, 14 * MIN + 8 * SEC)
+  // THE ABSENCE IS ANCHORED ON THE CAMP LINE, not on the last countdown tick (JOS-262): the
+  // ticks are `unknown` and the anchor only reads lines that name this character. The measured
+  // gap is therefore the tick's own 24s longer, and every number below moves with it.
+  const campTs = at('Fri Jul 31 01:05:43 2026')
+  assert.equal(lastTick - campTs, 24 * SEC)
+  assert.equal(back.startedTs, land + (welcome - campTs))
+  // 13m44s of the 16-minute timer had run before the camp STARTED, so that is what the bar
+  // reads at the login instant — not the 13h57m of wall clock that had passed, and 24s less
+  // than the 14m08s this pinned while the anchor was the last tick. The direction is the safe
+  // one: the pause runs long, so the bar reads FRESHER than the truth rather than expiring a
+  // buff EQ has not expired.
+  assert.equal(welcome - back.startedTs, 13 * MIN + 44 * SEC)
   assert.ok(welcome - land > MAX_SAMPLE_MS, 'the wall clock, by contrast, is past the sanity ceiling')
 
   // …and the remainder runs out 73 seconds later, exactly as the real log printed it.
@@ -183,7 +205,7 @@ test('the world does not pause with you: a debuff keeps burning while a buff fre
   castAndLand(send, { spell: SLOW, target: MOB, durationMs: SLOW_DB_MS, landTs: t0 + 30 * SEC })
 
   const lastSeen = t0 + 60 * SEC
-  send({ kind: 'unknown', ts: lastSeen } as LogEvent)
+  seen(send, lastSeen)
   const welcome = lastSeen + OFFLINE
   send({ kind: 'sessionStart', ts: welcome } as LogEvent)
 
@@ -240,7 +262,7 @@ test('…and over a LONG absence the unshifted debuff is culled, while the froze
   castAndLand(send, { spell: SLOW, target: MOB, durationMs: SLOW_DB_MS, landTs: t0 + 30 * SEC })
 
   const lastSeen = t0 + 60 * SEC
-  send({ kind: 'unknown', ts: lastSeen } as LogEvent)
+  seen(send, lastSeen)
   const welcome = lastSeen + OFFLINE
   send({ kind: 'sessionStart', ts: welcome } as LogEvent)
 
@@ -280,7 +302,7 @@ test('a PET buff freezes with you too — its timeout is judged in ONLINE time, 
   castAndLand(send, { spell: HASTE, target: PET, durationMs: HASTE_DB_MS, landTs: t0 })
 
   const lastSeen = t0 + 60 * SEC
-  send({ kind: 'unknown', ts: lastSeen } as LogEvent)
+  seen(send, lastSeen)
   const welcome = lastSeen + OFFLINE
   send({ kind: 'sessionStart', ts: welcome } as LogEvent)
 
@@ -293,11 +315,11 @@ test('a PET buff freezes with you too — its timeout is judged in ONLINE time, 
 
   // ELEVEN MINUTES OF ONLINE TIME LATER it is exactly at zero, and still drawn: an overdue row for
   // a beat says the app is waiting for a line rather than pretending one arrived.
-  send({ kind: 'unknown', ts: welcome + 10 * MIN } as LogEvent)
+  seen(send, welcome + 10 * MIN)
   assert.ok(rowOf(mod.snapshot().state, HASTE), 'at its stated end it is still there')
 
   // A MINUTE PAST THAT, nothing can close it and it stops being waited for.
-  send({ kind: 'unknown', ts: welcome + 11 * MIN + 40 * SEC } as LogEvent)
+  seen(send, welcome + 11 * MIN + 40 * SEC)
   const after = mod.snapshot().state
   assert.equal(rowOf(after, HASTE), undefined, 'the pet buff nobody could see expire times out')
   assert.ok(rowOf(after, SWIFT), 'and a SELF buff at the same age is NOT culled — the exemption is `self`')
@@ -337,7 +359,7 @@ test('a crowd-control hold is a timer in the world, and never pauses', () => {
   assert.equal(hold.spell, 'Ensnare')
 
   const lastSeen = t0 + 30 * SEC
-  send({ kind: 'unknown', ts: lastSeen } as LogEvent)
+  seen(send, lastSeen)
   const welcome = lastSeen + OFFLINE
   send({ kind: 'sessionStart', ts: welcome } as LogEvent)
 
@@ -360,20 +382,145 @@ test('a hole no login explains still drops what predates it, and only that', () 
   const t0 = at('Sat Aug 01 09:00:00 2026')
   castAndLand(send, { spell: SWIFT, target: 'self', durationMs: SWIFT_DB_MS, landTs: t0 })
   const lastSeen = t0 + 30 * SEC
-  send({ kind: 'unknown', ts: lastSeen } as LogEvent)
+  seen(send, lastSeen)
 
-  // The hole opens, and a buff is raised INSIDE the window where its explanation is still awaited.
+  // The hole opens on a line that says NOTHING about this character (JOS-262 — it is chat, or an
+  // NPC's shout, or another player's kill: the same shapes a reconnect preamble carries). The
+  // question is open and the pre-hole buff is HELD, however long the log goes on printing them.
   const holeAt = lastSeen + 45 * MIN
   send({ kind: 'unknown', ts: holeAt } as LogEvent)
+  send({ kind: 'unknown', ts: holeAt + 30 * SEC } as LogEvent)
+  send({ kind: 'unknown', ts: holeAt + 5 * MIN } as LogEvent)
   assert.ok(rowOf(mod.snapshot().state, SWIFT), 'the pre-hole buff is held, not yet judged')
-  castAndLand(send, { spell: VALOR, target: 'self', durationMs: VALOR_DB_MS, landTs: holeAt + 2 * SEC })
 
-  // The window elapses with no Welcome. Now it is judged — and the SCOPE of the ruling is the
-  // point: the hole says nothing about a buff raised on this side of it.
-  send({ kind: 'unknown', ts: holeAt + LOGIN_CONFIRM_MS + SEC } as LogEvent)
+  // THE CAST IS THE EVIDENCE. `You begin casting Valor.` could only have been printed for this
+  // character, and no login came first — so the hole was us losing the thread, and it is ruled
+  // on the spot. The SCOPE of the ruling is the other half of the point: the hole says nothing
+  // about the buff this very cast is raising on THIS side of it.
+  castAndLand(send, { spell: VALOR, target: 'self', durationMs: VALOR_DB_MS, landTs: holeAt + 5 * MIN + 2 * SEC })
   const snap = mod.snapshot().state
   assert.equal(rowOf(snap, SWIFT), undefined, 'what was standing when the hole opened is dropped')
   const kept = rowOf(snap, VALOR)
   assert.ok(kept, 'what was cast after it is not')
-  assert.equal(kept.startedTs, holeAt + 2 * SEC, 'and its clock was never touched')
+  assert.equal(kept.startedTs, holeAt + 5 * MIN + 2 * SEC, 'and its clock was never touched')
+})
+
+// =============================================================================
+// JOS-262 — THE FOUR WAYS A SLOW LOGIN USED TO BREAK ALL OF THE ABOVE.
+//
+// Everything up to here was measured GREEN on the shipped model: the design was right and its
+// wiring worked. What it could not survive was the LENGTH OF A LOGIN, because the anchor was a
+// 30-second window and the hole's answer was a 30-second timer. The reporter (feedback
+// 01KZTZ0FM14VSER71FJZ6KCJYS, 0.23.0) loads the game slowly and saw the previous session's buffs
+// missing at app start. Each test below is one measured failure, driven through the real modules
+// and the real detector exactly as the tests above are.
+// =============================================================================
+
+/** The reconnect preamble, verbatim shapes, spread over `spanMs` before the Welcome. */
+function preamble(send: (ev: Sent) => void, welcome: number, spanMs: number): void {
+  const texts = [
+    'You are not currently assigned to an adventure.',
+    'The Marketplace is unavailable at this time. Please try again later.',
+    'Channel General was too full to join',
+    'Channels: 1=General1(400)'
+  ]
+  texts.forEach((raw, i) => {
+    send({ kind: 'unknown', ts: welcome - spanMs + Math.round((i * spanMs) / texts.length), raw } as LogEvent)
+  })
+}
+
+for (const [label, spanMs] of [
+  ['31s', 31 * SEC],
+  ['45s', 45 * SEC],
+  ['5min', 5 * MIN]
+] as const) {
+  test(`(a/b) a ${label} preamble still pauses the buff by the WHOLE absence`, () => {
+    // MEASURED BEFORE THE FIX: 31s and 45s produced no `offlineGap` at all (the anchor landed on
+    // a preamble line, its implied absence fell under the 60s floor, and a 13-hour one was
+    // silently dropped), and a sparse 5-minute preamble reported 120 SECONDS of it. The buff was
+    // then either wiped by the unexplained hole or left running on a 13-hour-old clock.
+    const mod = dbBuffsModule()
+    const send = busTo(mod)
+
+    const land = at('Fri Jul 31 00:51:59 2026')
+    castAndLand(send, { spell: SWIFT, target: 'self', durationMs: SWIFT_DB_MS, landTs: land })
+    const camp = at('Fri Jul 31 01:05:43 2026')
+    send({ kind: 'campStart', ts: camp } as LogEvent)
+
+    const welcome = at('Fri Jul 31 14:49:15 2026')
+    preamble(send, welcome, spanMs)
+    // THE PREAMBLE ALONE MUST NOT WIPE IT — no line in it says anything about this character.
+    assert.ok(rowOf(mod.snapshot().state, SWIFT), `${label}: held across the preamble`)
+    send({ kind: 'sessionStart', ts: welcome } as LogEvent)
+
+    const back = rowOf(mod.snapshot().state, SWIFT)
+    assert.ok(back, `${label}: the buff survives the login`)
+    // The absence is camp→Welcome, whatever the client spent inside it.
+    assert.equal(back.startedTs, land + (welcome - camp), `${label}: paused by the whole absence`)
+    assert.equal(welcome - back.startedTs, 13 * MIN + 44 * SEC, `${label}: 13m44s of the 16 spent`)
+  })
+}
+
+test('(c) the app started while the game is loading does not wipe the previous session', () => {
+  // THE REPORT, in the shape it reaches the code. The historical fold ends INSIDE the hole: the
+  // log's last lines are the preamble of a login that has not printed its `Welcome` yet, because
+  // the zone is still loading. The 1s heartbeat then used to run the old LOGIN_CONFIRM_MS timer
+  // out against WALL time and rule the hole unexplained — dropping every pre-logout buff seconds
+  // before the login that would have paused them. There is no timer left to run out (JOS-262):
+  // only the log's own next line can answer the question.
+  const mod = dbBuffsModule()
+  const send = busTo(mod)
+
+  const land = at('Fri Jul 31 00:51:59 2026')
+  castAndLand(send, { spell: SWIFT, target: 'self', durationMs: SWIFT_DB_MS, landTs: land })
+  const camp = at('Fri Jul 31 01:05:43 2026')
+  send({ kind: 'campStart', ts: camp } as LogEvent)
+
+  // …the replay ends here, on the preamble of a login still in progress.
+  const welcome = at('Fri Jul 31 14:49:15 2026')
+  preamble(send, welcome, 5 * MIN)
+
+  // THE HEARTBEAT RUNS, and keeps running, while the zone loads. Minutes of it.
+  for (let i = 1; i <= 300; i++) mod.onTick(welcome - 5 * MIN + i * SEC)
+  const waiting = rowOf(mod.snapshot().state, SWIFT)
+  assert.ok(waiting, 'the buff is still there when the game finally finishes loading')
+  assert.equal(waiting.startedTs, land, 'and untouched — nothing has explained the hole yet')
+
+  // The Welcome lands at last. Now it is paused, by the absence and not by the load time.
+  send({ kind: 'sessionStart', ts: welcome } as LogEvent)
+  const back = rowOf(mod.snapshot().state, SWIFT)
+  assert.ok(back, 'the buff EQ froze with the character is up when the character is back')
+  assert.equal(welcome - back.startedTs, 13 * MIN + 44 * SEC)
+})
+
+test('(d) a 20-minute relog does not cull the pet buff a beat before the pause rewinds it', () => {
+  // THE RACE, in the band nothing used to protect. A hole (and with it the hygiene HOLD) started
+  // at SESSION_GAP_MS = 30 minutes, so an absence between the emit floor and half an hour reached
+  // `sweepHygiene` on the `Welcome` with no hold at all — and the derived `offlineGap` that
+  // rewinds the clocks is drained ONE EVENT LATER. A pet or ally row past its 60s unwitnessed
+  // grace was therefore culled a beat before the pause could save it: the row the user loses is
+  // exactly the row the pause exists for. The hold now starts at the emit floor (60s), which is
+  // every absence a pause can be reported for.
+  const OFFLINE = 20 * MIN
+  assert.ok(OFFLINE > OFFLINE_GAP_MIN_MS && OFFLINE < SESSION_GAP_MS, 'the unprotected band')
+  assert.equal(unwitnessedTimeoutMs('db'), 60 * SEC)
+
+  const mod = dbBuffsModule()
+  const send = busTo(mod)
+  const t0 = at('Sat Aug 01 22:00:00 2026')
+  castAndLand(send, { spell: SWIFT, target: 'self', durationMs: SWIFT_DB_MS, landTs: t0 })
+  castAndLand(send, { spell: HASTE, target: PET, durationMs: HASTE_DB_MS, landTs: t0 })
+
+  const lastSeen = t0 + 60 * SEC
+  seen(send, lastSeen)
+  const welcome = lastSeen + OFFLINE
+  // The preamble arrives first, as it always does — and the sweep runs on every one of its lines.
+  preamble(send, welcome, 20 * SEC)
+  send({ kind: 'sessionStart', ts: welcome } as LogEvent)
+
+  const back = rowOf(mod.snapshot().state, HASTE)
+  assert.ok(back, 'the pet buff is still there — the sweep held it until the pause landed')
+  assert.equal(back.self, false, 'and it really is one of the rows the unwitnessed cull reaches')
+  assert.equal(welcome - back.startedTs, 60 * SEC, 'rewound to its true remaining, not 21 minutes')
+  assert.ok(rowOf(mod.snapshot().state, SWIFT), 'the self buff beside it too')
 })

@@ -637,8 +637,15 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
     this.pets.clearForGap()
   }
 
+  /**
+   * The wall-clock heartbeat. It NO LONGER RULES ON AN OPEN HOLE (JOS-262): the hole is a
+   * question about the LOG, and only the log's own next line can answer it — see SessionFrame's
+   * header for the measured case (start the app while the game is still loading and the tick
+   * used to wipe the previous session's buffs seconds before the `Welcome` that would have
+   * paused them). What the tick still does is age the model: unconfirmed casts and the hygiene
+   * sweep, the latter still holding whatever an open absence protects.
+   */
   onTick(nowMs: number): void {
-    this.holeRuling(this.frame.tick(nowMs))
     this.inst.dropUnconfirmedPending(nowMs)
     this.inst.sweepHygiene(nowMs, this.frame.heldBeforeTs)
   }

@@ -414,10 +414,12 @@ async function stepDropFlash(overlay: Page, debuffsOverlay: Page | null, log: Fi
   // past their duration and none of them can stand in for a buff you just cast.
   //
   // THEY ARE STILL ON SCREEN WHILE THIS RUNS, and that is the JOS-134 behaviour rather than a
-  // leak: a log hole no longer wipes the model on sight. It waits (LOGIN_CONFIRM_MS) for a login
-  // to explain it, because the wipe used to beat the `offlineGap` that pauses the buffs EQ froze
-  // with your character. Nothing here appends a `Welcome to EverQuest Legends!`, so the hole is
-  // eventually ruled unexplained and they go — but not before this step reads the rows.
+  // leak: a log hole no longer wipes the model on sight. It waits for a login to explain it,
+  // because the wipe used to beat the `offlineGap` that pauses the buffs EQ froze with your
+  // character. Since JOS-262 the wait ends on EVIDENCE rather than on a timer, and the line
+  // below is evidence — `You begin casting Valor.` could only have been printed for this
+  // character, and no `Welcome to EverQuest Legends!` came first — so the hole is ruled
+  // unexplained as this step appends, and the fixture's pre-hole rows go with it.
   //
   // Which means the fixture's OWN long-dead Valor is sitting in the list beside the one we are
   // about to cast, under the same name, and `find(name === 'Valor')` would happily return it (it
