@@ -28,7 +28,10 @@
 //   * ATOMIC. The verified `.part` is RENAMED into place, so `<name>` either does not exist
 //     or is the complete, verified file. A torn 92 MB blob under a no-TTL cache is exactly
 //     the failure imageCache.ts's atomic write exists to prevent, one thousand times bigger.
-//   * PINNED. Both URLs are immutable GitHub release assets under a tag (see pinned.ts).
+//   * PINNED. The model's two URLs are immutable GitHub release assets under a tag; the third
+//     caller of this machinery (vcRuntime.ts, JOS-274) fetches a Microsoft payload from a
+//     content-addressed URL. Both shapes are in pinned.ts, and both are immutable by
+//     construction rather than by promise.
 //
 // TESTABILITY: `fetch`, the clock and the sleep are all injected, so
 // tests/speechEngine.test.mts drives the whole state machine — skip, fresh download, resume,
@@ -145,9 +148,22 @@ export interface ProvisionOptions {
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
+/**
+ * The same options plus the DIRECTORY the assets land in.
+ *
+ * Split out for JOS-274: the VC++ runtime payload is fetched by this exact machinery — one
+ * connection, resumable, sha256-gated, atomic, three attempts with backoff — into a different
+ * directory. There is one downloader in this app, and one set of scars.
+ */
+export interface AssetRunOptions extends ProvisionOptions {
+  readonly dir: string
+}
+
 /** Bookkeeping shared across one install run. */
 interface RunState {
-  readonly opts: Required<Pick<ProvisionOptions, 'userData'>> & ProvisionOptions
+  readonly opts: AssetRunOptions
+  /** Where this run's assets land (`<userData>/speech/kokoro` for the model). */
+  readonly dir: string
   /** Bytes of COMPLETED assets, so per-asset progress can be reported as whole-install. */
   base: number
   /** Sum of every asset's length in THIS run (the real total, or the tests' stand-ins). */
@@ -190,7 +206,7 @@ async function streamAsset(
   const res = await doFetch(asset.url, { headers })
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${asset.name}`)
   const restarted = from > 0 && res.status !== 206
-  const path = join(kokoroDir(run.opts.userData), `${asset.name}.part`)
+  const path = join(run.dir, `${asset.name}.part`)
   const handle = await open(path, restarted || from === 0 ? 'w' : 'a')
   let written = restarted ? 0 : from
   try {
@@ -219,7 +235,7 @@ async function streamAsset(
 
 /** One attempt at one asset: resume-or-start, stream, verify, atomically rename. */
 async function attemptAsset(run: RunState, asset: PinnedAsset): Promise<void> {
-  const dir = kokoroDir(run.opts.userData)
+  const dir = run.dir
   const partPath = join(dir, `${asset.name}.part`)
   const hash = createHash('sha256')
   let from = await seedFromPartial(partPath, hash)
@@ -254,7 +270,7 @@ async function finishAsset(
   bytes: number,
   digest: string
 ): Promise<void> {
-  const dir = kokoroDir(run.opts.userData)
+  const dir = run.dir
   const partPath = join(dir, `${asset.name}.part`)
   emit(run, {
     engine: 'kokoro',
@@ -286,8 +302,8 @@ async function finishAsset(
 
 /** Is this asset already on disk, complete and correct? Full hash — this is the slow path
  *  that runs once per install, not the per-utterance check `isKokoroInstalled` does. */
-async function alreadyVerified(userData: string, asset: PinnedAsset): Promise<boolean> {
-  const path = assetPath(userData, asset)
+async function alreadyVerified(dir: string, asset: PinnedAsset): Promise<boolean> {
+  const path = join(dir, asset.name)
   try {
     if ((await stat(path)).size !== asset.bytes) return false
     const digest = createHash('sha256').update(await readFile(path)).digest('hex')
@@ -298,27 +314,33 @@ async function alreadyVerified(userData: string, asset: PinnedAsset): Promise<bo
 }
 
 /**
- * Provision the Kokoro tier. Resolves with the same verdict the progress channel's terminal
- * phase carries — the two never disagree.
+ * Fetch a list of pinned assets into one directory: skip what is already verified, download the
+ * rest one at a time with retries, and report the whole run as one progress stream.
+ *
+ * THE DIRECTORY IS A PARAMETER SO THERE IS ONLY EVER ONE DOWNLOADER (JOS-274). The VC++ runtime
+ * payload is 3 MB rather than 92 and needs none of the resumability — but a second fetcher would
+ * be a second place for the etiquette, the digest gate and the atomic rename to be got subtly
+ * wrong, and this repo has already priced that lesson elsewhere. It passes `onProgress:
+ * undefined` instead, which is what makes its run silent.
  *
  * Never throws: every failure becomes `{ok:false, reason:'engine-not-installed', message}`,
  * because a failed download is a STATE the Voice panel renders, not an exception the IPC
  * layer has to catch (ipc/speech.ts's stub contract, kept verbatim).
  */
-export async function provisionKokoro(opts: ProvisionOptions): Promise<SpeechInstallResult> {
+export async function provisionAssets(opts: AssetRunOptions): Promise<SpeechInstallResult> {
   const sleep = opts.sleep ?? defaultSleep
   const assets = opts.assets ?? KOKORO_ASSETS
   const total = assets.reduce((n, a) => n + a.bytes, 0)
-  const run: RunState = { opts, base: 0, total, lastEmit: 0 }
+  const run: RunState = { opts, dir: opts.dir, base: 0, total, lastEmit: 0 }
   emit(run, { engine: 'kokoro', phase: 'checking', received: 0, total })
   try {
-    await mkdir(kokoroDir(opts.userData), { recursive: true })
+    await mkdir(run.dir, { recursive: true })
   } catch (err) {
-    return failed(run, `could not create ${kokoroDir(opts.userData)}: ${String(err)}`)
+    return failed(run, `could not create ${run.dir}: ${String(err)}`)
   }
 
   for (const [index, asset] of assets.entries()) {
-    if (await alreadyVerified(opts.userData, asset)) {
+    if (await alreadyVerified(run.dir, asset)) {
       run.base += asset.bytes
       continue
     }
@@ -330,6 +352,14 @@ export async function provisionKokoro(opts: ProvisionOptions): Promise<SpeechIns
 
   emit(run, { engine: 'kokoro', phase: 'done', received: run.total, total: run.total })
   return { ok: true }
+}
+
+/**
+ * Provision the Kokoro tier. Resolves with the same verdict the progress channel's terminal
+ * phase carries — the two never disagree.
+ */
+export function provisionKokoro(opts: ProvisionOptions): Promise<SpeechInstallResult> {
+  return provisionAssets({ ...opts, dir: kokoroDir(opts.userData) })
 }
 
 /** Three attempts, exponential backoff. Returns null on success, else the last message. */

@@ -22,11 +22,14 @@
 // spawns it, and it stays for the life of the app, holding the ~90 MB session and the 28 MB
 // voice pack — which is why the second uncached phrase is ~0.9 s instead of ~1.6 s.
 //
-// A DEAD WORKER STAYS DEAD (politely). If the thread cannot start at all — the native module
-// failed to load in a packaged build, say — that is a property of the installation, not of
-// this request. It is recorded ONCE and every later call answers `{ok:false}` immediately
-// rather than re-attempting a failing spawn per alert. `{ok:false}` is the fallback seam W2
-// already handles: the alert is spoken by the system voice, and the user hears their alert.
+// A DEAD WORKER STAYS DEAD (politely) UNTIL THE MACHINE CHANGES. If the thread cannot start at
+// all — the native module failed to load in a packaged build, say — that is a property of the
+// installation, not of this request. It is recorded ONCE and every later call answers
+// `{ok:false}` immediately rather than re-attempting a failing spawn per alert. `{ok:false}` is
+// the fallback seam W2 already handles: the alert is spoken by the system voice, and the user
+// hears their alert. The ONE thing that unlatches it is `retryAfterRepair()` (JOS-274), called
+// after provisioning has actually laid the Visual C++ runtime down beside the binding — a
+// change to the installation is precisely the premise the latch was resting on.
 //
 // …AND IT SAYS WHICH KIND OF DEAD (JOS-247). Every failure here used to answer
 // `reason:'engine-not-installed'`, which for a user whose download had FINISHED was simply
@@ -102,6 +105,16 @@ export interface SpeechEngineOptions {
 export interface SpeechEngine {
   /** Synthesize (or serve from cache) one utterance. Never rejects. */
   say(text: string, voiceId: string | null | undefined): Promise<SpeechSayResult>
+  /**
+   * Forget a latched fault so the NEXT `say()` tries the worker again (JOS-274).
+   *
+   * The latch exists because "a dlopen that failed once fails identically every time" — which
+   * is true right up until something CHANGES THE MACHINE, and provisioning the Visual C++
+   * runtime beside the binding is exactly that. This is the one legitimate caller: it is
+   * invoked only after files were actually placed, never speculatively, so the no-retry-storm
+   * property the latch buys is untouched. Returns whether there was a fault to clear.
+   */
+  retryAfterRepair(): boolean
   /** Tear the worker down (app quit). Safe to call when it never started. */
   dispose(): void
 }
@@ -117,6 +130,41 @@ export interface SpeechEngine {
  */
 export function resolveKokoroVoice(voiceId: string | null | undefined): string {
   return voiceId && kokoroVoiceLang(voiceId) ? voiceId : KOKORO_DEFAULT_VOICE
+}
+
+/**
+ * Did this thread die because the native module could not be LOADED?
+ *
+ * `ERR_DLOPEN_FAILED` is Node's code for a failed `process.dlopen`, and it is the code the
+ * first field report carried (0.20.0, 2026-08-11) alongside `node:internal/modules/cjs`
+ * frames — i.e. the throw happened while the worker was still requiring its imports, before
+ * a single job could be handled. Anything else (a bad voice pack, an unexpected throw mid-run)
+ * is a plain failure and says so.
+ */
+function isUnloadable(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'ERR_DLOPEN_FAILED'
+}
+
+/**
+ * What the error log says about a dead thread. The unloadable sentence NAMES THE RUNTIME on
+ * purpose (JOS-247): the code alone made the first field report a guessing game, and since
+ * JOS-274 provisioning can act on the same fact rather than only print it.
+ */
+function workerFailureMessage(unloadable: boolean): string {
+  return unloadable
+    ? 'speech: the synthesis engine could not be loaded on this PC (ERR_DLOPEN_FAILED - its ' +
+        'binaries need the Microsoft Visual C++ x64 runtime, which Electron does not ship); ' +
+        'using the system voice'
+    : 'speech: the synthesis worker failed; using the system voice'
+}
+
+/** The three paths the worker needs, resolved from the one directory the model lives in. */
+function workerInit(userData: string, cacheDir: string): SpeechWorkerInit {
+  return {
+    modelPath: join(kokoroDir(userData), KOKORO_ASSETS[0].name),
+    voicesPath: join(kokoroDir(userData), KOKORO_ASSETS[1].name),
+    cacheDir
+  }
 }
 
 export function createSpeechEngine(opts: SpeechEngineOptions): SpeechEngine {
@@ -144,66 +192,59 @@ export function createSpeechEngine(opts: SpeechEngineOptions): SpeechEngine {
     pending.clear()
   }
 
-  /**
-   * Did this thread die because the native module could not be LOADED?
-   *
-   * `ERR_DLOPEN_FAILED` is Node's code for a failed `process.dlopen`, and it is the code the
-   * first field report carried (0.20.0, 2026-08-11) alongside `node:internal/modules/cjs`
-   * frames — i.e. the throw happened while the worker was still requiring its imports, before
-   * a single job could be handled. Anything else (a bad voice pack, an unexpected throw mid-run)
-   * is a plain failure and says so.
-   */
-  function isUnloadable(err: unknown): boolean {
-    return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'ERR_DLOPEN_FAILED'
-  }
-
   function ensureWorker(): Worker | null {
     if (fault) return null
     if (worker) return worker
-    const init: SpeechWorkerInit = {
-      modelPath: join(kokoroDir(opts.userData), KOKORO_ASSETS[0].name),
-      voicesPath: join(kokoroDir(opts.userData), KOKORO_ASSETS[1].name),
-      cacheDir
-    }
+    let started: Worker
     try {
       mkdirSync(cacheDir, { recursive: true })
-      worker = new Worker(opts.workerPath, { workerData: init })
+      started = new Worker(opts.workerPath, { workerData: workerInit(opts.userData, cacheDir) })
     } catch (err) {
       fault = 'engine-failed'
       onError('speech: the synthesis worker could not be started; using the system voice', err)
       return null
     }
-    worker.on('message', (reply: SpeechWorkerReply) => {
+    worker = started
+    /**
+     * A DEAD WORKER'S EVENTS MUST NOT SPEAK FOR A LIVE ONE (JOS-274). A thread that throws at
+     * module load emits `error` AND, some ticks later, `exit` — and before `retryAfterRepair`
+     * existed nothing could ever spawn a second worker, so the corpse's late `exit` had nothing
+     * to land on. Now it does: it would fail the NEW worker's outstanding job with a generic
+     * 'worker exited' before that worker had said anything about itself, turning an
+     * 'engine-unloadable' answer into 'engine-failed' — i.e. losing exactly the distinction
+     * JOS-247 exists for. Every handler below therefore answers only for the worker it belongs
+     * to. (Caught by tests/speechVcRuntime.test.mts's repair case, which is the first code in
+     * this repo ever to spawn twice.)
+     */
+    const isCurrent = (): boolean => worker === started
+    started.on('message', (reply: SpeechWorkerReply) => {
+      if (!isCurrent()) return
       pending.get(reply.id)?.(reply)
       pending.delete(reply.id)
     })
-    worker.on('error', (err) => {
+    started.on('error', (err) => {
       // A thread-level error (module load failure, an uncaught throw) kills the thread. Do
       // not respawn in a loop: record it and let every later call answer immediately. A retry
       // would be worse than useless for the case that actually happens — a dlopen that failed
       // once fails identically every time, and retrying would file the same report per alert.
+      // (`retryAfterRepair` is the one exception, and it is driven by the machine changing.)
+      if (!isCurrent()) return
       const unloadable = isUnloadable(err)
       fault = unloadable ? 'engine-unloadable' : 'engine-failed'
       worker = null
-      onError(
-        unloadable
-          ? 'speech: the synthesis engine could not be loaded on this PC (ERR_DLOPEN_FAILED - its ' +
-            'binaries need the Microsoft Visual C++ x64 runtime, which Electron does not ship); ' +
-            'using the system voice'
-          : 'speech: the synthesis worker failed; using the system voice',
-        err
-      )
+      onError(workerFailureMessage(unloadable), err)
       failAllPending('worker error')
     })
-    worker.on('exit', () => {
+    started.on('exit', () => {
+      if (!isCurrent()) return
       worker = null
       failAllPending('worker exited')
     })
     // `unref` so a warm worker never holds the process open at quit — the model is a
     // convenience, not a reason for the app to linger.
-    worker.unref()
+    started.unref()
     onInfo('[everquest-companion] Speech: Kokoro worker started')
-    return worker
+    return started
   }
 
   /** Post one job and wait for its reply. Resolves false on any failure. */
@@ -249,6 +290,12 @@ export function createSpeechEngine(opts: SpeechEngineOptions): SpeechEngine {
       const run = synthesize(hash, text, voice).finally(() => inFlight.delete(hash))
       inFlight.set(hash, run)
       return run
+    },
+    retryAfterRepair() {
+      if (fault === null) return false
+      fault = null
+      onInfo('[everquest-companion] Speech: the engine will be retried after a runtime repair')
+      return true
     },
     dispose() {
       const w = worker

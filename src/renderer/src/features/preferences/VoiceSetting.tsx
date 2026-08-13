@@ -50,6 +50,7 @@ import {
 } from '@shared/speechText'
 import {
   applyVoicePrefs,
+  clearSpeechEngineFault,
   currentVoicePrefs,
   forgetSystemVoices,
   speak,
@@ -148,7 +149,12 @@ function useKokoroInstall(): KokoroInstallState {
     const off = window.eq.onSpeechInstallProgress((p) => {
       if (p.engine !== 'kokoro') return
       setProgress(p)
-      if (p.phase === 'done') setInstalls((n) => n + 1)
+      if (p.phase !== 'done') return
+      setInstalls((n) => n + 1)
+      // JOS-274: the same run may have laid the Visual C++ runtime down beside the engine, in
+      // which case a fault this session latched is about a machine that no longer exists. Main
+      // has already unlatched its own; this is the renderer's half of the same fact.
+      clearSpeechEngineFault()
     })
     return () => {
       alive = false

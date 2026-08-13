@@ -331,15 +331,22 @@ export const SPEECH_SETUP_NOTES: Record<SpeechSetupGap, string> = {
  * the row's ▶ and the preferences preview, none of which are inside a component.
  */
 let engineFault: SpeechEngineFault | null = null
-const faultListeners = new Set<(fault: SpeechEngineFault) => void>()
+const faultListeners = new Set<(fault: SpeechEngineFault | null) => void>()
 
 /** The fault this session has seen, or null while the tier has never failed. */
 export function speechEngineFault(): SpeechEngineFault | null {
   return engineFault
 }
 
-/** Subscribe to the first fault of the session. Returns the unsubscribe. */
-export function onSpeechEngineFault(listener: (fault: SpeechEngineFault) => void): () => void {
+/**
+ * Subscribe to changes of the session's fault. Returns the unsubscribe.
+ *
+ * It carries `null` as well as a fault since JOS-274 — because there is now exactly one thing
+ * that can UNDO one. See `clearSpeechEngineFault`.
+ */
+export function onSpeechEngineFault(
+  listener: (fault: SpeechEngineFault | null) => void
+): () => void {
   faultListeners.add(listener)
   return () => faultListeners.delete(listener)
 }
@@ -356,9 +363,30 @@ export function noteSpeechEngineFault(reason: SpeechUnavailableReason): void {
   for (const listener of faultListeners) listener(reason)
 }
 
+/**
+ * Forget the session's fault, and TELL the subscribers — the sticky-for-the-session rule, and
+ * its one exception (JOS-274).
+ *
+ * The rule's premise is that nothing between one alert and the next changes whether a native
+ * module can be loaded. Finishing a voice install now can: the same run provisions the Microsoft
+ * Visual C++ runtime beside the engine, main unlatches its own fault, and the next utterance
+ * really does go to Kokoro. Leaving "will not start on this PC" on screen after that would be
+ * the mirror image of the bug JOS-247 fixed — a true sentence about a machine that has since
+ * been repaired.
+ *
+ * Called from the Voice panel on a completed install, and nowhere else. If the repair did not
+ * take, the very next failed utterance re-latches within seconds, so the honest worst case is a
+ * note that blinks rather than one that lies.
+ */
+export function clearSpeechEngineFault(): void {
+  if (engineFault === null) return
+  engineFault = null
+  for (const listener of faultListeners) listener(null)
+}
+
 /** Tests only: forget the session's fault so cases do not leak into each other. */
 export function resetSpeechEngineFault(): void {
-  engineFault = null
+  clearSpeechEngineFault()
 }
 
 // ------------------------------------------------------------------ the e2e / test hook
