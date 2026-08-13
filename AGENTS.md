@@ -123,10 +123,31 @@ archive. Layout: `src/main` (Node), `src/preload`, `src/renderer`,
     ticket JOS-232 filed — now firing standalone, priority raised.
   - `window-bounds.e2e` · close-time bounds write never lands under sweep
     load ("closing the window writes down where it was left — (none)",
-    cascades into both relaunch-bounds checks) · 1 sighting (2026-08-12,
-    40-spec sweep during JOS-260 verification; green standalone immediately
-    after and in the following full sweep) · load-sensitive
-    persistence-on-close, unrelated to the change under test; report line.
+    cascades into both relaunch-bounds checks) · 2 sightings (2026-08-12,
+    40-spec sweep during JOS-260 verification; 2026-08-13, 42-spec sweep
+    during JOS-279 — green standalone immediately after, every time) ·
+    load-sensitive persistence-on-close, unrelated to the change under test;
+    report line.
+  - `respawn-timers.e2e` · the learned gap comes back 3m 01s where four
+    assertions spell `3m 00s` ("…and the gap it learned is the one that was
+    played", the `gaps:` line, the modal's working, the post-clear reading) ·
+    1 sighting (2026-08-13, 42-spec sweep during JOS-279; green standalone
+    immediately after) · DIAGNOSED, not guessed: `stepWatchFromRecentKills`
+    computes `earlier = Date.now() − 3 min`, stamps the first death at it, and
+    stamps the second with a bare `append()` — i.e. whenever that line
+    actually runs. EQ stamps are second-resolution, so one second of wall
+    clock between the two calls makes the played gap 181 s. It is a clock bet
+    of exactly the kind wave E3 removed everywhere else; the fix is to stamp
+    BOTH deaths off one instant (`appendAt(new Date(base + 3 min))`) rather
+    than to widen the assertions. Needs a ticket if it fires again.
+  - MULTI-SPEC SWEEP · six specs die at once with "Target page, context or
+    browser has been closed" mid-click (telemetry, voice-alerts, whats-new,
+    timeline, title-bar, xp-overlay) · 1 sighting (2026-08-13, 42-spec sweep
+    during JOS-279; all six green serially immediately after, and none of them
+    fired in the very next full sweep) · not attributable to any one spec —
+    the Electron app disappears under a pending click, which is a host/load
+    event rather than a spec's own race. Report line; a second sighting makes
+    it a ticket about the runner's concurrency rather than about a spec.
   - `presenceWorker.test` first-tick dedup · watches the REAL machine; fails
     while EverQuest runs with a player at the keyboard · 3 sightings
     (2026-08-10 ×2, 2026-08-12 JOS-239 worker mid-session, green on final
