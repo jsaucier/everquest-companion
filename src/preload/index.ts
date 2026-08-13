@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/ipc'
 import { windowsApi } from './windows'
+import { plannerApi } from './planner'
 import { rosterApi } from './roster'
 import { soundsBridge } from './sounds'
 import type {
@@ -31,6 +32,7 @@ import type {
   SpeechSayResult,
   SpeechVoice,
   SpellCatalog,
+  UpdateStatus,
   UserSound,
   UserSoundImportResult,
   UserSoundRemoveResult,
@@ -41,10 +43,6 @@ import type { ClassAbbr, ComboDelta, ComboSnap } from '../shared/classCombo'
 // "What's new at this level" (docs/plans/levelup-whats-new.md) — the unlock dataset rides the
 // spell-catalog channel with a flag; see the handler in src/main/ipc/knowledge.ts.
 import type { LevelUnlockData } from '../shared/levelUnlocks'
-// The exaltation planner's model (docs/plans/exaltation-planner.md §3.1) — one definition for
-// main (which builds the donor rows), this bridge, and the renderer that edits the plans.
-import type { ExaltPlan, PlannerDonor, PlannerItemHit } from '../shared/planner/types'
-import type { PlannerInventory } from '../shared/planner/inventorySlots'
 import type { CharacterSheet } from '../shared/characterSheet'
 // The `/outputfile` registry's one IPC shape (JOS-44) — command, why-clause, and the dump's own
 // mtime, per kind. Every surface fed by an export command reads this and nothing else.
@@ -57,7 +55,6 @@ import type {
   MapSearchOpts,
   ZoneShort
 } from '../shared/maps'
-import type { UpdateStatus } from '../shared/types'
 // Presence-driven prefs live beside their normalizers, not in shared/types.ts — see the note at
 // the bottom of that file.
 import type { CursorRingPrefs, OverlayAutoHidePrefs } from '../shared/presencePrefs'
@@ -424,32 +421,11 @@ const api = {
    *  quest catalog first, then a cached, politely-throttled wiki lookup. Never rejects. */
   lookupMob: (name: string): Promise<MobKnowledge> => ipcRenderer.invoke(IPC.mobsLookup, name),
 
-  // ---- exaltation planner (docs/plans/exaltation-planner.md §4.1, §6) ----
-  /** Every effect the committed item corpus states, one row per (item, effect) — ~1.5k rows,
-   *  built lazily in main and memoized there. Fetch ONCE and cache: it is derived from bytes
-   *  compiled into the bundle, so it cannot change while the app runs. */
-  plannerDonors: (): Promise<PlannerDonor[]> => ipcRenderer.invoke(IPC.plannerDonors),
-  /** Substring search over item NAMES for the Board's host picker (prefix hits first, then the
-   *  shortest name; capped at 50). An empty query resolves to no hits. */
-  plannerSearchItems: (query: string): Promise<PlannerItemHit[]> =>
-    ipcRenderer.invoke(IPC.plannerSearchItems, query),
-  /** What the active character is WEARING, from their newest `/outputfile inventory` dump —
-   *  `null` when no dump exists. Re-ask on `onInventoryReload` and the tab fills itself the
-   *  moment the command is typed in game. */
-  plannerInventory: (): Promise<PlannerInventory | null> => ipcRenderer.invoke(IPC.plannerInventory),
-
-  // ---- gear planner (JOS-283, phase 2) ----
-  /** The gear CANDIDATE INDEX: one row per equippable item (~6,858), each carrying its NUMERIC
-   *  base stat vector plus slots/classes/races/era/flags/effects and the weapon block. Built
-   *  lazily in main and memoized there. Fetch ONCE and cache — it is derived from bytes compiled
-   *  into the bundle, and every `+N` view of it is a pure map over the rows
-   *  (`shared/planner/gearScale.ts scaleGearRow`), never another call. Check `version` against
-   *  `GEAR_INDEX_VERSION` before reading: a payload from a version this build does not know is
-   *  refused rather than mis-drawn.
-   *
-   *  The payload type is spelled INLINE rather than imported: this file sits exactly on the
-   *  400-code-line ceiling, and an import line is a code line. Do not "tidy" it into one. */
-  gearIndex: (): Promise<import('../shared/planner/gear').GearIndexPayload> => ipcRenderer.invoke(IPC.gearIndex),
+  // ---- the planner's slice, in its own file (src/preload/planner.ts) ----
+  // The exaltation planner's four reads + one write and the Gear tab's two reads. Split out
+  // under the same rule roster.ts/windows.ts/perf.ts state: this file is AT the measured
+  // 400-code-line ceiling, and phase 4 (JOS-285) needed one more method than it had room for.
+  ...plannerApi,
 
   // ---- character sheet (JOS-45) ----
   /** The armory grid + the gear sum for the active character, from their newest
@@ -462,13 +438,6 @@ const api = {
    *  renderer code to open it (the surface is stripped) and no handler if something tried.
    *  Same shape as the `triage*` methods above. */
   characterSheet: (): Promise<CharacterSheet | null> => ipcRenderer.invoke(IPC.characterSheet),
-
-  /** The active character's saved exaltation sets — `[]` when it has none. */
-  getExaltPlans: (): Promise<ExaltPlan[]> => ipcRenderer.invoke(IPC.plannerGetPlans),
-  /** Replace the whole set list for the active character. Main re-validates every field against
-   *  the closed slot/socket/class allowlists and silently drops what does not fit. */
-  setExaltPlans: (plans: ExaltPlan[]): Promise<void> =>
-    ipcRenderer.invoke(IPC.plannerSetPlans, plans),
 
   /** Report a renderer-detected event into the live event feed (Task #59) — today only quest
    *  completions, which only the renderer's posky/turn-in detector can see. Fire-and-forget;

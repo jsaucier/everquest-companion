@@ -53,6 +53,8 @@
     // …and `buffTrust.ts` (the buff externals allowlist, JOS-140), likewise.
     "src/preload/buffTrust.ts",
     // …and `respawn.ts` (the respawn watch list, JOS-194), likewise.
-    "src/preload/respawn.ts"
+    "src/preload/respawn.ts",
+    // …and `planner.ts` (the exaltation planner + the Gear tab's reads, JOS-285), likewise.
+    "src/preload/planner.ts"
   ]
 }
