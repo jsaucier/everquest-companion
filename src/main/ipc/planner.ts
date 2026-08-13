@@ -17,6 +17,8 @@ import { ipcMain } from 'electron'
 import { IPC } from '../../shared/ipc'
 import { equippedHosts, type PlannerInventory } from '../../shared/planner/inventorySlots'
 import { buildPlannerIndex, searchPlannerItems, type PlannerIndex } from '../planner/effectIndex'
+import { buildGearIndex } from '../planner/gearIndex'
+import type { GearIndexPayload } from '../../shared/planner/gear'
 import { sanitizeExaltPlans } from '../planner/validate'
 import { loadInventoryDump } from '../outputs'
 import { activeCharId, getActiveCharacter } from '../session'
@@ -27,6 +29,7 @@ import { itemKey, type ItemDbFile } from '../itemsDb'
 import itemsJson from '../data/items.json'
 
 let index: PlannerIndex | null = null
+let gear: GearIndexPayload | null = null
 
 /** The donor + item indices, built on first use. */
 function plannerIndex(): PlannerIndex {
@@ -34,10 +37,25 @@ function plannerIndex(): PlannerIndex {
   return index
 }
 
+/**
+ * The GEAR candidate index (JOS-283), memoized the same way and for the same reason. It lives in
+ * THIS file rather than a gear-only handler module because the memoization is per-import of a
+ * committed corpus: two handler modules would each hold their own walk of the same 8.6 MB.
+ */
+function gearIndex(): GearIndexPayload {
+  gear ??= buildGearIndex(itemsJson as unknown as ItemDbFile)
+  return gear
+}
+
 export function registerPlannerIpc(): void {
   // Every effect the corpus states, one row per (item, effect). The renderer fetches this once
   // and keeps it — it is derived from committed bytes and cannot change while the app runs.
   ipcMain.handle(IPC.plannerDonors, () => plannerIndex().donors)
+
+  // Every equippable item, described in numbers (JOS-283). One versioned payload, fetched once —
+  // the renderer scales it to any plus-state itself (shared/planner/gearScale.ts), so no upgrade
+  // slider ever comes back here.
+  ipcMain.handle(IPC.gearIndex, (): GearIndexPayload => gearIndex())
 
   // Host picking: substring over item names, capped. A non-string query is not an error the UI
   // should have to render — it is simply no hits.

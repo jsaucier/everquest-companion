@@ -339,6 +339,17 @@ export const IPC = {
   // typing the command in game fills the tab with no click anywhere.
   plannerInventory: 'planner:inventory',
 
+  // ---- gear planner (JOS-283, phase 2) ----
+  // renderer -> main: the GEAR CANDIDATE INDEX — one row per equippable item (~6,858 of the
+  // corpus's 11,161 pages), carrying slots/classes/races/era/flags/effects, the weapon block and
+  // the NUMERIC BASE stat vector. Returns GearIndexPayload (versioned; see shared/planner/gear.ts).
+  // Built in main for the same reason the donor index is — items.json is already inlined here, so
+  // shipping the corpus to the renderer would double it — LAZILY on first call and memoized for
+  // the process. Fetched ONCE by the renderer: the rows are derived from committed bytes and
+  // cannot change while the app runs, and every plus-state the user asks for is a PURE MAP over
+  // them (shared/planner/gearScale.ts), never another round trip.
+  gearIndex: 'gear:index',
+
   // ---- character sheet (JOS-45) ----
   // renderer -> main: the armory grid + the gear sum, built from the active character's newest
   // `/outputfile inventory` dump and joined to the committed item DB in main (where the 8.6 MB

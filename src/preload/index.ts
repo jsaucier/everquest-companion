@@ -437,6 +437,20 @@ const api = {
    *  `null` when no dump exists. Re-ask on `onInventoryReload` and the tab fills itself the
    *  moment the command is typed in game. */
   plannerInventory: (): Promise<PlannerInventory | null> => ipcRenderer.invoke(IPC.plannerInventory),
+
+  // ---- gear planner (JOS-283, phase 2) ----
+  /** The gear CANDIDATE INDEX: one row per equippable item (~6,858), each carrying its NUMERIC
+   *  base stat vector plus slots/classes/races/era/flags/effects and the weapon block. Built
+   *  lazily in main and memoized there. Fetch ONCE and cache — it is derived from bytes compiled
+   *  into the bundle, and every `+N` view of it is a pure map over the rows
+   *  (`shared/planner/gearScale.ts scaleGearRow`), never another call. Check `version` against
+   *  `GEAR_INDEX_VERSION` before reading: a payload from a version this build does not know is
+   *  refused rather than mis-drawn.
+   *
+   *  The payload type is spelled INLINE rather than imported: this file sits exactly on the
+   *  400-code-line ceiling, and an import line is a code line. Do not "tidy" it into one. */
+  gearIndex: (): Promise<import('../shared/planner/gear').GearIndexPayload> => ipcRenderer.invoke(IPC.gearIndex),
+
   // ---- character sheet (JOS-45) ----
   /** The armory grid + the gear sum for the active character, from their newest
    *  `/outputfile inventory` dump; `null` when no dump exists.
