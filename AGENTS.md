@@ -123,7 +123,12 @@ archive. Layout: `src/main` (Node), `src/preload`, `src/renderer`,
     spell `3m 00s` · 1 sighting (2026-08-13 sweep, JOS-279; green standalone
     after) · DIAGNOSED: `stepWatchFromRecentKills` stamps its two deaths off
     two instants, so a second of wall clock makes the gap 181 s. Stamp both
-    off ONE instant; never widen the assertions.
+    off ONE instant; never widen the assertions. ·
+    **RESOLVED 0572c77f** — the diagnosis held exactly: `Date.now()` for the
+    first death and a bare `append()` (which is `appendAt(new Date())`) for the
+    second were two clock reads, and EQ stamps are second-granular. Both deaths
+    now stamp off one captured `now`, so the gap is 180 s by construction; the
+    assertions were left alone. Green standalone and in a five-spec sweep.
   - MULTI-SPEC SWEEP · six specs die at once mid-click, "Target page … has
     been closed" · 1 sighting (2026-08-13 sweep, JOS-279; six green serially
     after, none in the next sweep) · a host/load event, not one spec's race —
