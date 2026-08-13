@@ -40,11 +40,34 @@ const KEEP = [
 ]
 const keep = (l) => l.startsWith('[') && scrubKeep(l) && KEEP.some((re) => re.test(l))
 
-function slice(fromLine, toLine, out) {
+function cut(fromLine, toLine) {
   const seg = []
   for (let i = fromLine - 1; i < toLine && i < lines.length; i++) if (keep(lines[i])) seg.push(lines[i])
+  return seg
+}
+
+function slice(fromLine, toLine, out) {
+  const seg = cut(fromLine, toLine)
   writeFileSync(join(FIXTURES, out), seg.join('\n') + '\n')
   console.log(`${out}: ${seg.length} lines (from raw ${toLine - fromLine + 1})`)
+}
+
+/**
+ * SEVERAL SMALL RANGES, IN LOG ORDER, AS ONE FIXTURE — for a shape whose defect lives in the
+ * BOUNDARIES rather than in a span of evidence (JOS-287).
+ *
+ * Every line still comes out of the real log through the same `keep` filter and the same shared
+ * scrub; what changes is that the evidence-free stretches BETWEEN the anchors are not carried.
+ * That is legitimate exactly when the assertion is about where boundaries land — a `/who` row and
+ * a level ding date themselves, so the hours between them add megabytes and no information — and
+ * it is NOT legitimate for the sustain-based fixtures above (CW2/CW5/CW6), where thinning would
+ * manufacture a silence the real session never had. Ranges must be given in ascending order.
+ */
+function splice(ranges, out) {
+  const seg = ranges.flatMap(([from, to]) => cut(from, to))
+  writeFileSync(join(FIXTURES, out), seg.join('\n') + '\n')
+  const raw = ranges.reduce((n, [from, to]) => n + (to - from + 1), 0)
+  console.log(`${out}: ${seg.length} lines (from raw ${raw} across ${ranges.length} ranges)`)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -146,3 +169,36 @@ slice(1232428, 1434122, 'cw5-wizard-swap-aug6.log')
 // It cannot be trimmed at either end: cut the tail and the swap-back disappears (which is CW5),
 // cut the head and the ding that opens the absorbed window is gone.
 slice(1232428, 1557569, 'cw6-swap-back-aug9.log')
+
+// CW7 THE SWAP-BOUNDARY SHAPE — five small ranges, Thu Aug 06 22:27 → Wed Aug 12 22:47 (JOS-287).
+// Located 2026-08-13; the log grows by append, so they stay valid.
+//
+// The defect this pins is a MERGE defect, so the fixture carries the lines that DATE boundaries
+// and nothing else. What the shape needs, and why each range is in it:
+//   * 1433674  `Welcome to level 25!` (Aug 06 22:27:32) — the previous ding, and therefore where
+//     the level-drop window OPENS. Without it the drop has no left edge and the defect cannot
+//     form.
+//   * 1442262  `[50 PAL/MNK/ENC] Primitive` (Aug 09 10:41:31) — THE ROW THE TRIPWIRE IS ABOUT,
+//     the loadout the owner was playing that morning.
+//   * 1561125  `[50 PAL/ROG/BER]` (Aug 10 20:13:00) — the loadout he swapped INTO, a day later.
+//   * 1594342  `[50 PAL/MNK/ENC]` (Aug 11 21:01:24) and 1628111 `[10 PAL/RNG/SHM]` (Aug 12
+//     22:42:20) — two more swaps, because the failure needs several rows under ONE window.
+//   * 1629165  `Welcome to level 11!` (Aug 12 22:47:00) — the re-roll's NON-INCREASING ding
+//     (50 → 11), whose window therefore reaches back SIX DAYS to the Aug 06 ding and overlaps
+//     every row cut above.
+//
+// That is the whole bug in one file: the six-day window overlapped four `/who` cuts,
+// `mergeBoundaries` read the overlap as one swap, kept the narrowest window and clamped the cut
+// into it — one boundary where there were four — and the surviving slice held rows that
+// contradict each other, so `slotsFor`'s last-row rule stated `PAL/ROG/BER` over the Aug 09
+// morning. A row applied BACKWARDS across a swap boundary.
+splice(
+  [
+    [1433600, 1433700],
+    [1442160, 1442360],
+    [1561000, 1561200],
+    [1594250, 1594450],
+    [1628000, 1629200]
+  ],
+  'cw7-who-swap-boundary-aug12.log'
+)
