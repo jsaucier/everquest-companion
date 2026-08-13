@@ -104,17 +104,9 @@ archive. Layout: `src/main` (Node), `src/preload`, `src/renderer`,
     sweep — green standalone immediately after, every time;
     multi-spec-sweep only) · documented in-file
     by the JOS-206 worker;
-    needed the same order-hardening the spec's own comment describes ·
-    **RESOLVED 9816cd34 (JOS-279)** — order was never enough, because it is a
-    bet: `App` keys every view on `viewKey` and main bumps it through
-    `sendWorldRebuilt` at startup/switch/live-epoch, and this spec launches
-    against the machine's OWN growing log, so a rebuild remounts `PoskyView`
-    and closes the row the step just opened. `tests/e2e/viewRemount.mts` now
-    HOLDS the precondition: an attribute React does not manage, planted inside
-    the keyed subtree, read back as a settle condition — every reading taken
-    before any `check`, an attempt that lost its mount discarded and retried,
-    three losses a failure. Reusable by anchor selector (bosses-week and
-    planner argue the same fact).
+    **RESOLVED 9816cd34 (JOS-279)** — order-hardening was a BET;
+    `tests/e2e/viewRemount.mts` HOLDS the precondition instead (mark the keyed
+    subtree, read before you `check`, discard an attempt that lost its mount).
   - `combat-dashboard.e2e` · narrow-window resize never lands, settleStable
     settles on stale geometry · 5 sightings (2026-08-10/11/12 full-sweep; 4th
     in the JOS-229 sweep; 5th 2026-08-12 STANDALONE on the JOS-240 merge
@@ -123,31 +115,19 @@ archive. Layout: `src/main` (Node), `src/preload`, `src/renderer`,
     ticket JOS-232 filed — now firing standalone, priority raised.
   - `window-bounds.e2e` · close-time bounds write never lands under sweep
     load ("closing the window writes down where it was left — (none)",
-    cascades into both relaunch-bounds checks) · 2 sightings (2026-08-12,
-    40-spec sweep during JOS-260 verification; 2026-08-13, 42-spec sweep
-    during JOS-279 — green standalone immediately after, every time) ·
-    load-sensitive persistence-on-close, unrelated to the change under test;
-    report line.
-  - `respawn-timers.e2e` · the learned gap comes back 3m 01s where four
-    assertions spell `3m 00s` ("…and the gap it learned is the one that was
-    played", the `gaps:` line, the modal's working, the post-clear reading) ·
-    1 sighting (2026-08-13, 42-spec sweep during JOS-279; green standalone
-    immediately after) · DIAGNOSED, not guessed: `stepWatchFromRecentKills`
-    computes `earlier = Date.now() − 3 min`, stamps the first death at it, and
-    stamps the second with a bare `append()` — i.e. whenever that line
-    actually runs. EQ stamps are second-resolution, so one second of wall
-    clock between the two calls makes the played gap 181 s. It is a clock bet
-    of exactly the kind wave E3 removed everywhere else; the fix is to stamp
-    BOTH deaths off one instant (`appendAt(new Date(base + 3 min))`) rather
-    than to widen the assertions. Needs a ticket if it fires again.
-  - MULTI-SPEC SWEEP · six specs die at once with "Target page, context or
-    browser has been closed" mid-click (telemetry, voice-alerts, whats-new,
-    timeline, title-bar, xp-overlay) · 1 sighting (2026-08-13, 42-spec sweep
-    during JOS-279; all six green serially immediately after, and none of them
-    fired in the very next full sweep) · not attributable to any one spec —
-    the Electron app disappears under a pending click, which is a host/load
-    event rather than a spec's own race. Report line; a second sighting makes
-    it a ticket about the runner's concurrency rather than about a spec.
+    cascades into both relaunch-bounds checks) · 2 sightings (2026-08-12
+    40-spec sweep, JOS-260; 2026-08-13 sweep, JOS-279 — green standalone
+    after, both) · load-sensitive persistence-on-close, unrelated to the
+    change under test; report line.
+  - `respawn-timers.e2e` · the learned gap reads 3m 01s where four assertions
+    spell `3m 00s` · 1 sighting (2026-08-13 sweep, JOS-279; green standalone
+    after) · DIAGNOSED: `stepWatchFromRecentKills` stamps its two deaths off
+    two instants, so a second of wall clock makes the gap 181 s. Stamp both
+    off ONE instant; never widen the assertions.
+  - MULTI-SPEC SWEEP · six specs die at once mid-click, "Target page … has
+    been closed" · 1 sighting (2026-08-13 sweep, JOS-279; six green serially
+    after, none in the next sweep) · a host/load event, not one spec's race —
+    a second sighting is a runner-concurrency ticket.
   - `presenceWorker.test` first-tick dedup · watches the REAL machine; fails
     while EverQuest runs with a player at the keyboard · 3 sightings
     (2026-08-10 ×2, 2026-08-12 JOS-239 worker mid-session, green on final
@@ -163,18 +143,10 @@ archive. Layout: `src/main` (Node), `src/preload`, `src/renderer`,
     JOS-229 worker: the sub-beat replay precondition holds on essentially every
     run of this machine, so the failure is the always-on stutter probe recording
     a tick inside the window — a tick-phase coin flip, not load ·
-    **RESOLVED 0523dd90 (JOS-279)** — the precondition never held, because it
-    was asked about the wrong window. Both always-on probes open at `appReady`
-    and close at `replayDone` (src/main/perf.ts), and `appReady` is THREE
-    phases before `tailAttached`, so the window a beat could tick in is
-    strictly longer than the fold the spec gated on (measured on this machine:
-    probe 138 ms vs replay 103 ms). The step now takes `probeWindowMs`
-    (`replayDone − appReady`); the duty ledger keeps the replay window, which
-    is what it really measures. The verdict is three-valued so the naive fix's
-    mirror flake cannot appear: below a beat the absence is the assertion,
-    within `STARTUP_STUTTER_LATE_MS` of it either answer is honest and the run
-    notes which it saw, past that a silent probe is the regression. The block
-    probe had the same wrong window and got the same fix.
+    **RESOLVED 0523dd90 (JOS-279)** — asked about the WRONG window: both probes
+    run `appReady`→`replayDone`, wider than the fold it gated on (138 vs
+    103 ms). Now `probeWindowMs`, plus a three-valued verdict so the naive
+    fix's mirror flake cannot appear.
 - **Fixtures are COMMITTED and SCRUBBED.** `tests/fixtures/*.log` is tracked
   (a `!tests/fixtures/*.log` negation under the blanket `*.log`), so CI's
   `npm test` runs the FULL suite. The repo is PUBLIC, so every extractor
