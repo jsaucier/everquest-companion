@@ -195,6 +195,149 @@ export function describeUpdateFailure(err: unknown): string {
     : oneLine
 }
 
+// ------------------------------------------------- WHAT THE FAILURE WAS (JOS-295)
+//
+// `describeUpdateFailure` above answers "what does the user read". These answer the OTHER
+// question, the one nobody could ask until JOS-295: WHAT KIND OF FAILURE WAS IT, so the main
+// process can decide whether it belongs in errors.log (and therefore in the fleet's error store)
+// or is somebody else's outage that must not be allowed to file one line per check.
+//
+// FOUR KINDS, AND THE ORDER THEY ARE ASKED IN IS THE DESIGN:
+//
+//   'http'        GitHub answered, and it answered 4xx/5xx. THE THING THAT MUST ALWAYS LAND.
+//                 A 403/429 is a throttle we can act on, a 404 means our feed is wrong, a 5xx is
+//                 an outage worth knowing the date of. `HttpError` (builder-util-runtime) carries
+//                 `statusCode` and `code = HTTP_ERROR_<status>`; both are read, plus the name, so
+//                 a re-thrown or stringified copy still classifies.
+//   'parse'       The masked-status bug this ticket came from: on a >= 400 response advertising
+//                 json with an empty/truncated body, `JSON.parse` runs inside httpExecutor's ERROR
+//                 FORMATTER and its SyntaxError REPLACES the HttpError (see the JOS-211 block
+//                 above for the source read). It LANDS, always: it is an HTTP failure whose status
+//                 was destroyed, and the only way to learn anything about it is to keep the ones
+//                 the fleet produces.
+//   'unreachable' The request never got out of the machine: DNS, no route, refused, reset, timed
+//                 out - a laptop on a plane, a captive portal, a machine that is simply offline.
+//                 BOUNDED (src/main/updateLog.ts): an install that checks all day while offline
+//                 would otherwise file an error per check forever, and every one of those lines
+//                 says the same thing about the user's network rather than anything about us.
+//   'other'       Anything unrecognized. LANDS, because the honest failure direction for a
+//                 classifier is to report what it does not understand rather than to swallow it.
+//                 A TLS/certificate failure is deliberately in here and not in 'unreachable': a
+//                 MITM proxy or an expired root is diagnosable and is not "the network is away".
+
+/** Which of the four kinds a failed check/download was. */
+export type UpdateFailureKind = 'http' | 'parse' | 'unreachable' | 'other'
+
+/**
+ * THE CODES THAT MEAN "THE REQUEST NEVER REACHED GITHUB", spelled out rather than pattern-matched.
+ *
+ * An explicit list is the only shape that keeps the failure direction right: a code that is NOT
+ * here falls through to 'other' and is REPORTED, so the cost of forgetting one is a line in
+ * errors.log, never a silently swallowed failure.
+ *
+ * Both executors are covered because electron-updater uses either depending on how it was
+ * constructed: Node's own errno spellings (`ENOTFOUND`, `ETIMEDOUT`) from the https executor, and
+ * Chromium's (`net::ERR_NAME_NOT_RESOLVED`) from `ElectronHttpExecutor`, which arrive inside the
+ * MESSAGE with no `code` property at all.
+ */
+export const UNREACHABLE_ERROR_CODES = [
+  // Node / libuv.
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ECONNABORTED',
+  'ETIMEDOUT',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ENETDOWN',
+  'ENETRESET',
+  'EPIPE',
+  'ERR_SOCKET_CONNECTION_TIMEOUT',
+  // Chromium, as they appear inside a `net::ERR_…` message.
+  'ERR_INTERNET_DISCONNECTED',
+  'ERR_NAME_NOT_RESOLVED',
+  'ERR_NAME_RESOLUTION_FAILED',
+  'ERR_NETWORK_CHANGED',
+  'ERR_CONNECTION_REFUSED',
+  'ERR_CONNECTION_RESET',
+  'ERR_CONNECTION_ABORTED',
+  'ERR_CONNECTION_CLOSED',
+  'ERR_CONNECTION_FAILED',
+  'ERR_CONNECTION_TIMED_OUT',
+  'ERR_ADDRESS_UNREACHABLE',
+  'ERR_PROXY_CONNECTION_FAILED',
+  'ERR_TIMED_OUT'
+] as const
+
+/** The same list as one word-bounded alternation. `net::ERR_X` matches on `ERR_X` because `:` is
+ *  not a word character, so one pattern covers both spellings. */
+const UNREACHABLE_RE = new RegExp(`\\b(?:${UNREACHABLE_ERROR_CODES.join('|')})\\b`)
+
+/** Errno/Chromium code shape: uppercase, digits and underscores. Deliberately NOT the same
+ *  predicate as `errorCodeOf` (which is about what the wire will carry) - this one is about what
+ *  can identify a transport failure, and a lowercase or dotted value never does. */
+const TRANSPORT_CODE_RE = /^[A-Z][A-Z0-9_]{1,31}$/
+
+/**
+ * The HTTP status behind a failure, or null when there is none to be had.
+ *
+ * `statusCode` is `HttpError`'s own field; `HTTP_ERROR_<status>` is the `code` it sets beside it
+ * and is also what survives when the error has been stringified into a log line. Anything outside
+ * 4xx/5xx reads as "no status": a 2xx/3xx does not arrive here, and a nonsense number is not a
+ * status we are willing to state.
+ */
+export function updateHttpStatus(err: unknown): number | null {
+  const e = err as { statusCode?: unknown; code?: unknown } | null | undefined
+  const direct = e?.statusCode
+  if (typeof direct === 'number' && Number.isInteger(direct) && direct >= 400 && direct <= 599) {
+    return direct
+  }
+  const code = typeof e?.code === 'string' ? e.code : ''
+  const m = /\bHTTP_ERROR_(\d{3})\b/.exec(code) ?? /\bHTTP_ERROR_(\d{3})\b/.exec(failureText(err))
+  if (m === null) return null
+  const status = Number(m[1])
+  return status >= 400 && status <= 599 ? status : null
+}
+
+/** True when GitHub ANSWERED and the answer was a failure status - the class that must always be
+ *  reported. The name arm catches an `HttpError` whose status we could not read. */
+export function isHttpFailure(err: unknown): boolean {
+  if (err == null) return false
+  if (updateHttpStatus(err) !== null) return true
+  return (err as { name?: unknown }).name === 'HttpError'
+}
+
+/** True when the request never left the machine (see `UNREACHABLE_ERROR_CODES`). */
+export function isUnreachableFailure(err: unknown): boolean {
+  if (err == null) return false
+  const code = (err as { code?: unknown }).code
+  if (typeof code === 'string' && (UNREACHABLE_ERROR_CODES as readonly string[]).includes(code)) {
+    return true
+  }
+  return UNREACHABLE_RE.test(failureText(err))
+}
+
+/**
+ * The machine-readable code a failure is known by - `ENOTFOUND`, `ERR_NAME_NOT_RESOLVED`,
+ * `HTTP_ERROR_403`. Used as the KEY of the once-per-session unreachable warning, so it has to be
+ * stable across occurrences and carry nothing about this machine.
+ */
+export function updateFailureCode(err: unknown): string | null {
+  const code = (err as { code?: unknown } | null | undefined)?.code
+  if (typeof code === 'string' && TRANSPORT_CODE_RE.test(code)) return code
+  return UNREACHABLE_RE.exec(failureText(err))?.[0] ?? null
+}
+
+/** Which of the four kinds this failure is. Asked in the order the block above argues. */
+export function classifyUpdateFailure(err: unknown): UpdateFailureKind {
+  if (err == null) return 'other'
+  if (isHttpFailure(err)) return 'http'
+  if (isFeedParseError(err)) return 'parse'
+  if (isUnreachableFailure(err)) return 'unreachable'
+  return 'other'
+}
+
 // ------------------------------------------------------- version comparison
 //
 // Our versions are semver with a CI-stamped prerelease on the main channel

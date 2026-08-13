@@ -150,11 +150,51 @@ import {
   nextCheckDelayMs,
   shouldRetryCheck
 } from '../shared/update'
-import { logError, logInfo } from './errorLog'
+import { logError, logInfo, logWarn } from './errorLog'
+import {
+  UPDATER_LIBRARY_SOURCE,
+  UPDATER_LOG_PREFIX,
+  logUpdateFailure,
+  routeUpdaterLibraryError,
+  type UpdateLogSinks
+} from './updateLog'
 import { getUpdateChannel, getUpdateLastCheckedAt, setUpdateLastCheckedAt } from './store'
 import { classifyFailure, recordEvent } from './telemetry'
 
 const { autoUpdater } = electronUpdater
+
+/**
+ * THE TWO SINKS `updateLog.ts` ROUTES THROUGH (JOS-295). They are handed over rather than
+ * imported there so the whole routing rule stays drivable from a node test with no Electron in
+ * the process; this is the one place that knows they are `errorLog`'s.
+ */
+const LOG_SINKS: UpdateLogSinks = { error: logError, warn: logWarn }
+
+/**
+ * electron-updater's own narration, mapped onto our sinks (JOS-295). Its default logger is
+ * `console` (AppUpdater.js:179), which in a packaged app prints full stacks to a stdout nobody
+ * captures. `updateLog.ts` carries the whole argument for the mapping — including why `debug` is
+ * deliberately absent and why the constructor's error ECHO is dropped rather than filed twice.
+ */
+const LIBRARY_LOGGER = {
+  info: (message?: unknown): void => {
+    logInfo(UPDATER_LOG_PREFIX, message)
+  },
+  warn: (message?: unknown): void => {
+    logWarn(UPDATER_LOG_PREFIX, message)
+  },
+  error: (message?: unknown): void => {
+    switch (routeUpdaterLibraryError(message)) {
+      case 'drop':
+        return
+      case 'warn':
+        logWarn(UPDATER_LOG_PREFIX, message)
+        return
+      default:
+        logError(UPDATER_LIBRARY_SOURCE, message)
+    }
+  }
+}
 
 let timer: ReturnType<typeof setTimeout> | null = null
 
@@ -359,9 +399,20 @@ function registerUpdaterEvents(currentVersion: string, { push, checkDone }: Stat
     // `checkInFlight` is what makes the swallow safe: only a failure `runCheck` is
     // waiting on may be withheld, so a stray 'error' can never leave a verdict unpushed.
     if (step === 'check' && checkInFlight && !retryPending && shouldRetryCheck(err, checkAttempts)) {
+      // THE SWALLOWED ATTEMPT IS LOGGED ANYWAY (JOS-295), and it is logged as `retrying`. No
+      // verdict, no telemetry and no backoff tick belong to it — but the RAW error does, or the
+      // store would describe a single-shot check and could never answer whether the retry helps.
+      logUpdateFailure(step, 'retrying', err, LOG_SINKS)
       retryPending = true
       return
     }
+    // RAW FIRST, SANITIZED SECOND, AND THE ORDER IS THE TICKET (JOS-295). `describeUpdateFailure`
+    // below is a one-way door: it replaces the parse-masked failure with a sentence for the chip
+    // and throws away the status, the URL and the stack. Everything durable has to be taken from
+    // `err` before it is called. `logUpdateFailure` decides where it goes — an answer from GitHub
+    // is always filed, an unreachable network is bounded to one console line per code per session
+    // (updateLog.ts's header argues both).
+    logUpdateFailure(step, 'final', err, LOG_SINKS)
     consecutiveFailures++
     noteUpdate(step, err ?? 'unknown error')
     checkDone({ state: 'error', message: describeUpdateFailure(err) })
@@ -438,6 +489,12 @@ export function initUpdater(
   //   (b) the updated-away guard — never pull a build we already run.
   // Behaviour is otherwise identical: we call downloadUpdate() immediately, so
   // downloads are still fully automatic and silent.
+  // WHERE THE LIBRARY'S OWN DIAGNOSTICS GO (JOS-295). Set before anything else can make it talk:
+  // until now electron-updater logged its whole life — including a full stack for every error
+  // event — to its default logger, which is `console`, which in a packaged app is a stdout nobody
+  // reads. Assigned HERE rather than above the dev guard because that guard is what keeps the
+  // machinery off in dev: nothing runs to narrate.
+  autoUpdater.logger = LIBRARY_LOGGER
   autoUpdater.autoDownload = false
   // THE load-bearing flag for "transparent": a staged update is applied when the
   // app quits, with no window, no prompt and no UAC (it spawns `--updated /S`).
@@ -536,10 +593,16 @@ export function initUpdater(
         // failure is uncounted — that way one failure counts exactly once.
         // `retryPending` is the same idea for the case where it DID run and
         // deliberately withheld the verdict.
+        //
+        // THE SAME RAW-FIRST RULE APPLIES TO BOTH BRANCHES (JOS-295), and only when the failure is
+        // UNACCOUNTED: an accounted one was already routed by the 'error' handler above, from the
+        // same error, so logging here too would file every update failure twice.
         const unaccounted = checkInFlight && !retryPending
         if (unaccounted && shouldRetryCheck(err, checkAttempts)) {
+          logUpdateFailure('check', 'retrying', err, LOG_SINKS)
           retryPending = true
         } else if (unaccounted) {
+          logUpdateFailure('check', 'final', err, LOG_SINKS)
           consecutiveFailures++
           checkDone({ state: 'error', message: describeUpdateFailure(err) })
         }
