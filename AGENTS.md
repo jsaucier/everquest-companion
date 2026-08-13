@@ -1123,6 +1123,19 @@ the full per-lane evidence lives in docs/agents-archive.md.
   skill-ups `You have become better at <Skill>! (n)`; Wiki skill names ≠
   client skill names (`1 Hand Slashing` vs `1H Slashing`) — classes.json
   carries the alias table measured from the log.
+  **A `/who` ROW IS GROUND TRUTH AT ITS TIMESTAMP, AND INFERENCE NEVER
+  OUTRANKS IT** (JOS-192, JOS-287; the two live-log tripwires in
+  comboWindows/comboWhoBoundary are this law): an interval may not
+  contradict a row it covers, nor be extended or created BACKWARD over
+  evidence that contradicts it. Two rows are two statements, never one
+  event — so `mergeBoundaries` may narrow, move or absorb an INFERRED
+  boundary but never a `/who` cut (`resolveGroup`), and an inferred window
+  that covers a row cut is that swap dated better by the game (absorbed,
+  recorded in `startAlso`). JOS-287 was a six-day level-drop window
+  (50 → 11 re-roll) overlapping four row cuts: one boundary came out where
+  there were four and a row typed on Aug 10 was stated over the Aug 09
+  morning and the wizard era behind it. Frozen shape: fixture
+  `cw7-who-swap-boundary-aug12.log` + tests/comboSwapBoundary.test.mts.
 - **`Your <item> shimmers briefly.` / `feels alive with power.` IS A WORN
   FOCUS TALKING, NOT AN ITEM CASTING** (JOS-79, measured whole-log — this
   entry previously said the opposite and it was wrong). All five items that

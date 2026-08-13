@@ -390,8 +390,66 @@ export function reinstatedDrops(
   return out
 }
 
+/**
+ * ONE GROUP OF OVERLAPPING WINDOWS, RESOLVED — and a `/who` cut is never what gets resolved away
+ * (JOS-287).
+ *
+ * THE DEFECT THIS EXISTS FOR. `pickBoundary` answers "these detectors describe one swap" by
+ * keeping the NARROWEST window and cutting at the EARLIEST `at` in the group. Applied to a group
+ * that contains `/who` cuts that is a lie about the log, and the live log proved it: the Aug 12
+ * re-roll dinged non-increasing (50 → 10), so `levelDropBoundaries` opened a window at the
+ * previous ding — Aug 06 22:27:32 → Aug 12 22:47:00, SIX DAYS — and that one window overlapped
+ * all four `/who` cuts inside it (Aug 09 10:41:31 `PAL/MNK/ENC`, Aug 10 20:13:00 `PAL/ROG/BER`,
+ * Aug 11 21:01:24 `PAL/MNK/ENC`, Aug 12 22:42:20 `PAL/RNG/SHM`). One boundary came out where
+ * there were four, its cut clamped to Aug 11 21:00:24, and the slice in front of it held two
+ * rows that contradict each other — so `slotsFor` rule 1 took the LAST of them and stated
+ * `PAL/ROG/BER` over the Aug 09 row, over the six days behind it, and over the whole wizard era
+ * CW5 pins as real. A row the owner typed on Aug 10 was applied BACKWARDS across a swap
+ * boundary. That is the tripwire's own words: the interval contradicted a row it covered.
+ *
+ * THE RULE. A `/who` row is ground truth AT ITS TIMESTAMP. Two rows are therefore two
+ * statements, never one event, and no window drawn by inference may move, merge or delete the
+ * cut a row makes — inference cannot outrank the game naming the loadout. So:
+ *
+ *   * every distinct `/who` cut in the group survives, at its own `at` (rows landing on the SAME
+ *     instant are one statement and keep the narrowest window between them),
+ *   * an inferred detector whose window CONTAINS a surviving row cut is that same swap, dated
+ *     better by the game: it is absorbed and recorded in `also`. This is `whoBoundaries`' own
+ *     suppression predicate read the other way round — there, an already-dated cut inside
+ *     `(prev, row]` means the pair rule must not open a second boundary for one swap; here, a row
+ *     cut inside `(lo, hi]` means the inferred window has already been dated by the row.
+ *   * an inferred detector the rows did NOT date keeps its own boundary — it is a swap nothing
+ *     stated, which is the case the whole file exists for — and those merge among themselves
+ *     exactly as before.
+ *
+ * Groups with no `/who` cut in them are untouched: `pickBoundary` still resolves them, so CW2's
+ * shift-narrows-the-ding and CW5's reinstated ding read exactly as they did.
+ */
+function resolveGroup(group: Boundary[]): Boundary[] {
+  const stated = group.filter((b) => b.reason === 'who')
+  if (stated.length === 0) return [pickBoundary(group)]
+  const byInstant = new Map<number, Boundary[]>()
+  for (const b of stated) byInstant.set(b.at, [...(byInstant.get(b.at) ?? []), b])
+  const kept = [...byInstant.values()].map(pickBoundary)
+  const undated: Boundary[] = []
+  for (const b of group) {
+    if (b.reason === 'who') continue
+    const dating = kept.filter((k) => k.at > b.lo && k.at <= b.hi)
+    if (dating.length === 0) {
+      undated.push(b)
+      continue
+    }
+    // Corroboration goes on the row cut nearest the detector's own date — the one it was
+    // describing — so `startAlso` still says which detectors agreed about that swap.
+    const host = dating.reduce((a, k) => (Math.abs(k.at - b.at) < Math.abs(a.at - b.at) ? k : a))
+    host.also = [...new Set([...(host.also ?? []), b.reason, ...(b.also ?? [])])]
+  }
+  return [...kept, ...mergeBoundaries(undated)].sort((a, b) => a.at - b.at)
+}
+
 /** Collapse overlapping candidates into one boundary each, in time order. Windows that merely
- *  TOUCH (one ends exactly where the next begins) are separate swaps, not one. */
+ *  TOUCH (one ends exactly where the next begins) are separate swaps, not one. A `/who` cut is
+ *  never collapsed away — see `resolveGroup`. */
 export function mergeBoundaries(candidates: readonly Boundary[]): Boundary[] {
   const sorted = [...candidates].sort((a, b) => a.lo - b.lo || a.hi - b.hi)
   const out: Boundary[] = []
@@ -399,13 +457,13 @@ export function mergeBoundaries(candidates: readonly Boundary[]): Boundary[] {
   let groupHi = -Infinity
   for (const b of sorted) {
     if (group.length > 0 && b.lo >= groupHi) {
-      out.push(pickBoundary(group))
+      out.push(...resolveGroup(group))
       group = []
     }
     group.push(b)
     groupHi = Math.max(groupHi, b.hi)
   }
-  if (group.length > 0) out.push(pickBoundary(group))
+  if (group.length > 0) out.push(...resolveGroup(group))
   return out.sort((a, b) => a.at - b.at)
 }
 
@@ -642,11 +700,21 @@ export function buildIntervals(input: IntervalInput): ComboInterval[] {
   // `whoBoundaries` as already-dated, so a disagreement between two rows that the row-level rule
   // has just placed does not open a second, three-hours-wide boundary for the same swap.
   const shifted = whoShiftBoundaries(observations, input.whoRows, dated, observations[0].ts)
-  const boundaries = mergeBoundaries([
+  const placed = mergeBoundaries([
     ...dated,
     ...shifted,
     ...whoBoundaries(input.whoRows, [...dated, ...shifted])
-  ]).filter((b) => b.at > observations[0].ts)
+  ])
+  // THE TRIPWIRE LAW, MADE STRUCTURAL (JOS-287). `whoBoundaries` stands down when something
+  // already-dated cuts between two disagreeing rows — but it is handed the candidates, and an
+  // INFERRED candidate can still be absorbed by the merge that follows (a `/who` cut cannot, since
+  // `resolveGroup`). Asking the same question again of the boundaries that actually SURVIVED
+  // closes that: every adjacent pair of rows that disagree ends up with a cut between them, so no
+  // slice can hold two contradictory rows and `slotsFor`'s last-row rule can never state one row
+  // over another. Nothing merges these — a row is ground truth at its timestamp, full stop.
+  const boundaries = [...placed, ...whoBoundaries(input.whoRows, placed)]
+    .sort((a, b) => a.at - b.at)
+    .filter((b) => b.at > observations[0].ts)
   const slices = sliceTimeline(observations, boundaries, observations[0].ts)
   const built = slices.map((slice, i) => toInterval(slice, input, i))
   return collapse(built)
