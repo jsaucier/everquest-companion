@@ -61,6 +61,10 @@ import {
 import { stepDismissBar } from './buffDismissSteps.mjs'
 // THE BUFFS THAT NEVER EXPIRE (JOS-215) — hidden by default, revealed by a per-window preference.
 import { stepPermanentRows } from './buffPermanentSteps.mjs'
+// HOW SMALL THESE TWO WINDOWS GO (JOS-278). The report that lowered the floor was about the DEBUFF
+// window specifically — a player magnifying the screen with Lossless Scaling — and these two carry
+// the busiest footer of any kind, so they are where the floor is proved.
+import { stepMinimumSize } from './overlayMinSizeSteps.mjs'
 import type { FixtureLog } from './logFixture.mjs'
 
 /** The main window's overlay bridge — the same one the title-bar menu calls. */
@@ -556,6 +560,10 @@ async function main(): Promise<void> {
         if (m.type() === 'error') consoleErrors.push(`${kind} overlay: ${m.text()}`)
       })
       await stepGeometry(app, o, kind)
+      // BEFORE stepIndependentBounds, which moves these windows and then asserts on where they
+      // ended up: this step resizes and puts the rectangle back, so it must not be interleaved
+      // with the one that owns the positions.
+      await stepMinimumSize(app, o, kind, `the ${kind} window`)
     }
 
     if (buffsOverlay && debuffsOverlay) await stepIndependentBounds(app, buffsOverlay, debuffsOverlay)

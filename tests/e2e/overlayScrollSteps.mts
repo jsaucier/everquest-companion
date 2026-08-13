@@ -109,7 +109,19 @@ async function setTextScale(overlay: Page, textScale: number): Promise<void> {
   }, textScale)
 }
 
-/** The overlay's smallest allowed height (windows.ts `minHeight` for every overlay kind). */
+/**
+ * The smallest window the app allows, for EVERY overlay kind — `OVERLAY_MIN_SIZE` in
+ * overlayLayout.ts, spelled here rather than imported like every other constant this suite shares
+ * with the product (an e2e file loads no src module).
+ *
+ * BOTH dimensions since JOS-278 lowered the width 200 → 140. This step used to shrink the height
+ * alone, which meant the overflow it produced was made entirely of rows that still had a full-width
+ * window to lay out in. Driving the real floor is both truer to what a user does with the corner
+ * handle and a harder case for the grip: a 140px pane is where `gripFraction`'s six-pixel strip is
+ * the largest share of the pane it will ever be, and where the rows are tallest (names that fit on
+ * one line at 380 wrap to two here), so there is more to scroll, not less.
+ */
+const MIN_OVERLAY_W = 140
 const MIN_OVERLAY_H = 90
 
 /**
@@ -124,7 +136,7 @@ const MIN_OVERLAY_H = 90
  */
 async function makeItOverflow(app: ElectronApplication, overlay: Page, was: Bounds): Promise<number> {
   await setTextScale(overlay, 2)
-  await setFightBounds(app, { ...was, height: MIN_OVERLAY_H })
+  await setFightBounds(app, { ...was, width: MIN_OVERLAY_W, height: MIN_OVERLAY_H })
   const read = await settle(() => paneScroll(overlay), (s) => s.over > 1, { timeoutMs: 8_000 })
   return read.over
 }
@@ -201,7 +213,9 @@ export async function stepPinnedScroll(
   if (!check('the overlay window can be measured', was !== null)) return
   const over = await makeItOverflow(app, overlay, was as Bounds)
   if (over > 1) {
-    note(`the pinned pane has ${over.toFixed(0)}px more rows than room at ${MIN_OVERLAY_H}px tall, text size 2.0`)
+    note(
+      `the pinned pane has ${over.toFixed(0)}px more rows than room at the ${MIN_OVERLAY_W}x${MIN_OVERLAY_H} floor, text size 2.0`
+    )
     await checkGripTakesTheMouse(overlay)
     await checkWheelScrolls(overlay)
     // The grip is held for exactly as long as the pointer is in the strip: leaving releases it,
@@ -210,7 +224,7 @@ export async function stepPinnedScroll(
     const released = await settle(() => gripState(overlay), (g) => g === 'idle', { timeoutMs: 4_000 })
     check('leaving the strip releases the grip — the body is click-through again', released === 'idle', released)
   } else {
-    note('the meter fits even at the minimum window height and text size 2.0 — nothing to scroll')
+    note('the meter fits even at the minimum window size and text size 2.0 — nothing to scroll')
   }
 
   // Put the window and the text size back: every step after this one measures this same window.

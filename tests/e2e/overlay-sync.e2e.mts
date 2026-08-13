@@ -64,6 +64,9 @@ import { stepOverlayScope, stepTitleBarRoom } from './overlayScopeSteps.mjs'
 import { stepTotalOnPanel } from './overlayTotalSteps.mjs'
 // …and the pinned pane's scroll grip (JOS-138), in its own module for the same reason.
 import { stepPinnedScroll } from './overlayScrollSteps.mjs'
+// THE FLOOR A WINDOW CAN BE DRAGGED DOWN TO (JOS-278) — its own module, beside the other steps,
+// because the claim is about the window rather than about this spec's subject.
+import { stepMinimumSize } from './overlayMinSizeSteps.mjs'
 // …and JOS-187's: an overlay whose monitor went away, and the rule that the store keeps the
 // rectangle the user chose while the screen gets the one that fits.
 import { stepOverlayDisplay } from './overlayDisplaySteps.mjs'
@@ -633,6 +636,10 @@ async function main(): Promise<void> {
     // and stepOverlayScope leaves it that way.
     await setLocked(ov, false)
     await stepTitleBarRoom(ov)
+    // …and the same header, at the smallest window the app allows. UNLOCKED is the demanding case
+    // and the one this must run in: a locked meter draws no lock/close pair at all, so a floor
+    // measured pinned would be measuring an empty row.
+    await stepMinimumSize(app, ov, 'fight', 'the fight meter')
     await stepTotalOnPanel(ov, await longestFightName(page))
     // LAST of the steps that APPEND to the tailed log, deliberately: every measurement above is
     // taken against the staged fixture exactly as committed, and this one writes a line into it.

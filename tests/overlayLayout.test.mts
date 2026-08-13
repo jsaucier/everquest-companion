@@ -24,7 +24,13 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { METER_KINDS, defaultOverlayBounds, overlayDefaultSize, type Bounds } from '../src/main/overlayLayout'
+import {
+  METER_KINDS,
+  OVERLAY_MIN_SIZE,
+  defaultOverlayBounds,
+  overlayDefaultSize,
+  type Bounds
+} from '../src/main/overlayLayout'
 import { OVERLAY_KINDS } from '../src/shared/types'
 
 /** Work areas worth proving: a 1080p desktop with a taskbar, a tall 1440p, a small laptop, and a
@@ -232,6 +238,37 @@ test('buffs and debuffs are two distinct stacked kinds with two distinct slots',
     for (const [label, box] of [['buffs', b] as const, ['debuffs', d] as const]) {
       const share = (box.width * box.height) / (wa.width * wa.height)
       assert.ok(share < 0.25, `${name}/${label}: covers ${(share * 100).toFixed(1)}% of the display`)
+    }
+  }
+})
+
+// ---- the floor a window can be dragged down to (JOS-278) -----------------------------------
+
+/**
+ * THE MINIMUM SIZE IS A PINNED NUMBER, because it is a promise in two directions at once.
+ *
+ * Downward: a floor EXISTS, so no overlay can be dragged to a few pixels and lost behind the game
+ * (the reason there has always been one). Upward: it is small enough to be worth having, for the
+ * player who magnifies the whole screen with Lossless Scaling and gets this number back multiplied
+ * (the 0.23.0 report this ticket came from). Neither half is what a bare `> 0` would catch.
+ *
+ * WHAT THIS FILE CANNOT SAY is whether the chrome still FITS at these numbers — that is a claim
+ * about a real window laying out real controls, and it is measured next door in
+ * tests/e2e/overlayMinSizeSteps.mts. Here the number is simply nailed down, so that a change to it
+ * is a change somebody made on purpose and re-measured.
+ */
+test('the overlay floor is 140x90 — small enough to be worth having, large enough to find', () => {
+  assert.deepEqual(OVERLAY_MIN_SIZE, { width: 140, height: 90 })
+})
+
+test('…and it is a FLOOR: strictly below the size every kind opens at, on every display', () => {
+  for (const [name, wa] of Object.entries(WORK_AREAS)) {
+    for (const kind of OVERLAY_KINDS) {
+      const open = overlayDefaultSize(kind, wa)
+      assert.ok(
+        open.width > OVERLAY_MIN_SIZE.width && open.height > OVERLAY_MIN_SIZE.height,
+        `${name}/${kind}: opens at ${open.width}x${open.height}, which is not above the floor`
+      )
     }
   }
 })
