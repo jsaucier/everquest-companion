@@ -27,7 +27,7 @@ import { IPC } from '../shared/ipc'
 import { installBackButton } from './appBack'
 import { E2E } from './e2e'
 import { logError } from './errorLog'
-import { OVERLAY_TITLE, overlayDefaultSize } from './overlayLayout'
+import { OVERLAY_MIN_SIZE, OVERLAY_TITLE, overlayDefaultSize } from './overlayLayout'
 // WHERE A WINDOW MAY GO ON THE SCREENS THAT EXIST NOW (JOS-187). The `screen` module is not
 // consulted here any more: both questions this file asks of it — where an overlay opens, where the
 // main window opens — are decided in windowPlacement.ts over the pure geometry in displayFit.ts,
@@ -681,8 +681,11 @@ export function createOverlayWindow(kind: OverlayKind): void {
   const w = new BrowserWindow({
     ...overlayPlacement(kind),
     focusable: !locked,
-    minWidth: 200,
-    minHeight: 90,
+    // THE FLOOR IS NOT A NUMBER THIS FILE OWNS (JOS-278). It is derived from what the overlay
+    // chrome can render without losing a control off an edge, so it lives beside the other
+    // overlay geometry — and beside the argument for it — in overlayLayout.ts.
+    minWidth: OVERLAY_MIN_SIZE.width,
+    minHeight: OVERLAY_MIN_SIZE.height,
     maxWidth: 720,
     maxHeight: 820,
     // The toast strip is a fixed-width card LANE, not a resizable panel: the card sizes itself

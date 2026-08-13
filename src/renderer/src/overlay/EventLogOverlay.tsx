@@ -46,7 +46,7 @@ import { ItemHoverCard, lookupItemCached } from './feedHoverCards'
 import { MobCard } from '../lib/hoverCards'
 import { overlayMobLookup } from './mobLookup'
 import { HoverCardLayer } from './hoverCardLayer'
-import { OverlayContent } from './overlayScale'
+import { FOOTER_ROW, OverlayContent } from './overlayScale'
 import { TextScaleStepper } from './TextScaleStepper'
 import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
 import { OverlayHeader } from './OverlayHeader'
@@ -370,15 +370,11 @@ function FeedFooter({
   return (
     <div
       style={{
+        ...FOOTER_ROW,
         ...noDrag,
-        display: 'flex',
-        alignItems: 'center',
         gap: 8,
-        padding: '3px 8px 5px',
-        borderTop: '1px solid rgba(255,255,255,0.08)',
         fontSize: 10,
-        color: 'rgba(255,255,255,0.6)',
-        flexShrink: 0
+        color: 'rgba(255,255,255,0.6)'
       }}
     >
       <span title="Background opacity" style={{ flexShrink: 0 }}>

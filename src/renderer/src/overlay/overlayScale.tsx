@@ -46,6 +46,40 @@ export function ScaledContent({
 export const SCROLL_GRIP_W = 22
 
 /**
+ * THE FOOTER ROW'S SHARED SKELETON — and the one rule in it that is not cosmetic (JOS-278).
+ *
+ * Every kind draws its own footer (the bg slider, the per-kind chips, A− / A+), and each one used
+ * to spell this box out itself. They are collected here for a single reason: `flexWrap`, which is
+ * how a footer DEGRADES on a narrow window.
+ *
+ * Its items do not shrink, by an older and still-correct law (TextScaleStepper: "a button clipped
+ * mid-glyph is the control you needed and could not press"). On a one-line row that law had a hole
+ * in it — items that will not shrink and cannot wrap simply RUN PAST the window's right edge, and
+ * the page clips them (`overflow: hidden` in overlay.html). MEASURED at the old 200px floor: the
+ * buffs window's A− and A+ sat at x=211 and x=237, the debuffs window's at 207/233, the XP
+ * window's stepper at 216. Three kinds shipped with their text-size control off the screen at the
+ * smallest size the app itself allowed.
+ *
+ * Wrapping spends HEIGHT to buy that back — the row becomes two lines, the content pane above it
+ * gives up the difference (it is the flex child with `minHeight: 0`) and every control stays
+ * reachable. Nothing changes at ordinary sizes: a footer whose items fit on one line never wraps.
+ * The height a wrapped footer costs is what sets the window's minimum HEIGHT (overlayLayout.ts
+ * `OVERLAY_MIN_SIZE`), so the two numbers move together.
+ *
+ * `gap`, `fontSize` and `color` stay with each kind — they genuinely differ (6 vs 8, and the
+ * respawn footer inherits its type) and none of them is load-bearing here.
+ */
+export const FOOTER_ROW = {
+  display: 'flex',
+  alignItems: 'center',
+  flexWrap: 'wrap',
+  rowGap: 3,
+  padding: '3px 8px 5px',
+  borderTop: '1px solid rgba(255,255,255,0.08)',
+  flexShrink: 0
+} as const satisfies React.CSSProperties
+
+/**
  * The scrolling content pane the three list-shaped kinds put their rows in: it takes the room the
  * chrome leaves (`flexGrow` + `minHeight: 0`, so a flex child actually shrinks) and scrolls what
  * does not fit — every row the meter has, at whatever size it is being read at.

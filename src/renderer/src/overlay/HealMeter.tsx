@@ -12,6 +12,7 @@ import { EMPTY_ROSTER, SCOPE_HINT, chipLabel } from '@shared/roster'
 import { ICON_ACCENT_GREEN } from './IconButton'
 import { MeterPane } from './scopeFloor'
 import { TextScaleStepper } from './TextScaleStepper'
+import { FOOTER_ROW } from './overlayScale'
 import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
 import { useOverlayCombat } from './useOverlayCombat'
 
@@ -251,15 +252,11 @@ function HealFooter({
   return (
     <div
       style={{
+        ...FOOTER_ROW,
         ...noDrag,
-        display: 'flex',
-        alignItems: 'center',
         gap: 8,
-        padding: '3px 8px 5px',
-        borderTop: '1px solid rgba(255,255,255,0.08)',
         fontSize: 10,
-        color: 'rgba(255,255,255,0.6)',
-        flexShrink: 0
+        color: 'rgba(255,255,255,0.6)'
       }}
     >
       <span title="Background opacity" style={{ flexShrink: 0 }}>

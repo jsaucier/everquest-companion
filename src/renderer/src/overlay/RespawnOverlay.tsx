@@ -97,7 +97,7 @@ import {
 } from '@shared/respawn'
 import { fmtDuration } from '../features/buffs/format'
 import { OverlayHeader } from './OverlayHeader'
-import { OverlayContent } from './overlayScale'
+import { FOOTER_ROW, OverlayContent } from './overlayScale'
 import { TextScaleStepper } from './TextScaleStepper'
 import { useOverlayModule } from './useOverlayModule'
 import { type OverlayChrome, useOverlayChrome } from './useOverlayChrome'
@@ -385,13 +385,9 @@ function RespawnFooter({
   return (
     <div
       style={{
+        ...FOOTER_ROW,
         ...noDrag,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-        padding: '3px 8px 5px',
-        borderTop: '1px solid rgba(255,255,255,0.08)',
-        flexShrink: 0
+        gap: 6
       }}
     >
       <input

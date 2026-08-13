@@ -213,7 +213,18 @@ function HeaderTag({ tag, last }: { tag: string; last: boolean }): JSX.Element {
         letterSpacing: 0.5,
         textTransform: 'uppercase',
         color: 'rgba(255,255,255,0.4)',
-        flexShrink: 0
+        // IT GIVES WAY LAST, BUT IT DOES GIVE WAY (JOS-278). This used to be `flexShrink: 0`,
+        // and on the longest tag there is (`FIGHT · LAST`) that fixed 55px was what pushed the
+        // CLOSE control off the right edge of a narrow window — a dead pixel budget spent on a
+        // label, at the cost of the one control that is not recoverable from inside the window.
+        // Shrink order is the priority order: the title yields first (its own `minWidth: 0`),
+        // then this. It only bites below ~150px, and never in LOCKED mode — a pinned overlay
+        // draws no controls at all, so the tag has the row to itself and its `· LAST` marker,
+        // which is the state that marker exists for, is never the thing that truncates.
+        minWidth: 0,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap'
       }}
     >
       {tag}
@@ -244,7 +255,11 @@ function DragGutter(): JSX.Element {
     <div
       data-testid="overlay-drag-gutter"
       title="Drag to move this overlay"
-      style={{ width: GUTTER_W, flexShrink: 0, alignSelf: 'stretch' }}
+      // IT IS THE FIRST THING TO GO ON A NARROW WINDOW (JOS-278): 20px of deliberate emptiness
+      // is exactly the right thing to spend when the alternative is the lock/close pair leaving
+      // the window. `minWidth: 0` is what makes the shrink real — a flex item's default floor is
+      // its content, and a `width` with nothing in it still refuses to go below that without it.
+      style={{ width: GUTTER_W, flexShrink: 1, minWidth: 0, alignSelf: 'stretch' }}
     />
   )
 }

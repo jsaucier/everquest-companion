@@ -44,6 +44,45 @@ export interface Bounds extends Size {
 const DEFAULT_SIZE: Size = { width: 380, height: 320 }
 
 /**
+ * THE FLOOR EVERY OVERLAY KIND SHARES — how small the user is allowed to drag one (JOS-278).
+ *
+ * 200x90 → 140x90, on a 0.23.0 report from a player who runs Lossless Scaling: a third-party
+ * magnifier multiplies the overlay along with the game, so the app's own floor arrives on screen
+ * at 1.5–2x the number written here and the debuff strip could not be made narrow enough to live
+ * beside the spellbar. Owner ruling 2026-08-13: allow a lower minimum. A floor still EXISTS —
+ * this is the promise that a window can never be dragged down to a few pixels and lost — and the
+ * floor is ONE rectangle for every kind, because the widest chrome any kind wears is what the
+ * number has to survive and a per-kind floor would only hide that.
+ *
+ * BOTH NUMBERS ARE MEASURED IN THE RUNNING APP, not chosen — tests/e2e/overlayMinSizeSteps.mts
+ * re-measures them and fails if any control ever leaves the window at this size again.
+ *
+ *   WIDTH 200 → 140. The binding row is the HEADER: the live dot, the kind tag, the title, the
+ *   drag gutter and the lock/close pair. At 140 all of it is inside the window; below 140 the
+ *   CLOSE control starts leaving it, which is the one control you cannot get back from inside.
+ *   140 needs the two give-way rules that ship with this change (overlay/OverlayHeader.tsx: the
+ *   drag gutter and the kind tag shrink) and the footer WRAP beside them (overlay/overlayScale.tsx
+ *   `FOOTER_ROW`).
+ *
+ *   HEIGHT 90 → 90, AND THAT IS THE FINDING. The old 90 was a guess that happened to be right:
+ *   measured, the buffs window's footer needs 88px of window to keep A− / A+ off the bottom edge
+ *   at 140 wide, so 90 is two pixels of margin over a real limit rather than a round number. What
+ *   90 is NOT is "one row of content" — at 90 the scrolling pane is 8px, i.e. its own padding and
+ *   nothing else. This floor is about REACHING a window, never about reading it; the height that
+ *   makes a timer list useful is the user's to choose, well above here.
+ *
+ * WHAT THE OLD FLOOR WAS ACTUALLY DOING, since it is the reason the width could move at all: at
+ * 200x90 the buffs, debuffs and XP windows already had their text-size stepper OFF THE SCREEN
+ * (measured at x=237, 233 and 216 against a 200px window). The floor was not too small for the
+ * chrome — the chrome had no way to give, so it ran off the edge. Wrapping is what makes a
+ * narrower floor honest, and it is what fixes the old one on the way past.
+ *
+ * The content itself imposes nothing: bars, feed rows and timers ellipsize their names and the
+ * pane scrolls, so at the floor they truncate rather than overlap.
+ */
+export const OVERLAY_MIN_SIZE: Size = { width: 140, height: 90 }
+
+/**
  * THE TOAST IS NOT A METER, and its geometry says so (docs/plans/celebration-toasts.md §3).
  * It is a transparent strip at the TOP CENTRE of the screen that normally renders nothing: it
  * has no selector, no drill and no bars, so the uniform meter size and the bottom-right stack

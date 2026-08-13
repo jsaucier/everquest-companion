@@ -53,7 +53,7 @@ import {
   withTimerDismissal
 } from '@shared/buffTimers'
 import { OverlayHeader } from './OverlayHeader'
-import { OverlayContent } from './overlayScale'
+import { FOOTER_ROW, OverlayContent } from './overlayScale'
 import { TextScaleStepper } from './TextScaleStepper'
 import { type OverlayChrome, useOverlayChrome } from './useOverlayChrome'
 import { BuffTimerGroup } from './buffTimerBars'
@@ -329,15 +329,11 @@ function BuffsFooter({
   return (
     <div
       style={{
+        ...FOOTER_ROW,
         ...noDrag,
-        display: 'flex',
-        alignItems: 'center',
         gap: 8,
-        padding: '3px 8px 5px',
-        borderTop: '1px solid rgba(255,255,255,0.08)',
         fontSize: 10,
-        color: 'rgba(255,255,255,0.6)',
-        flexShrink: 0
+        color: 'rgba(255,255,255,0.6)'
       }}
     >
       <span title="Background opacity" style={{ flexShrink: 0 }}>
