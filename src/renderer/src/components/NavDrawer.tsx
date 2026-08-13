@@ -13,6 +13,7 @@ import PetsIcon from '@mui/icons-material/Pets'
 import MapIcon from '@mui/icons-material/Map'
 import SpaceDashboardIcon from '@mui/icons-material/SpaceDashboard'
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome'
+import CheckroomIcon from '@mui/icons-material/Checkroom'
 import FeedbackIcon from '@mui/icons-material/Feedback'
 // Dev-only, and its import goes with it: MUI's icon packages declare `sideEffects: false`, so
 // an icon whose only use sits inside a `false &&` branch is tree-shaken out with the branch.
@@ -61,6 +62,11 @@ const ROWS: NavRow[] = [
   // question — what drops it, what did I get, and what am I still farming for. (Its LABEL lives
   // in `VIEW_LABELS`; JOS-42 renamed the tab there, which is also where Back reads it from.)
   { view: 'planner', icon: <AutoAwesomeIcon />, badge: IN_DEV },
+  // GEAR (JOS-284) follows Exaltations for the same reason Exaltations follows Loot: it is the
+  // fourth face of one question — what drops it, what did I get, what am I farming for, and what
+  // should I be wearing. It reads the same committed corpus and links back into the same Loot
+  // drill-down.
+  { view: 'gear', icon: <CheckroomIcon />, badge: IN_DEV },
   { view: 'maps', icon: <MapIcon /> },
   { view: 'bosses', icon: <EmojiEventsIcon /> },
   { view: 'posky', icon: <ShieldMoonIcon /> },

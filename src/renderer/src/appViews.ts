@@ -15,6 +15,10 @@ export type View =
   | 'leveling'
   | 'loot'
   | 'planner'
+  // The GEAR PLANNER's search surface (JOS-284) — the candidate index over every equippable item.
+  // A top-level tab by owner ruling: it needs no set and no selection, so it is not a mode of
+  // Exaltations, it is its own question.
+  | 'gear'
   | 'buffs'
   | 'timers'
   | 'preferences'
@@ -59,6 +63,7 @@ export const VIEW_LABELS: Record<View, string> = {
   // unchanged — this is a label, not a refactor — and since JOS-43 this table is the ONE place a
   // tab is named, so the nav row and a drill's Back button rename together by construction.
   planner: 'Exaltations',
+  gear: 'Gear',
   buffs: 'Buffs',
   timers: 'Timers',
   preferences: 'Preferences',
@@ -79,6 +84,7 @@ const KNOWN_VIEWS: View[] = [
   'leveling',
   'loot',
   'planner',
+  'gear',
   'buffs',
   'timers',
   'preferences',

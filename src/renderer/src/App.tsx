@@ -1,10 +1,11 @@
 import { type JSX, useEffect, useState } from 'react'
-import { Box, CssBaseline, Snackbar, Alert } from '@mui/material'
-import ShieldMoonIcon from '@mui/icons-material/ShieldMoon'
-import EmojiEventsIcon2 from '@mui/icons-material/EmojiEvents'
+import { Box, CssBaseline } from '@mui/material'
 import type { AppFocus, CharacterDelta, CharacterRef, CharacterSnap } from '@shared/types'
 import TitleBar from './components/TitleBar'
 import NavDrawer from './components/NavDrawer'
+// The two app-wide celebration snackbars — they fire on ANY tab, so they live at app level. Their
+// markup moved into its own file when this one hit the factoring ceiling (see its header).
+import CelebrationToasts from './components/CelebrationToasts'
 import NoLogsEmptyState from './components/NoLogsEmptyState'
 import { VIEW_KEY, loadView, type View } from './appViews'
 // The app's navigation MODEL — the deep-link routers and their nonce contract. See appRouting.ts.
@@ -15,6 +16,7 @@ import PoskyView from './features/posky/PoskyView'
 import LootView from './features/loot/LootView'
 import LevelingView from './features/leveling/LevelingView'
 import PlannerView from './features/planner/PlannerView'
+import GearView from './features/gear/GearView'
 import BossView from './features/bosses/BossView'
 import MobsView from './features/mobs/MobsView'
 import MapsView from './features/maps/MapsView'
@@ -120,6 +122,11 @@ function PlainView({
           remount `key` is the whole character contract. The one prop it takes is the app's own
           router — every donor name in the pane links OUT to that item's Loot drill-down. */}
       {view === 'planner' && <PlannerView key={viewKey} onOpenLoot={routing.openLoot} />}
+      {/* GEAR (JOS-284) takes the same one prop and for the same reason: the table reads the
+          committed corpus, which is character-independent, so the remount `key` is the whole
+          character contract and every item name links OUT to that item's Loot drill-down — which
+          is where the per-item tier block is drawn. */}
+      {view === 'gear' && <GearView key={viewKey} onOpenLoot={routing.openLoot} />}
       {view === 'buffs' && <BuffsView key={viewKey} />}
       {/* Respawn clocks (JOS-194). Character-scoped like the rest: the remount `key` is the
           whole contract, since the watch list lives in the store and the clocks are re-derived
@@ -228,57 +235,6 @@ function ViewContent({
           onFocusConsumed={routing.clearCombatFocus}
         />
       )}
-    </>
-  )
-}
-
-/** The two app-wide celebration toasts — they fire on ANY tab, so they live at app level. */
-function CelebrationToasts({
-  defeatToast,
-  questToast,
-  onDismissDefeat,
-  onDismissQuest
-}: {
-  defeatToast: TargetStatus | null
-  questToast: string | null
-  onDismissDefeat: () => void
-  onDismissQuest: () => void
-}): JSX.Element {
-  return (
-    <>
-      <Snackbar
-        open={!!defeatToast}
-        autoHideDuration={6000}
-        onClose={onDismissDefeat}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-      >
-        <Alert
-          severity="success"
-          variant="filled"
-          icon={<EmojiEventsIcon2 fontSize="inherit" />}
-          onClose={onDismissDefeat}
-          sx={{ alignItems: 'center' }}
-        >
-          Raid target defeated: {defeatToast?.target.name}!
-        </Alert>
-      </Snackbar>
-
-      <Snackbar
-        open={!!questToast}
-        autoHideDuration={6000}
-        onClose={onDismissQuest}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-      >
-        <Alert
-          severity="success"
-          variant="filled"
-          icon={<ShieldMoonIcon fontSize="inherit" />}
-          onClose={onDismissQuest}
-          sx={{ alignItems: 'center' }}
-        >
-          Quest complete: {questToast}
-        </Alert>
-      </Snackbar>
     </>
   )
 }
