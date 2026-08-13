@@ -1713,6 +1713,22 @@ via `scripts/sandbox/sandbox-lifecycle.ps1`.
   event log and buffs/debuffs windows need no grip — they hold capture over
   their WHOLE window while hovered, the same trade at the other extreme.
   Full story: docs/agents-archive.md.
+- **THE OVERLAY FLOOR IS ONE RECTANGLE, AND IT IS MEASURED (JOS-278).**
+  `OVERLAY_MIN_SIZE` in `overlayLayout.ts` (140x90, was 200x90) is the
+  minimum for EVERY kind — never per-kind, because the busiest chrome any
+  kind wears is what the number has to survive. It exists so a window can
+  never be dragged to a few pixels and lost behind the game, and it came
+  DOWN because a player magnifying the screen with Lossless Scaling gets it
+  back multiplied. Lowering it was only possible because the chrome learned
+  to give way: the footer WRAPS (`FOOTER_ROW`, overlay/overlayScale.tsx —
+  its items still never shrink) and the header's drag gutter and kind tag
+  shrink before the lock/close pair does. Measuring it found that the OLD
+  200 floor already had A− / A+ off the right edge on buffs, debuffs and XP.
+  So: **do not change this number from a constant — change it from a
+  measurement.** `tests/e2e/overlayMinSizeSteps.mts` drags each window past
+  the floor through main's own clamp and asks every button and slider
+  whether its rectangle is still inside the window; height 90 is 2px over
+  the measured 88 the buffs footer needs at 140 wide, not a round number.
 - **THE BUFF/TIMER OVERLAY'S BAR IS A CLAIM, AND ITS ABSENCE IS THE HONEST HALF**
   (JOS-89, docs/plans/buff-timer-overlay.md). ONE law decides every row: **a
   duration `spells.json` STATES becomes a receding countdown; a duration
