@@ -486,6 +486,16 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
   }
 
   private onHeal(ev: Ev<'heal'>): void {
+    // A HoT TICK IS NOT A LANDING (JOS-280, the JOS-118 law one lane over). `You healed <X> over
+    // time for N by <Spell>.` is printed once per tick by an ALREADY-LANDED heal-over-time, and it
+    // is cast-detached by construction — buffFanOut.ts:88 refuses the same event for the same
+    // reason. Without this guard every tick re-entered the landing path on the rank-STRIPPED name:
+    // the clock restarted every 6 s (the reported "timer bar resets in combat"), `openRecord`
+    // overwrote `castName` with undefined so the rank chip died, a tick arriving after the
+    // wear-off resurrected a phantom bar, and every tick→fade span was minted as a duration
+    // sample (a 5 s median for a 41 s spell). Only the DIRECT heal line — the Quick Buff burst's
+    // `You healed Primitive … by Symbol of Pinzarn.`, W7's admission arm — opens anything here.
+    if (ev.overTime === true) return
     const db = this.stats.db
     if (db && ev.spell && idKey(ev.healer ?? '') === 'you') {
       const key = spellKey(ev.spell)
