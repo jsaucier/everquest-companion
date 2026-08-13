@@ -299,6 +299,11 @@ archive. Layout: `src/main` (Node), `src/preload`, `src/renderer`,
   `Co-Authored-By: Claude`. Keep `npm run dev` (watch) running — main edits
   auto-relaunch, renderer edits HMR.
 
+- A native .node binding resolves its DLL imports from ITS OWN directory before
+  System32 (measured via process.report sharedObjects, JOS-274) - app-local CRT
+  placement goes beside the binding, never on PATH (PATH loses to System32 and
+  mixes runtime generations).
+
 ## Toolchain gotchas
 
 - Node/git/gh NOT on PATH in fresh shells: prepend `C:\Program Files\nodejs`,
