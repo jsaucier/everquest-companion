@@ -12,6 +12,7 @@ import type { PerfHudPrefs } from '../shared/perf'
 import type { GraphicsPrefs } from '../shared/graphicsPrefs'
 import type { BuffTrustPrefs } from '../shared/buffTrust'
 import type { RespawnPrefs } from '../shared/respawn'
+import type { SoundPackPrefs } from '../shared/soundPacks'
 import type { WindowBounds } from './store'
 
 /**
@@ -93,6 +94,18 @@ export interface StoreShape {
    * per-mob cooldown. Absent ⇒ never migrated; see migrateStoredAlertTriggers().
    */
   alertTriggerMigration?: number
+  /**
+   * WHICH SOUND PACK IS YOURS, AND WHICH SHIPPED ONES YOU THREW AWAY (JOS-273;
+   * shared/soundPacks.ts). Two keys, both absent for almost everybody: the default-pack
+   * PREFERENCE every picker pre-selects and every authored alert points at, and the TOMBSTONES
+   * that stop startup provisioning putting a deleted shipped pack back.
+   *
+   * ABSENT MEANS THE SHIPPED BEHAVIOUR — the app's own default pack, and provisioning as it has
+   * always worked — so it is another additive optional key on the carve-out above: no schema
+   * bump, no migration, `normalizeSoundPackPrefs` defaults every field, and a fresh install is
+   * unaffected by the whole feature (which is exactly what the owner's ruling asked for).
+   */
+  soundPacks?: SoundPackPrefs
   /** auto-update release channel (Task #27): 'main' (bleeding edge) | 'stable' */
   updateChannel?: UpdateChannel
   /**

@@ -213,6 +213,7 @@ function useSectionState(searching: boolean): SectionState {
 export default function SuggestAlertsDialog({
   open,
   alerts,
+  defaultPackId,
   poisonSlowSeen,
   onClose,
   onCreate,
@@ -223,6 +224,12 @@ export default function SuggestAlertsDialog({
   open: boolean
   /** every stored alert: the created/checked state AND the poison-slow offer's coverage test. */
   alerts: readonly AlertDef[]
+  /**
+   * The user's default sound pack (JOS-273). EVERY alert this dialog authors — a template chip,
+   * a ready-made set, the illusion chip, the observed slow offer — points at it, which is the
+   * "suggestion builder" half of the owner's ruling.
+   */
+  defaultPackId?: string
   /** the alerts module's rogue-slow observation, or null — drives the offer in "From your fights". */
   poisonSlowSeen: PoisonSlowRecency | null
   onClose: () => void
@@ -282,10 +289,13 @@ export default function SuggestAlertsDialog({
     [create, createGroup, onCreate, poisonSlow.dismiss]
   )
 
-  const illusion = catalog?.hasIllusions ? illusionSuggestion() : null
+  const illusion = catalog?.hasIllusions ? illusionSuggestion(defaultPackId) : null
   const lines = useSpellLines(catalog, spellLastCast)
   const resolved = useResolvedClasses()
-  const ctx = useMemo<RowContext>(() => ({ lines, resolved }), [lines, resolved])
+  const ctx = useMemo<RowContext>(
+    () => ({ lines, resolved, defaultPackId }),
+    [lines, resolved, defaultPackId]
+  )
 
   // A COLLAPSED section mounts no rows and spends none of the shared MAX_ROWS budget, so the
   // fold state is an input to the result build, not just to the render.

@@ -237,11 +237,16 @@ export interface Suggestion {
 }
 
 /**
- * The default sound pack — the ONE pack the app ships, the pack every picker
- * pre-selects (AlertsView), and the pack the seeded built-ins + these suggestions use.
+ * The SHIPPED sound pack — the ONE pack the app provisions, and the pack every surface here
+ * falls back to when the user has expressed no preference of their own.
  * Mirrors DEFAULT_ALERT_PACK_ID / DEFAULT_ALERT_SOUNDS in src/main/data/defaultPacks.ts
  * — repeated as literals because the renderer bundle can't import from src/main. Keep
  * the two in sync (the ids there carry the spoken line each one is).
+ *
+ * IT IS NO LONGER THE PACK EVERY PICKER PRE-SELECTS (JOS-273). That is now the user's stored
+ * default-pack preference, which arrives as an ARGUMENT (`packId` below) because it is runtime
+ * state and this is a compile-time fact about what the app ships. When the two differ, the
+ * argument wins; when nothing is stored, they are the same thing and nothing has changed.
  */
 export const DEFAULT_PACK_ID = 'alan-rickman'
 /** Default cooldown for a suggested alert (ms). */
@@ -305,15 +310,15 @@ function buildTrigger(entry: SpellCatalogEntry, template: TemplateKind): AlertDe
   return { type: 'event', kind: t.kind, where }
 }
 
-/** Build the AlertDef for one (spell, template) pair. */
-function buildDef(entry: SpellCatalogEntry, template: TemplateKind): AlertDef {
+/** Build the AlertDef for one (spell, template) pair, pointed at `packId` (the user's default). */
+function buildDef(entry: SpellCatalogEntry, template: TemplateKind, packId: string): AlertDef {
   const t = SUGGEST_TEMPLATES[template]
   const def: AlertDef = {
     id: suggestionId(entry.key, template),
     name: `${entry.name} ${t.verb}`,
     enabled: true,
     trigger: buildTrigger(entry, template),
-    sound: { packId: DEFAULT_PACK_ID, soundId: t.sound },
+    sound: { packId, soundId: t.sound },
     cooldownMs: DEFAULT_COOLDOWN_MS,
     note: `Suggested alert (Task #38/#47) - ${template} for ${entry.name}.`
   }
@@ -333,7 +338,12 @@ function buildDef(entry: SpellCatalogEntry, template: TemplateKind): AlertDef {
  * with its suffix, which is exactly what makes the def go stale on a level-up — and exactly
  * what `detectRankUpgrades` (shared/spellLines.ts) looks for.
  */
-function buildRankDef(entry: SpellCatalogEntry, rank: string, template: RankTemplateKind): AlertDef {
+function buildRankDef(
+  entry: SpellCatalogEntry,
+  rank: string,
+  template: RankTemplateKind,
+  packId: string
+): AlertDef {
   const t = RANK_TEMPLATES[template]
   // resist carries a caster field: pin it to YOUR casts so a pet's or a bystander's resist of
   // the same spell never fires the alert (the parser sets caster='you' for your own — Task #51).
@@ -344,7 +354,7 @@ function buildRankDef(entry: SpellCatalogEntry, rank: string, template: RankTemp
     name: `${rank} ${t.verb}`,
     enabled: true,
     trigger: { type: 'event', kind: t.kind, where },
-    sound: { packId: DEFAULT_PACK_ID, soundId: t.sound },
+    sound: { packId, soundId: t.sound },
     cooldownMs: DEFAULT_COOLDOWN_MS,
     note: `Suggested alert - ${template} for ${rank}.`
   }
@@ -354,31 +364,43 @@ function buildRankDef(entry: SpellCatalogEntry, rank: string, template: RankTemp
  * All suggestions the spell DB supports for this catalog entry (excludes the shared illusion
  * one). When a `rank` is supplied — the MOST RECENTLY CAST rank of the entry's line, per the
  * owner's ordering rule — the two rank-pinned templates are offered as well.
+ *
+ * `packId` is the user's default-pack preference (JOS-273), defaulting to the shipped pack so
+ * every existing caller and test reads exactly as it did.
  */
-export function suggestionsFor(entry: SpellCatalogEntry, rank?: SpellRank | null): Suggestion[] {
+export function suggestionsFor(
+  entry: SpellCatalogEntry,
+  rank?: SpellRank | null,
+  packId: string = DEFAULT_PACK_ID
+): Suggestion[] {
   const out: Suggestion[] = []
-  if (entry.templates.wearsOff) out.push({ template: 'wearsOff', def: buildDef(entry, 'wearsOff') })
-  if (entry.templates.fade) out.push({ template: 'fade', def: buildDef(entry, 'fade') })
-  if (entry.templates.lands) out.push({ template: 'lands', def: buildDef(entry, 'lands') })
+  const def = (t: TemplateKind): AlertDef => buildDef(entry, t, packId)
+  if (entry.templates.wearsOff) out.push({ template: 'wearsOff', def: def('wearsOff') })
+  if (entry.templates.fade) out.push({ template: 'fade', def: def('fade') })
+  if (entry.templates.lands) out.push({ template: 'lands', def: def('lands') })
   if (entry.templates.landsOnOther) {
-    out.push({ template: 'landsOnOther', def: buildDef(entry, 'landsOnOther') })
+    out.push({ template: 'landsOnOther', def: def('landsOnOther') })
   }
-  if (entry.templates.breaks) out.push({ template: 'breaks', def: buildDef(entry, 'breaks') })
+  if (entry.templates.breaks) out.push({ template: 'breaks', def: def('breaks') })
   // Disjoint with `breaks` by construction — `charmSpell` is tested first in classifyWornOff, so
   // the two rosters cannot both claim a spell (tests/charmCcRoster.test.mts pins that).
   if (entry.templates.charmBreaks) {
-    out.push({ template: 'charmBreaks', def: buildDef(entry, 'charmBreaks') })
+    out.push({ template: 'charmBreaks', def: def('charmBreaks') })
   }
   // Rank-pinned chips are offered only for a rank we have actually SEEN cast: a rank the log
   // has never printed cannot be confirmed to exist for this character, and an alert on a
   // spelling we guessed would sit there silently forever.
   if (rank?.lastCastMs != null) {
-    out.push({ template: 'castRank', rank: rank.name, def: buildRankDef(entry, rank.name, 'castRank') })
+    out.push({
+      template: 'castRank',
+      rank: rank.name,
+      def: buildRankDef(entry, rank.name, 'castRank', packId)
+    })
     if (entry.spellType === 'Detrimental') {
       out.push({
         template: 'resistRank',
         rank: rank.name,
-        def: buildRankDef(entry, rank.name, 'resistRank')
+        def: buildRankDef(entry, rank.name, 'resistRank', packId)
       })
     }
   }
@@ -386,7 +408,7 @@ export function suggestionsFor(entry: SpellCatalogEntry, rank?: SpellRank | null
 }
 
 /** The single, shared illusion-fade suggestion (deduped — one alert for any illusion). */
-export function illusionSuggestion(): Suggestion {
+export function illusionSuggestion(packId: string = DEFAULT_PACK_ID): Suggestion {
   return {
     template: 'illusion',
     def: {
@@ -395,7 +417,7 @@ export function illusionSuggestion(): Suggestion {
       enabled: true,
       trigger: { type: 'event', kind: 'illusionFade' },
       // "It has all gone rather pear-shaped."
-      sound: { packId: DEFAULT_PACK_ID, soundId: 'task-error-task-error-08' },
+      sound: { packId, soundId: 'task-error-task-error-08' },
       cooldownMs: DEFAULT_COOLDOWN_MS,
       note: 'Suggested alert (Task #38) - fires when your illusion clicks/wears off.'
     }

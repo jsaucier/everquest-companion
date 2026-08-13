@@ -158,17 +158,20 @@ function observedSlows(n: number): string {
 export function PoisonSlowRow({
   offer,
   existingIds,
+  defaultPackId,
   onPersist,
   onDismiss
 }: {
   offer: PoisonSlowOffer
   existingIds: Set<string>
+  /** The user's default sound pack (JOS-273) — this row AUTHORS an alert, so it honours it. */
+  defaultPackId?: string
   /** persist one alert (the same upsert the groups panel and the upgrade strip use). */
   onPersist: (def: AlertDef) => void
   /** hide this offer for good. */
   onDismiss: (id: string) => void
 }): JSX.Element {
-  const defs = poisonSlowAlertDefs()
+  const defs = poisonSlowAlertDefs(defaultPackId)
   const created = defs.length > 0 && defs.every((d) => existingIds.has(d.id))
   return (
     <Box sx={SUGGEST_ROW_SX} data-testid="suggest-row">

@@ -48,6 +48,11 @@ import {
   migrateAlertSounds
 } from './data/defaultPacks'
 import { ALERT_TRIGGER_MIGRATION_VERSION, migrateAlertTriggers } from './data/alertDefMigrations'
+// The seeds are written through the DEFAULT-PACK PREFERENCE now (JOS-273). The rule lives in
+// ./alertSeeds.ts and takes the stored value as an argument — the preference's own accessors are
+// in ./storeSoundPacks.ts, which imports `settingsStore` from HERE, so an import in that
+// direction would make the settings store an import cycle.
+import { seedAlertsWith } from './alertSeeds'
 // The persisted SHAPE lives in ./storeShape.ts (this file is at its factoring ceiling). Nothing
 // moved but the declaration; every accessor below is still written against it.
 import type { StoreShape } from './storeShape'
@@ -637,12 +642,13 @@ function migrateStoredAlertTriggers(alerts: AlertDef[]): AlertDef[] {
 export function getAlerts(): AlertDef[] {
   const existing = store.get('alerts')
   if (existing === undefined) {
-    store.set('alerts', SEED_ALERTS)
-    // Seeds already reference the shipped pack and carry no group def; stamp both so neither
+    const seeded = seedAlertsWith(SEED_ALERTS, store.get('soundPacks'))
+    store.set('alerts', seeded)
+    // Seeds already reference the default pack and carry no group def; stamp both so neither
     // migration ever re-runs against a store that was born current.
     store.set('alertSoundMigration', ALERT_SOUND_MIGRATION_VERSION)
     store.set('alertTriggerMigration', ALERT_TRIGGER_MIGRATION_VERSION)
-    return SEED_ALERTS
+    return seeded
   }
   return migrateStoredAlertTriggers(migrateStoredAlertSounds(existing))
 }
@@ -675,7 +681,7 @@ export function deleteAlert(id: string): AlertDef[] {
 
 /** Restore the seeded built-in alert set, discarding any user edits (Task #22). */
 export function resetAlerts(): AlertDef[] {
-  const next = SEED_ALERTS.map((a) => ({ ...a }))
+  const next = seedAlertsWith(SEED_ALERTS, store.get('soundPacks'))
   store.set('alerts', next)
   return next
 }

@@ -272,6 +272,7 @@ export default function AlertDialog({
   open,
   initial,
   packs,
+  defaultPackId,
   voiceSetup,
   allAlwaysPlay = false,
   onClose,
@@ -280,6 +281,12 @@ export default function AlertDialog({
   open: boolean
   initial: AlertDef | null
   packs: SoundPack[]
+  /**
+   * The user's default sound pack (JOS-273). A NEW alert opens on it; an EDIT is untouched by it,
+   * because the def already states which pack it plays. Optional so a caller without the prefs
+   * (and every test that mounts this dialog bare) still compiles onto the shipped default.
+   */
+  defaultPackId?: string
   /** Whether there is a voice to speak with, and how to go set one up (VoiceSetupLink.tsx). */
   voiceSetup: VoiceSetupNotice
   /**
@@ -292,7 +299,7 @@ export default function AlertDialog({
   onClose: () => void
   onSave: (def: AlertDef) => void
 }): JSX.Element {
-  const f = useAlertForm(open, initial, packs)
+  const f = useAlertForm(open, initial, packs, defaultPackId)
   const editing = initial != null
 
   return (
@@ -325,6 +332,7 @@ export default function AlertDialog({
               packs={packs}
               packId={f.packId}
               soundId={f.soundId}
+              defaultPackId={defaultPackId}
               onChange={f.setSound}
             />
           </Box>

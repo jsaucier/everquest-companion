@@ -48,6 +48,7 @@ import { DATA_READY_MS, bus, buffsModule, epoch, sendWorldRebuilt, sessionDetect
 import { markStartupPhase, startPerfSampler, stopPerf } from './perf'
 import { initPresenceEffects, stopPresenceEffects } from './presenceEffects'
 import { provisionDefaultPacks } from './provisionPacks'
+import { removedPackIds } from './storeSoundPacks'
 import { getActiveCharacter, markTailPosition, startTailing, stopSession } from './session'
 import { runSmokeFeedback } from './smokeFeedback'
 import { STORE_READY_MS, getOverlayConfig, getPerfHudPrefs } from './store'
@@ -323,8 +324,10 @@ if (!gotSingleInstanceLock) {
     // next launch). On success, tell the renderer the pack set changed so it re-lists +
     // invalidates its sound caches and the sound becomes usable live.
     // E2E: skip (fresh temp userData ⇒ it would re-download every pack, off-network noise).
+    // …and NEVER a pack the user deleted (JOS-273): the uninstall handler tombstones shipped ids,
+    // and the set is read here rather than inside provisionPacks so that module stays node-loadable.
     if (!E2E) {
-      void provisionDefaultPacks()
+      void provisionDefaultPacks({ removedIds: removedPackIds() })
         .then((n) => {
           if (n > 0) sendToMain(IPC.onSoundPacksChanged)
         })

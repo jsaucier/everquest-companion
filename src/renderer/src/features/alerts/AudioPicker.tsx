@@ -51,7 +51,8 @@ import {
   Popover,
   Select,
   Stack,
-  TextField
+  TextField,
+  Typography
 } from '@mui/material'
 import type { AlertDef, SoundPack, SpeechMode } from '@shared/types'
 import { MAX_SPEECH_CHARS, SPEECH_MODES } from '@shared/speechText'
@@ -63,6 +64,7 @@ import {
   audioChoiceOf,
   displayedChoice,
   outputValueOf,
+  soundNotice,
   withOutput,
   writeBase,
   withPhrase,
@@ -70,6 +72,7 @@ import {
   withSpeechMode
 } from './audioChoice'
 import { fallbackPack, packLabel } from './SoundPicker'
+import { DEFAULT_PACK_ID } from './suggestions'
 
 /**
  * The suffix the two voice entries carry when the chosen tier has nothing to speak with.
@@ -96,6 +99,31 @@ const GRID_SX = {
   width: '100%',
   '& .MuiSelect-select': { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
 } as const
+
+/**
+ * "What this row plays is not what it says" — the one-line consequence of a pack that is gone
+ * (JOS-273, `soundNotice`). Nothing at all in the ordinary case, which is why it is a component
+ * rather than a branch inside the picker's already-full body.
+ *
+ * It sits in the OUTPUT column under the select, the placement `VoiceSetupLink` established for
+ * "something is wrong with the output you picked", and ellipsizes with the full text in a native
+ * title — the row's no-popper law (AlertList.tsx, JOS-143).
+ */
+function SoundNoticeLine({ text }: { text: string | null }): JSX.Element | null {
+  if (!text) return null
+  return (
+    <Typography
+      variant="caption"
+      color="warning.main"
+      display="block"
+      data-testid="alert-sound-notice"
+      title={text}
+      sx={{ mt: 0.25, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+    >
+      {text}
+    </Typography>
+  )
+}
 
 /** The custom-phrase popover: capped, confirmable, and anchored on the select that opened it. */
 function PhrasePopover({
@@ -150,12 +178,18 @@ export default function AudioPicker({
   packs,
   def,
   voiceSetup,
+  defaultPackId,
   onChange
 }: {
   packs: SoundPack[]
   def: AlertDef
   /** Whether there is a voice to speak with, and how to go set one up (VoiceSetupLink.tsx). */
   voiceSetup: VoiceSetupNotice
+  /**
+   * The user's default sound pack (JOS-273). It decides which pack this row falls back to when the
+   * def names one that is gone, and it is what the notice under the selects is about.
+   */
+  defaultPackId?: string
   /** persist the whole def (the row's own upsert) — this writes four of its fields. */
   onChange: (next: AlertDef) => void
 }): JSX.Element {
@@ -165,9 +199,12 @@ export default function AudioPicker({
   const sayRef = useRef<HTMLDivElement>(null)
 
   const choice = audioChoiceOf(def)
-  // The pack the def points at, or the shipped default when it points at an uninstalled one —
+  // The pack the def points at, or the user's default when it points at an uninstalled one —
   // a Select whose value is not among its items renders empty and warns.
-  const pack = packs.find((p) => p.id === choice.packId) ?? fallbackPack(packs)
+  const pack = packs.find((p) => p.id === choice.packId) ?? fallbackPack(packs, defaultPackId)
+  // …and the row SAYS so when that substitution happened, or when nothing can answer at all
+  // (JOS-273: no silent mutes, and no silent stand-ins either).
+  const notice = soundNotice(choice, packs, { defaultPackId: defaultPackId ?? DEFAULT_PACK_ID })
   const soundIds = pack ? Object.keys(pack.sounds) : []
   // What the selects show, and what an edit is applied to — NOT always the same thing when no
   // pack has resolved yet (audioChoice.ts: `writeBase`).
@@ -202,6 +239,7 @@ export default function AudioPicker({
           <MenuItem value={OUTPUT_BOTH}>Sound + voice{voiceNote}</MenuItem>
         </Select>
         {speaks && <VoiceSetupLink notice={voiceSetup} testId="alert-row-voice-setup" />}
+        <SoundNoticeLine text={notice} />
       </Box>
 
       {speaksOnly ? (

@@ -41,6 +41,12 @@ import { Tooltip } from '../../lib/Tooltip'
 export interface RowContext {
   lines: Map<string, SpellLine>
   resolved: ClassAbbr[]
+  /**
+   * The user's default sound pack (JOS-273), or undefined for "whatever the app ships". Every
+   * suggestion this wizard authors points at it — the owner's ruling names the suggestion builder
+   * as one of the three surfaces the preference has to be honoured by.
+   */
+  defaultPackId?: string
 }
 
 /** How many class-level chips a row shows before folding the rest into "+N". */
@@ -251,7 +257,10 @@ function SpellRow({
   const rank = useMemo(() => preferredRank(ctx.lines.get(entry.key)?.ranks ?? []), [ctx.lines, entry.key])
   // Building the AlertDefs is the row's heaviest work, and it depends only on the entry and the
   // rank — so a re-render that changes neither (a parent re-render, a hover) does none of it.
-  const suggestions = useMemo(() => suggestionsFor(entry, rank), [entry, rank])
+  const suggestions = useMemo(
+    () => suggestionsFor(entry, rank, ctx.defaultPackId),
+    [entry, rank, ctx.defaultPackId]
+  )
   return (
     <Box sx={SUGGEST_ROW_SX} data-testid="suggest-row">
       <Box sx={SUGGEST_ROW_FACTS_SX}>

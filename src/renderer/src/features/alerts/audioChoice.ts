@@ -25,7 +25,9 @@
 // keep the alias, which is erased before Node ever sees the file.
 
 import type { AlertAudio, AlertDef, AlertSpeech, SoundPack, SpeechMode } from '@shared/types'
+import type { SoundFallback } from '@shared/soundPacks'
 import { MAX_SPEECH_CHARS } from '../../../../shared/speechText'
+import { resolveSoundRef } from '../../../../shared/soundPacks'
 
 /**
  * The audio state ONE row edits, flattened out of the def.
@@ -131,6 +133,40 @@ export function displayedChoice(choice: AudioChoice, pack: SoundPack | undefined
  */
 export function writeBase(choice: AudioChoice, pack: SoundPack | undefined): AudioChoice {
   return pack ? displayedChoice(choice, pack) : choice
+}
+
+/**
+ * WHAT THE ROW SAYS WHEN THE SOUND IT NAMES IS NOT THE SOUND IT WILL PLAY (JOS-273) — or null
+ * when there is nothing to say, which is the overwhelmingly common case.
+ *
+ * The owner's ruling has three parts and this is the third: a ref into a pack that is gone
+ * resolves through the default-pack preference rather than going silently mute, and where it
+ * CANNOT resolve the alert row says so visibly. A user who deletes a pack should find out from
+ * the alerts list, not from an alert that never fired.
+ *
+ * Pure, and here rather than in the component, for the reason this whole module exists: "the row
+ * claims X about the def" is a function, not a closure inside JSX.
+ */
+export function soundNotice(
+  choice: AudioChoice,
+  packs: readonly SoundPack[],
+  fallback: SoundFallback
+): string | null {
+  // A spoken-only alert plays no pack sound at all, so its pack being gone is not a fact about
+  // anything the user can hear.
+  if (choice.audio === 'speech') return null
+  const resolved = resolveSoundRef(
+    { packId: choice.packId, soundId: choice.soundId },
+    packs,
+    fallback
+  )
+  if (resolved.status === 'exact') return null
+  if (resolved.status === 'missing') {
+    return `No sound pack installed - this alert stays silent until you install one.`
+  }
+  if (resolved.packId === choice.packId) return null // same pack, another line: not worth a line of chrome
+  const name = packs.find((p) => p.id === resolved.packId)?.name ?? resolved.packId
+  return `"${choice.packId}" is not installed - playing ${name} instead.`
 }
 
 /**

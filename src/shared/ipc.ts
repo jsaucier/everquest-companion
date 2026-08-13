@@ -73,6 +73,12 @@ export const IPC = {
   // sound packs (discovery + audio bytes)
   listSoundPacks: 'sounds:listPacks',
   getSoundData: 'sounds:getData',
+  // WHICH PACK IS YOURS (JOS-273): the default-pack preference every picker pre-selects, the
+  // suggestion builder authors against and the seeds are written with, plus the tombstones that
+  // stop startup provisioning putting a deleted shipped pack back. The setter takes a pack id or
+  // null ("use whatever the app ships"); both answer the whole normalized blob.
+  getSoundPackPrefs: 'sounds:getPackPrefs',
+  setDefaultSoundPack: 'sounds:setDefaultPack',
   // "bring your own sound" (JOS-68): the user's OWN audio, in the reserved `my-sounds` pack.
   // NO PATH EVER CROSSES THESE. `importUserSounds` opens the OS picker in MAIN and answers
   // with minted soundIds + display labels; `removeUserSound` takes a manifest KEY, never a

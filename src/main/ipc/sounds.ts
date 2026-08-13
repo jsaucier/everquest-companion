@@ -13,6 +13,13 @@ import {
 } from '../packRegistry'
 import { isSafePackId } from '../security'
 import { getSoundData, listPacks } from '../sounds'
+import {
+  clearPackRemoved,
+  getDefaultSoundPackId,
+  getSoundPackPrefs,
+  recordPackRemoved,
+  setDefaultSoundPack
+} from '../storeSoundPacks'
 import { importUserSounds, listImportedSounds, removeUserSound } from '../userSounds'
 import { getMainWindow, sendToMain } from '../windows'
 import type { PackInstallProgress } from '../../shared/types'
@@ -26,8 +33,20 @@ export function registerSoundsIpc(): void {
   // The reserved `my-sounds` pack (JOS-68) comes through this SAME door: it is a directory
   // name like any other, it satisfies isSafePackId, and sounds.ts resolves it to its own
   // root. There is deliberately no second serving path for the user's own audio.
+  // The USER'S DEFAULT PACK is what a ref resolves through when its own pack is gone (JOS-273),
+  // and it is read HERE rather than inside sounds.ts because that module is loaded by node:test
+  // and the store is not. One read per fetch is a store hit on a cached object, not a file read.
   ipcMain.handle(IPC.getSoundData, (_e, packId: string, soundId: string) =>
-    isSafePackId(packId) ? getSoundData(packId, soundId) : null
+    isSafePackId(packId) ? getSoundData(packId, soundId, getDefaultSoundPackId()) : null
+  )
+
+  // ---- the default-pack preference (JOS-273) ----
+  // The id is validated at the boundary with the SAME predicate a served pack id is (it names a
+  // directory under the soundpack roots the moment anything resolves through it), and `null` is a
+  // real value meaning "use whatever the app ships".
+  ipcMain.handle(IPC.getSoundPackPrefs, () => getSoundPackPrefs())
+  ipcMain.handle(IPC.setDefaultSoundPack, (_e, packId: string | null) =>
+    setDefaultSoundPack(isSafePackId(packId) ? packId : null)
   )
 
   // ---- the user's own sounds (JOS-68) ----
@@ -52,6 +71,10 @@ export function registerSoundsIpc(): void {
     }
     try {
       await installPack(pack, emit)
+      // INSTALLING IS HOW A DELETION IS TAKEN BACK (JOS-273). Clearing the stone here rather than
+      // in installPack keeps the pure installer pure, and covers the only path that matters: the
+      // registry browser, which is where the ruling says the user asks for the pack again.
+      clearPackRemoved(name)
       return { ok: true as const }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -62,6 +85,10 @@ export function registerSoundsIpc(): void {
   })
   ipcMain.handle(IPC.packsUninstall, (_e, name: string) => {
     const ok = uninstallPack(name)
+    // A SUCCESSFUL removal of a SHIPPED pack is the statement provisioning has to remember
+    // (storeSoundPacks.ts decides which ids qualify). A failed one is not a statement about
+    // anything, so nothing is written on that path.
+    if (ok) recordPackRemoved(name)
     return ok ? { ok: true as const } : { ok: false as const, error: 'pack not found or not removable' }
   })
   // Preview a registry pack BEFORE install (Task #31): list its sounds / stream one.

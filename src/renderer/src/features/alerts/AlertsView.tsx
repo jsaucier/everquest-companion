@@ -178,12 +178,18 @@ type SoundSurface = 'packs' | 'mine' | null
  */
 function SoundLibraryDialogs({
   surface,
-  alerts,
+  store,
   onClose,
   onChanged
 }: {
   surface: SoundSurface
-  alerts: AlertDef[]
+  /**
+   * The view's data layer, whole. Four of its fields are needed here — the alerts (so a removal
+   * can name what plays the sound), the installed packs, the default-pack preference and the
+   * setter for it — and passing them individually was four props for one object the caller
+   * already holds.
+   */
+  store: AlertsStore
   onClose: () => void
   onChanged: () => void
 }): JSX.Element {
@@ -191,12 +197,15 @@ function SoundLibraryDialogs({
     <>
       <SoundPacksDialog
         open={surface === 'packs'}
+        packs={store.sortedPacks}
+        defaultPackId={store.defaultPackId}
+        onSetDefault={(id) => void store.setDefaultPack(id)}
         onClose={onClose}
         onInstalledChange={onChanged}
       />
       <MySoundsDialog
         open={surface === 'mine'}
-        alerts={alerts}
+        alerts={store.alerts}
         onClose={onClose}
         onChanged={onChanged}
       />
@@ -310,6 +319,7 @@ export default function AlertsView({
         history={history}
         packs={sortedPacks}
         voiceSetup={voiceSetup}
+        defaultPackId={store.defaultPackId}
         filtering={filter.filtering}
         onAddSuggestion={() => setSuggestOpen(true)}
         handlers={{
@@ -326,6 +336,7 @@ export default function AlertsView({
         open={edit.open}
         initial={edit.target}
         packs={sortedPacks}
+        defaultPackId={store.defaultPackId}
         voiceSetup={voiceSetup}
         allAlwaysPlay={prefs.alwaysPlayAll === true}
         onClose={edit.close}
@@ -337,7 +348,7 @@ export default function AlertsView({
 
       <SoundLibraryDialogs
         surface={soundSurface}
-        alerts={alerts}
+        store={store}
         onClose={() => setSoundSurface(null)}
         onChanged={() => void store.refreshPacks()}
       />
@@ -345,6 +356,7 @@ export default function AlertsView({
       <SuggestAlertsDialog
         open={suggestOpen}
         alerts={alerts}
+        defaultPackId={store.defaultPackId}
         poisonSlowSeen={store.poisonSlowSeen}
         onClose={() => setSuggestOpen(false)}
         onCreate={persistAlerts}
