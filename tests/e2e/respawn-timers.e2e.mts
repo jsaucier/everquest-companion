@@ -283,7 +283,14 @@ async function stepLiveKillIsOfferedThenWatched(page: Page, log: FixtureLog): Pr
  * a log seq instead of its own revision, passes every unit test and fails right here.
  */
 async function stepWatchFromRecentKills(page: Page, log: FixtureLog): Promise<void> {
-  const earlier = new Date(Date.now() - 3 * 60_000)
+  // ONE CLOCK READ, TWO STAMPS (flake ledger, 2026-08-13). The gap between the two deaths IS the
+  // thing under test — four checks below spell it `3m 00s` — so it has to be built, not sampled.
+  // Reading the clock twice (`Date.now()` here, a bare `append()` for the second death) let a
+  // single second of wall clock land between the reads: EQ stamps are second-granular, so the
+  // played gap became 181 s and the row printed `3m 01s`. Both deaths are stamped off `now`, which
+  // makes the gap exactly 180 s by construction. The fix belongs HERE and never in the assertions.
+  const now = new Date()
+  const earlier = new Date(now.getTime() - 3 * 60_000)
   log.appendAt(earlier, `You have slain ${OWN_MOB}!`)
   // THE LOOT LINE RIDES THE FIRST CORPSE, AND THE ORDER IS LOAD-BEARING (round 7, measured).
   // `lib/hoverCards.tsx` fetches a mob's knowledge ONCE PER NAME for the window's lifetime, and
@@ -295,7 +302,7 @@ async function stepWatchFromRecentKills(page: Page, log: FixtureLog): Promise<vo
   // other way round: green at 38 s of wall clock, red at 96 s. Realistic, too — you loot the corpse
   // and then kill it again.)
   log.appendAt(earlier, `--You have looted 2 ${LOOTED} from ${OWN_MOB}'s corpse.--`)
-  log.append(`You have slain ${OWN_MOB}!`)
+  log.appendAt(now, `You have slain ${OWN_MOB}!`)
 
   const offered = await settle(
     () => clocks(page, 'respawn-candidate'),
