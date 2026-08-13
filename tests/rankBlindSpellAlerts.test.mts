@@ -41,10 +41,16 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseEvent } from '../src/main/log/parser'
+import { meleeSkill } from '../src/main/log/parseCombat'
 import { installSpellDb } from '../src/main/log/rulesets'
 import { buildSpellCatalog, loadSpellDb } from '../src/main/data/spellDb'
 import { AlertsModule } from '../src/main/modules/alerts'
-import { suggestionsFor } from '../src/renderer/src/features/alerts/suggestions'
+import { ALERT_GROUPS, alertGroupDefs } from '../src/shared/alertGroups'
+import {
+  suggestionCoverageId,
+  suggestionsFor
+} from '../src/renderer/src/features/alerts/suggestions'
+import type { AlertGroup } from '../src/shared/alertGroups'
 import type { SpellRank } from '../src/shared/spellLines'
 import type { AlertDef, FiredAlert, SpellCatalogEntry } from '../src/shared/types'
 
@@ -109,6 +115,13 @@ function def(id: string, kind: string, where: Record<string, string>): AlertDef 
     sound: { packId: 'alan-rickman', soundId: 'task-error-task-error-01' },
     cooldownMs: 0
   }
+}
+
+/** One curated group by id, so a rename fails loudly here rather than skipping a check. */
+function groupById(id: string): AlertGroup {
+  const g = ALERT_GROUPS.find((x) => x.id === id)
+  assert.ok(g, `alertGroups.ts must still carry the "${id}" group`)
+  return g
 }
 
 // ── THE ACCEPTANCE FIXTURE ────────────────────────────────────────────────────────────────────
@@ -251,4 +264,173 @@ test('JOS-259 C2: the candidate list folds too, and the fire says the name it ma
     'Shiftless Deeds',
     'the fire names the candidate that satisfied the matcher, not the alphabetical pick'
   )
+})
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// JOS-276 — AND THE DAMAGE LANE FOLDS TOO.
+//
+// THE OWNER'S LAW, verbatim (2026-08-13): "we should not use spell ranks for anything in the alert
+// system - it should be compatible with any rank." JOS-259 above folded every `where.spell`
+// matcher and left ONE lane out on purpose — `damage.skill`, which is a spell name for dtype
+// 'spell'/'dot' and a melee verb or a damage-shield element otherwise. That carve-out is now gone:
+// `foldsRank` (modules/alerts.ts) admits `damage.skill` at compile time and `foldReaches` gates it
+// per event on the dtype, so the two spell dtypes fold and the other two are untouched.
+//
+// THE LINES BELOW ARE THE OWNER'S OWN LOG, verbatim from eqlog_Primitive_freeport.txt (read-only
+// sweep, 2026-08-13, 1,627,039 lines) — not constructed, because the whole question is which
+// spellings the game ACTUALLY prints in this lane. What the sweep found:
+//   * `… points of <class> damage by Harm Touch.`               488 lines — the rank-LESS nuke.
+//   * `… points of <class> damage by Harm Touch III|IV|VI|IX.`   23 lines — the SAME spell, ranked.
+//   * `… has taken N damage from Harm Touch IX by <sk>.`          3 lines — ranked, dot lane.
+//   * `… has taken N damage from Chords of Dissonance[ I|III|IV|V] by <bard>.` — one bard song,
+//     five spellings, four casters, all in the dot lane.
+// One spell printing two spellings in one lane is the whole defect, restated in the lane JOS-259
+// could not reach: a damage alert on `Harm Touch` heard 488 of 511 of its own lines.
+//
+// AND THE OTHER TWO DTYPES ARE INERT, MEASURED (D3): melee `skill` is not a log string at all but
+// one of ten constants out of `meleeSkill`, and the whole log spells exactly three damage-shield
+// elements — flames (17,780), thorns (7,861), frost (152). None can carry a roman-numeral tail.
+// The gate is still written on the dtype rather than on that measurement, because the DS element
+// IS free text off the line and nothing in the parser bounds it.
+
+/** Verbatim damage-lane lines from eqlog_Primitive_freeport.txt. */
+const DMG = {
+  /** dtype 'spell', RANK-LESS — a shadowknight's Harm Touch, 488 such lines. */
+  htPlain: '[Sun Jul 19 08:39:33 2026] Giber hit a hardened skeleton for 162 points of magic damage by Harm Touch.',
+  /** dtype 'spell', RANKED — the same spell, a caster who has the rank. */
+  htRanked:
+    '[Fri Jul 31 21:08:07 2026] Zobek hit a stone spider for 881 points of unresistable damage by Harm Touch IX.',
+  /** dtype 'dot', RANKED — the tick two seconds later, same spell, same fight. */
+  htTick: '[Fri Jul 31 21:08:09 2026] A stone spider has taken 397 damage from Harm Touch IX by Zobek.',
+  /**
+   * dtype 'dot', RANK-LESS, and the four ranked spellings of the same bard song — the first
+   * occurrence of each, so they are in the order the log printed them. THE ORDER IS LOAD-BEARING:
+   * `cooldownMs:0` means "no window", not "no clock", and an event whose ts is BEFORE the last
+   * fire is inside every window (`onCooldown` compares `ts - last < cd`). Feeding a fixture out of
+   * chronological order silently swallows fires, which is a property of the module and not of
+   * this ticket — the log never goes backwards.
+   */
+  chordsPlain:
+    '[Sun Jul 19 15:30:38 2026] A Teir`Dal ranger has taken 18 damage from Chords of Dissonance by Testone.',
+  chordsIV:
+    '[Tue Jul 28 21:28:14 2026] A fungus drone has taken 11 damage from Chords of Dissonance IV by Wemby.',
+  chordsV: '[Wed Jul 29 00:46:26 2026] A greater ice bones has taken 17 damage from Chords of Dissonance V by Sanluen.',
+  chordsI: '[Wed Jul 29 13:49:49 2026] A zol ghoul knight has taken 26 damage from Chords of Dissonance I by Xaladin.',
+  chordsIII:
+    '[Sat Aug 01 18:40:19 2026] An ice goblin veteran has taken 43 damage from Chords of Dissonance III by Voxl.',
+  /** dtype 'melee' — `skill` here is `meleeSkill('kick')`, a table constant. */
+  kick: '[Sun Jul 19 10:02:40 2026] You kick a Teir`Dal shadowknight for 3 points of damage.',
+  /** dtype 'ds' — `skill` is the element the line spelled. */
+  flames: '[Sun Jul 19 20:08:25 2026] A magician pet is burned by YOUR flames for 5 points of non-melee damage.',
+  thorns: '[Thu Aug 06 19:23:21 2026] A sturdy skeleton is pierced by YOUR thorns for 5 points of non-melee damage.',
+  /** Not a damage line — the skill-up stream, which spells `skill` on a DIFFERENT kind. */
+  kickUp: '[Tue Jul 28 15:34:13 2026] You have become better at Kick! (100)'
+}
+
+test('JOS-276 D1: a damage alert on the base name fires on BOTH line shapes', () => {
+  // THE ACCEPTANCE. One def, the base name, no rank anywhere in it.
+  const ht = def('harm-touch', 'damage', { skill: 'Harm Touch' })
+  const fired = fire([ht], [DMG.htPlain, DMG.htRanked, DMG.htTick])
+  assert.deepEqual(
+    fired.map((f) => f.matchedText),
+    [DMG.htPlain, DMG.htRanked, DMG.htTick],
+    'the rank-less direct hit, the ranked direct hit and the ranked dot tick are one alert'
+  )
+  // And it SAYS what the log said, rank intact — the same rule `matchedSpellName` follows for the
+  // spell key: the def's spelling is the alert's business, the rank is the log's.
+  assert.deepEqual(fired.map((f) => f.spell), ['Harm Touch', 'Harm Touch IX', 'Harm Touch IX'])
+})
+
+test('JOS-276 D2: one dot-lane def owns every rank the song is cast at', () => {
+  const lines = [DMG.chordsPlain, DMG.chordsIV, DMG.chordsV, DMG.chordsI, DMG.chordsIII]
+  // Five spellings off four different bards. Pinned to the base name…
+  assert.equal(fire([def('chords', 'damage', { skill: 'Chords of Dissonance' })], lines).length, 5)
+  // …and pinned to a RANK, which is the direction that used to work and must keep working: a def
+  // built from the one rank you happened to see is not an alert about that rank alone.
+  assert.equal(fire([def('chords', 'damage', { skill: 'Chords of Dissonance IV' })], lines).length, 5)
+})
+
+test('JOS-276 D3: melee and damage-shield lanes are untouched — the measurement, pinned', () => {
+  // The melee lane's `skill` is a TABLE CONSTANT (parseCombat.ts `meleeSkill`), never log text,
+  // and the DS lane's three elements are nouns. Neither can carry a rank tail, so the fold has
+  // nothing to widen — assert it over what the parser actually produced.
+  const rankTail = / (?:I|II|III|IV|V|VI|VII|VIII|IX|X)$/i
+  for (const verb of ['backstab', 'bash', 'kick', 'cleave', 'smite', 'shoot', 'strike', 'frenzy', 'flurry', 'slash']) {
+    assert.ok(!rankTail.test(meleeSkill(verb)), `meleeSkill('${verb}') must carry no rank tail`)
+  }
+  for (const line of [DMG.kick, DMG.flames, DMG.thorns]) {
+    const ev = parseEvent(line, 0)
+    assert.equal(ev?.kind, 'damage')
+    if (ev?.kind !== 'damage') return
+    assert.ok(!rankTail.test(ev.skill), `${ev.dtype} skill "${ev.skill}" must carry no rank tail`)
+  }
+  // A def written against those lanes still matches exactly what it always matched…
+  assert.equal(fire([def('kick', 'damage', { skill: 'Kick' })], [DMG.kick]).length, 1)
+  assert.equal(fire([def('ds', 'damage', { skill: 'flames' })], [DMG.flames, DMG.thorns]).length, 1)
+  // …and the fold does NOT reach them: a rank-suffixed spec folds to `kick`/`flames`, which under
+  // an ungated widening would have matched. `foldReaches` is what refuses, on the dtype.
+  assert.equal(fire([def('kick2', 'damage', { skill: 'Kick II' })], [DMG.kick]).length, 0)
+  assert.equal(fire([def('ds2', 'damage', { skill: 'flames II' })], [DMG.flames]).length, 0)
+})
+
+test('JOS-276 D4: `skill` on a non-damage kind does not fold', () => {
+  // The skill-up stream spells `skill` too. The fold is scoped to (`damage`, `skill`) at COMPILE
+  // time (`foldsRank` reads the trigger's kind), so this def compiles with no line key at all.
+  assert.equal(fire([def('up', 'skillUp', { skill: 'Kick' })], [DMG.kickUp]).length, 1)
+  assert.equal(fire([def('up2', 'skillUp', { skill: 'Kick II' })], [DMG.kickUp]).length, 0)
+})
+
+test('JOS-276 D5: a /regex/ skill spec is still user intent', () => {
+  // The same refusal B2 makes for the spell key. Someone who anchored a damage pattern to a rank
+  // asked a narrower question, and this file is not in the business of rewriting it.
+  const narrow = def('narrow', 'damage', { skill: '/^Harm Touch IX$/' })
+  assert.equal(fire([narrow], [DMG.htRanked]).length, 1)
+  assert.equal(fire([narrow], [DMG.htPlain]).length, 0)
+  // And a skill spec that is nothing but a roman numeral must not become a wildcard.
+  assert.equal(fire([def('roman', 'damage', { skill: 'IX' })], [DMG.htRanked, DMG.kick]).length, 0)
+})
+
+test('JOS-276 D6: the curated slow rosters tolerate a rank the log can print', () => {
+  // THE SWEEP'S OTHER FINDING. The two slow group defs are APP-authored `/^(…)$/` rosters, so
+  // JOS-259's "regexes are user intent" exemption does not cover them — the `$` anchor is ours,
+  // and it made those defs rank-sensitive. `Your <X> spell has worn off of <mob>.` is rank-less in
+  // 3,382 of 3,383 whole-log occurrences; the 3,383rd is this real line, which proves the shape:
+  const rankedWearOff = '[Wed Aug 05 17:18:06 2026] Your Rune IV spell has worn off of a gust of wind.'
+  const fade = parseEvent(rankedWearOff, 0)
+  assert.equal(fade?.kind === 'buffFade' && fade.spell, 'Rune IV', 'a wear-off CAN carry a rank')
+
+  const mob = alertGroupDefs(groupById('slow')).map((d) => ({ ...d, cooldownMs: 0 }))
+  const lines = [
+    // The rank-less line the group was verified on (alertGroups.test.mts G1) — unchanged.
+    '[Tue Jul 28 13:04:53 2026] Your Shiftless Deeds spell has worn off of King Tranix.',
+    // …and the same slow, printed the way Rune IV was.
+    '[Tue Jul 28 13:05:53 2026] Your Shiftless Deeds IV spell has worn off of King Tranix.'
+  ]
+  assert.deepEqual(
+    fire(mob, lines).map((f) => f.alertId),
+    ['group:slow:mob', 'group:slow:mob'],
+    'a ranked slow wear-off must not fall through the roster'
+  )
+})
+
+test('JOS-276 D7: the wizard dedupes rank chips by LINE, not by rank', () => {
+  // Since JOS-259 a def pinned to `Mesmerization III` fires on every Mesmerization cast line, so
+  // the "Mesmerization IV casts" chip beside it is offering a second alert on the same lines.
+  // `suggestionCoverageId` is the fold that makes the chip read as already created.
+  const iii = 'suggest:mesmerization:castRank:mesmerization-iii'
+  const iv = 'suggest:mesmerization:castRank:mesmerization-iv'
+  assert.equal(suggestionCoverageId(iii), suggestionCoverageId(iv))
+  // The add-alongside clone (`detectRankUpgrades`) folds to the same key.
+  assert.equal(suggestionCoverageId(`${iii}::rank:mesmerization-iv`), suggestionCoverageId(iii))
+  // The two rank templates are separate alerts about separate lines and must NOT collapse…
+  assert.notEqual(
+    suggestionCoverageId(iv),
+    suggestionCoverageId('suggest:mesmerization:resistRank:mesmerization-iv')
+  )
+  // …neither do two different spell lines…
+  assert.notEqual(suggestionCoverageId(iv), suggestionCoverageId('suggest:allure:castRank:allure-vi'))
+  // …and every other suggestion id is returned byte-identical.
+  for (const id of ['suggest:mesmerization:fade', 'suggest:illusion:fade', 'group:slow:mob', 'alert:poison-slow-landed']) {
+    assert.equal(suggestionCoverageId(id), id)
+  }
 })

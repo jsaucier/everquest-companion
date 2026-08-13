@@ -273,6 +273,15 @@ export function spellLineLevel(
 // is an OFFER: nothing is ever rewritten without a click (AGENTS.md "state, never process";
 // world-model law 1).
 //
+// RANK-SENSITIVE ON PURPOSE, AND IT IS THE LAST PLACE THAT IS (JOS-276 sweep). The owner's law —
+// "we should not use spell ranks for anything in the alert system - it should be compatible with
+// any rank" — is about whether an alert FIRES, and nothing below decides that: since JOS-259 a
+// literal spell matcher already covers every rank of its line, so a def here never goes stale and
+// an offer never has to rescue one. What survives is the convenience it always also was: a chip
+// that names the rank you just started casting, for a user who wants an alert whose NAME says
+// "Mesmerization IV". `rankedDefs` therefore still reads the suffix, and reading it is the feature.
+// The offer's own dedupe folds, though — see `suggestionCoverageId` in the wizard.
+//
 // TWO ACTIONS, and ADD-ALONGSIDE IS THE DEFAULT (owner decision). EQ Legends' loadout system
 // means you can be a level-50 Paladin in one trio and a low-level Paladin in another; a swap
 // puts you back on the old rank, so REPLACING the alert would silently mute it in the other

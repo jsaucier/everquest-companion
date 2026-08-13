@@ -89,6 +89,9 @@ export function spellCandidateNames(ev: LogEvent): string[] {
 //                   the typed-nuke and DoT shapes put the spell name there). For 'melee' it is
 //                   a melee skill and for 'ds' it is the damage-shield element — neither is a
 //                   spell, so neither is claimed. Handled separately, below.
+//                   THE MATCHER NOW DRAWS THE SAME LINE (JOS-276): `foldReaches` in
+//                   modules/alerts.ts gates the rank fold on this exact dtype pair, so "which
+//                   damage lines name a spell" has one answer and two readers, not two answers.
 //
 // FAMILIES THAT CARRY NO SPELL, and therefore fall back to the alert's name when a spell speech
 // mode fires on them: zone, loot, offer, trade, level, expGain, aaGain, aaSpend, aaActivate (an

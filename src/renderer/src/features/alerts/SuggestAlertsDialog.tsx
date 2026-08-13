@@ -56,7 +56,7 @@ import EditNoteIcon from '@mui/icons-material/EditNote'
 import type { AlertDef, PoisonSlowRecency, SpellCatalog } from '@shared/types'
 import { VERIFIED_ALERT_GROUPS, type AlertGroup } from '@shared/alertGroups'
 import { tokenizeSpellQuery, type SpellSearchToken } from '@shared/spellSearch'
-import { illusionSuggestion, type Suggestion } from './suggestions'
+import { illusionSuggestion, suggestionCoverageId, type Suggestion } from './suggestions'
 import type { RowContext } from './SpellSuggestionRow'
 import SuggestResults, { type ResultsHandlers, type SectionState } from './SuggestResults'
 import { buildSuggestResults, filterAlertGroups } from './resultSections'
@@ -210,6 +210,19 @@ function useSectionState(searching: boolean): SectionState {
   return { collapsed, toggle, searching }
 }
 
+/**
+ * THE IDS A CHIP READS AS ALREADY CREATED — each stored alert's own id AND its rank-folded
+ * coverage id (JOS-276, suggestions.ts `suggestionCoverageId`).
+ *
+ * Both, rather than only the fold, because the fold is the identity function for every suggestion
+ * that is not a rank chip and a user's own alert id is not ours to reinterpret. What it buys: a
+ * rank chip reads as created when ANY rank of its line already has that alert — which is the
+ * truth since JOS-259, where one such def fires on the whole line.
+ */
+function createdIds(alerts: readonly AlertDef[]): Set<string> {
+  return new Set(alerts.flatMap((a) => [a.id, suggestionCoverageId(a.id)]))
+}
+
 export default function SuggestAlertsDialog({
   open,
   alerts,
@@ -250,7 +263,7 @@ export default function SuggestAlertsDialog({
   const state = useSectionState(tokens.length > 0)
   const poisonSlow = usePoisonSlowOffers(alerts, poisonSlowSeen)
 
-  const existingIds = useMemo(() => new Set(alerts.map((a) => a.id)), [alerts])
+  const existingIds = useMemo(() => createdIds(alerts), [alerts])
 
   const create = useCallback(
     async (s: Suggestion) => {

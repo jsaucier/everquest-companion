@@ -250,11 +250,30 @@ const SLOW_LADDERS = [
 /** The two songs JOS-233 ruled in — mob side only; see the header for why not the on-you side. */
 const BARD_BINDINGS = ['Largo.s Melodic Binding', 'Largo.s Assonant Binding']
 
+/**
+ * THE OPTIONAL RANK TAIL EVERY ROSTER REGEX CARRIES (JOS-276, owner law 2026-08-13: ranks are not
+ * used for ANYTHING in the alert system).
+ *
+ * The rank fold that makes a LITERAL `where.spell` matcher rank-blind (JOS-259) deliberately does
+ * not touch `/regex/` specs, because a user-authored pattern is intent rather than a spelling. But
+ * the two rosters below are not user-authored — the APP writes them, out of a DB roster, and the
+ * `$` anchor is ours. So the fold has to be spelled INTO the pattern here, and this is where.
+ *
+ * IT IS NOT A THEORETICAL GAP. `Your <X> spell has worn off of <mob>.` is rank-less in 3,382 of
+ * 3,383 whole-log occurrences (JOS-200's count) — and the 3,383rd is
+ * `[Wed Aug 05 17:18:06 2026] Your Rune IV spell has worn off of a gust of wind.`, which proves
+ * the SHAPE exists. A slow whose wear-off printed that way would have fallen straight through both
+ * defs, silently, exactly as the wizard's resisted alert did.
+ *
+ * Non-capturing so it cannot become a named group; the numerals mirror `spellLineKey`'s I–X.
+ */
+const RANK_TAIL = '(?: (?:I|II|III|IV|V|VI|VII|VIII|IX|X))?'
+
 /** The mob-side roster: `Your <X> spell has worn off of <mob>.` names the spell outright. */
-const SLOW_SPELLS_MOB = `/^(${[...SLOW_LADDERS, ...BARD_BINDINGS].join('|')})$/`
+const SLOW_SPELLS_MOB = `/^(${[...SLOW_LADDERS, ...BARD_BINDINGS].join('|')})${RANK_TAIL}$/`
 
 /** The on-you roster: shared sentences, so only families whose every candidate is a slow. */
-const SLOW_SPELLS_SELF = `/^(${SLOW_LADDERS.join('|')})$/`
+const SLOW_SPELLS_SELF = `/^(${SLOW_LADDERS.join('|')})${RANK_TAIL}$/`
 
 /**
  * THE CATALOG. Order is the order the surface renders them: the two the owner called out

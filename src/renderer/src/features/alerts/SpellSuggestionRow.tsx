@@ -30,6 +30,7 @@ import { preferredRank, type SpellLine } from '@shared/spellLines'
 import {
   RANK_TEMPLATES,
   SUGGEST_TEMPLATES,
+  suggestionCoverageId,
   suggestionsFor,
   type Suggestion,
   type TemplateKind
@@ -295,7 +296,10 @@ function SpellRow({
           <TemplateChip
             key={s.def.id}
             label={chipLabel(s)}
-            created={existingIds.has(s.def.id)}
+            // The RANK-FOLDED id (JOS-276): a rank chip is created when the line already has this
+            // alert at ANY rank, because since JOS-259 those defs fire on exactly the same lines.
+            // Identity for every other template, so nothing else moved.
+            created={existingIds.has(suggestionCoverageId(s.def.id))}
             onClick={() => onCreate(s)}
           />
         ))}

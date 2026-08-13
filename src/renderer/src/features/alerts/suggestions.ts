@@ -256,6 +256,32 @@ function suggestionId(spellKey: string, template: TemplateKind): string {
   return `suggest:${spellKey}:${template}`
 }
 
+/**
+ * THE ID A RANK CHIP IS "ALREADY CREATED" UNDER — the dedupe key, rank-folded (JOS-276).
+ *
+ * THE PROBLEM THE RANK FOLD CREATED. The two rank templates mint one id per RANK
+ * (`suggest:<line>:castRank:mesmerization-iii`), which was exactly right while a def pinned to a
+ * rank only ever fired on that rank: two ranks were two alerts about two different sets of lines.
+ * Since JOS-259 they are not — one def fires on the whole line — so the wizard was offering an
+ * unchecked "Mesmerization IV casts" chip beside a def that already answers every Mesmerization
+ * cast line, and a click on it bought the user a SECOND alert firing on the SAME lines. Two
+ * sounds, no way to see why. `detectRankUpgrades`'s add-alongside clone (`…::rank:<frag>`) folds
+ * here for the same reason and by the same cut.
+ *
+ * THE FOLD IS ON THE ID, NOT ON THE DEF. Ids already stored keep their spelling — nothing is
+ * migrated, nothing is rewritten, and a def the user edited is still their own — so this changes
+ * exactly one thing: whether the chip renders checked. `entry.key` is itself the rank-STRIPPED
+ * line key (buildSpellCatalog), so cutting the id after the template name yields one key per
+ * (line, template), which is precisely the set of lines one of these defs now fires on.
+ *
+ * Every other suggestion id is returned unchanged — they were rank-less by construction already.
+ */
+const RANK_SUGGESTION_ID_RE = /^(suggest:.*:(?:castRank|resistRank))(?::|$)/
+
+export function suggestionCoverageId(id: string): string {
+  return RANK_SUGGESTION_ID_RE.exec(id)?.[1] ?? id
+}
+
 /** Function words a spell name hides its distinctive noun behind. */
 const NAME_FUNCTION_WORDS: ReadonlySet<string> = new Set(['of', 'the', 'de', 'in', 'a', 'an'])
 

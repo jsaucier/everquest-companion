@@ -606,6 +606,37 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   upgrade-offer compensation: `detectRankUpgrades` still only sees suffixed
   defs, and that is now a convenience rather than the thing between a user
   and a sound. Pinned in tests/rankBlindSpellAlerts.test.mts.
+  **AND THE LAW HAS NO CARVE-OUTS LEFT: RANKS DECIDE NOTHING IN THE ALERT SYSTEM**
+  (JOS-276, owner ruling 2026-08-13 — verbatim: *we should not use spell ranks for
+  anything in the alert system - it should be compatible with any rank*). JOS-259
+  deliberately left `damage.skill` for an owner call, and this is it. The damage lane
+  folds now, for the two dtypes whose `skill` IS a spell name: `foldsRank`
+  (main/modules/alerts.ts) admits `spell` on any kind plus `skill` on a `damage`
+  trigger, and `foldReaches` gates the second per EVENT on `dtype 'spell'|'dot'`. The
+  defect was the same one, one lane over: the owner's log prints
+  `… damage by Harm Touch.` 488 times and `… damage by Harm Touch III|IV|VI|IX.` 23
+  times, plus `Chords of Dissonance` at five spellings off four bards in the dot lane,
+  so a damage alert on a base name heard most of its own lines and not the rest. The
+  other two dtypes stay out: `melee` cannot carry a rank because its `skill` is not log
+  text at all but one of ten constants from `meleeSkill(verb)` (the JOS-259 worker's
+  inertness measurement, re-verified and now pinned), and `ds` is inert TODAY (the whole
+  log spells flames/thorns/frost) but is free text off the line, so the gate is written
+  on the dtype rather than trusted to the measurement. THE SWEEP FOUND TWO MORE, both
+  outside the matcher: the curated slow rosters in shared/alertGroups.ts are
+  APP-authored `/^(…)$/` regexes, so JOS-259's "a regex is user intent" exemption never
+  covered them — the `$` anchor is ours, and they now carry an optional rank tail (a
+  wear-off CAN print one: `Your Rune IV spell has worn off of a gust of wind.`, the
+  3,383rd of 3,383); and the wizard's rank chips deduped by RANK, so a levelled user was
+  offered a second alert firing on lines the first already covered
+  (`suggestionCoverageId`, an id fold with nothing migrated). Left rank-SENSITIVE on
+  purpose, each with the reason written where it lives: `spellLastCast` (the map that
+  answers "which rank am I using"), `detectRankUpgrades` (the offer strip, now a
+  convenience) and `matcherAccepts` in shared/earlyWarning.ts (key-blind, and its one
+  caller asks about `refresh`). Rank-blind by construction and re-checked: the cooldown
+  key (alert id + mob, no spell), and the whole early-warning identity path
+  (`timerNameKey`/`timerNameBase` fold on both sides, and the probes hand a def the
+  RANK-LESS spelling the break line prints). Pinned in the D-series of
+  tests/rankBlindSpellAlerts.test.mts.
   **CAPTURE GROUPS SPEAK THE LOG, AND THE THREAT MODEL IS IN THE CODE** (JOS-103,
   `src/shared/alertCaptures.ts` — read its header before touching any of
   this). Alert defs are SHAREABLE, so a capture is a channel with a third

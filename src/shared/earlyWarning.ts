@@ -192,11 +192,13 @@ export type BreakTriggerKind = 'cc' | 'uncharm' | 'buffFade' | 'buffWearOff' | '
  * identical, and `tests/earlyWarning.test.mts` pins the equality against the real compiled matcher
  * — the same arrangement `shared/spellLines.ts`'s RANK_TAIL_RE has with the parser's.
  *
- * IT IS KEY-BLIND, AND ITS ONE CALLER ASKS ABOUT `refresh` (below). The JOS-259 rank fold that
- * makes a literal matcher rank-blind belongs to the `spell` key alone, so it lives in
- * `compileFieldMatch`/`accepts` where the key is known and NOT here: `refresh` is 'true', not a
- * spell name, and folding it would be a fold over nothing. A caller that ever wants to ask this
- * about a `spell` spec must ask for the fold too, or it will be asking the older question.
+ * IT IS KEY-BLIND, AND ITS ONE CALLER ASKS ABOUT `refresh` (below). The rank fold that makes a
+ * literal matcher rank-blind belongs to the keys that NAME A SPELL — `spell`, and `damage.skill`
+ * since JOS-276 — so it lives in `compileFieldMatch`/`accepts` where the trigger's kind and key
+ * are both known, and NOT here: `refresh` is 'true', not a spell name, and folding it would be a
+ * fold over nothing. A caller that ever wants to ask this about a spell-naming spec must ask for
+ * the fold too, or it will be asking the older question. Re-checked in the JOS-276 sweep — this
+ * function still has exactly the one caller, and it still asks about `refresh`.
  */
 export function matcherAccepts(spec: string, value: string): boolean {
   if (spec.length >= 2 && spec.startsWith('/') && spec.endsWith('/')) {
@@ -374,6 +376,14 @@ export function breakProbeText(row: BuffTimerRow, spell: string): string {
  *
  * 'self' is the entity key for a row on the player — the model's own word for it, and the one
  * `buffWearOff`/`buffExpired` already spell in their `target` field.
+ *
+ * RANK-BLIND BY CONSTRUCTION (JOS-276 sweep), and it has to be: the row's name comes from the
+ * ranked CAST line while the break line prints the bare name, so an identity that kept the numeral
+ * would match nothing it was built to match. `timerNameKey` is the fold — the same rank tail
+ * `spellLineKey` strips — applied on both sides here and in `earlyWarnRowFor`'s `wanted` set. The
+ * probes (`rowBreakNames` → `timerNameBase`) hand a def's own matcher the RANK-LESS spelling, and
+ * a def pinned to a rank still accepts it through `accepts`'s fold. Nothing in this file compares
+ * two spell names without folding first.
  */
 export function breakIdentityKeys(entityKey: string, names: readonly string[]): string[] {
   const out: string[] = []
