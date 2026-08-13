@@ -45,6 +45,7 @@ import {
   ALERT_SOUND_MIGRATION_VERSION,
   DEFAULT_ALERT_PACK_ID,
   DEFAULT_ALERT_SOUNDS,
+  alertSoundMigrationPending,
   migrateAlertSounds
 } from './data/defaultPacks'
 import { ALERT_TRIGGER_MIGRATION_VERSION, migrateAlertTriggers } from './data/alertDefMigrations'
@@ -605,7 +606,9 @@ const SEED_ALERTS: AlertDef[] = [
  * at it keeps that choice. Returns the (possibly rewritten) list.
  */
 function migrateStoredAlertSounds(alerts: AlertDef[]): AlertDef[] {
-  if ((store.get('alertSoundMigration') ?? 0) >= ALERT_SOUND_MIGRATION_VERSION) return alerts
+  // The gate is a pure predicate in data/defaultPacks.ts (JOS-272) so the "already stamped ⇒ never
+  // again" rule can be driven from a node test. Its header says what a bump costs.
+  if (!alertSoundMigrationPending(store.get('alertSoundMigration'))) return alerts
   const { alerts: next, changed } = migrateAlertSounds(alerts)
   if (changed > 0) store.set('alerts', next)
   store.set('alertSoundMigration', ALERT_SOUND_MIGRATION_VERSION)

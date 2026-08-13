@@ -335,7 +335,10 @@ if (!gotSingleInstanceLock) {
     }
     // Auto-update (Task #27): checks GitHub Releases on the selected channel;
     // no-ops in dev. getMainWindow is lazy so status pushes hit the live window.
-    initUpdater(getMainWindow)
+    // …and the settle callback (JOS-272): the updater runs the store's outstanding writes BEFORE it
+    // hands the process to the installer, instead of leaving them to race the installer's taskkill.
+    // See `flushStoreForQuit` below for why that one second is where a torn store comes from.
+    initUpdater(getMainWindow, flushStoreForQuit)
 
     // Restore any floating overlay (Task #52; per-kind in Task #54) that was open when the app
     // last quit. Deferred so the main window's did-finish-load sends its initial state first.
@@ -384,18 +387,38 @@ if (!gotSingleInstanceLock) {
  */
 app.on('before-quit', () => {
   teardownStep('main:stopPresence', stopPresenceEffects)
-  // …and the tail mark, for the same belt-and-braces reason and one more (JOS-57 scope addition):
-  // `app.quit()` does NOT emit `window-all-closed`, so an auto-updater's `quitAndInstall` would
-  // otherwise leave no mark and blind the very next launch — the one right after an update, which
-  // is exactly the launch a startup measurement most wants to see. Writing it on both events is
-  // one store key written twice, and the later write is the better answer.
+  flushStoreForQuit()
+})
+
+/**
+ * EVERY STORE WRITE THIS PROCESS STILL OWES, DONE NOW.
+ *
+ * Both steps were already `before-quit` steps and still are. They are a NAMED function because the
+ * auto-updater has to be able to run them BEFORE it hands this process to the installer (JOS-272 —
+ * `initUpdater`'s second argument is this).
+ *
+ * WHY THAT ORDER IS THE FIX. `quitAndInstall(true, true)` spawns the NSIS installer and only then
+ * quits; the installer sleeps ~1 s and then taskkills whatever is still running
+ * (allowOnlyOneInstallerInstance.nsh — updater.ts's research block quotes it). Every write these two
+ * make would otherwise happen INSIDE that one-second window, racing a kill. Running them first
+ * empties the window rather than trying to survive it.
+ *
+ * Idempotent, so `before-quit` firing straight afterwards costs one repeated write of identical
+ * bytes — which is exactly what the tail-mark note below already relied on.
+ */
+function flushStoreForQuit(): void {
+  // The tail mark, belt-and-braces and one more reason (JOS-57 scope addition): `app.quit()` does
+  // NOT emit `window-all-closed`, so an auto-updater's `quitAndInstall` would otherwise leave no
+  // mark and blind the very next launch — the one right after an update, which is exactly the launch
+  // a startup measurement most wants to see. Writing it on both events is one store key written
+  // twice, and the later write is the better answer.
   teardownStep('main:logTailMark', markTailPosition)
   // …and the window's own size and position (JOS-248), for EXACTLY that reason: the debounced save
   // is flushed by the window's `close`, and `app.quit()` — an auto-updater's `quitAndInstall`, an
   // OS logoff — is not a close. Without this the launch right after an update is the one that comes
   // up at a stale size, which is the launch a user is most likely to be watching.
   teardownStep('main:saveWindowState', flushMainWindowState)
-})
+}
 
 /**
  * One teardown step, isolated. `window-all-closed` runs a LIST of these before `app.quit()`,

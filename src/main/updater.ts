@@ -150,7 +150,7 @@ import {
   nextCheckDelayMs,
   shouldRetryCheck
 } from '../shared/update'
-import { logInfo } from './errorLog'
+import { logError, logInfo } from './errorLog'
 import { getUpdateChannel, getUpdateLastCheckedAt, setUpdateLastCheckedAt } from './store'
 import { classifyFailure, recordEvent } from './telemetry'
 
@@ -373,8 +373,17 @@ function registerUpdaterEvents(currentVersion: string, { push, checkDone }: Stat
  * push so we always target the current window (it can be recreated). The update
  * machinery is skipped (and logged) when the app isn't packaged; the IPC surface
  * stays registered so the renderer never has to special-case dev.
+ *
+ * `flushStore` IS THE LAST STORE WRITE, HANDED IN (JOS-272). The composition root owns the list of
+ * things this process still owes the settings file (the tail mark, the window's geometry) and runs
+ * it from `before-quit`; this module needs to run the SAME list one step earlier — see the install
+ * handler. It arrives as a callback rather than an import because index.ts imports this file, and a
+ * `updater → index` edge would close that circle around the composition root.
  */
-export function initUpdater(getMainWindow: () => BrowserWindow | null): void {
+export function initUpdater(
+  getMainWindow: () => BrowserWindow | null,
+  flushStore: () => void
+): void {
   // PERSISTED "last checked" (Task #60): read before anything else so the very
   // first status the renderer pulls already carries a truthful age. An
   // in-memory-only stamp read "never" for the first minute of every launch —
@@ -464,6 +473,26 @@ export function initUpdater(getMainWindow: () => BrowserWindow | null): void {
   // not spend it on a stale click.
   ipcMain.handle(IPC.installUpdate, () => {
     if (lastStatus.state !== 'ready') return
+    // THE STORE SETTLES FIRST, AND THE ORDER IS THE POINT (JOS-272).
+    //
+    // `quitAndInstall(true, true)` does not merely quit: it SPAWNS the installer and then quits, and
+    // the installer — because we pass `--updated` — sleeps about a second and taskkills whatever is
+    // still running (research §1, allowOnlyOneInstallerInstance.nsh:50-79). Everything this process
+    // still owes the settings file therefore used to be written INSIDE that window, from
+    // `before-quit`, racing a kill. A store write torn by that kill is unparseable on the next boot,
+    // which is a quarantine-and-defaults launch: every alert, preference and character gone, in the
+    // one launch a user most associates with the app having changed something.
+    //
+    // Doing the writes here makes the race unnecessary rather than survivable. `before-quit` still
+    // runs them a moment later — they are idempotent, so that is one repeat of identical bytes.
+    //
+    // A FAILING SETTLE MAY NOT VETO THE UPDATE. Each step inside `flushStore` already has its own
+    // try/catch (index.ts `teardownStep`); this one is for anything the list itself could throw.
+    try {
+      flushStore()
+    } catch (err) {
+      logError('main:updateSettle', err)
+    }
     try {
       autoUpdater.quitAndInstall(true, true)
       // RECORDED AFTER THE CALL AND BEFORE THE PROCESS DIES, which works because the ring is

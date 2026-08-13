@@ -63,6 +63,17 @@ let linesPending = 0
  * event instead of minting a new kind (shared/telemetry.ts, THE ADDITIVE-FIELD RULE).
  */
 let startupPending: StartupReplayStats | null = null
+/**
+ * How many sessions have BEGUN in this process. It exists for one decision and says so (JOS-272):
+ * whether `beginSession` is the first — in which case the errors filed before the pipeline existed
+ * (a store schema quarantine, anything else raised at module scope) come with it — or a later one,
+ * which starts empty like every session always has.
+ *
+ * It is counted HERE because a session is this module's idea, and `endSession` deliberately does NOT
+ * decrement it: a session that was ended and resumed is not the boot window, and the errors filed
+ * while the switch was off must not ride into the session the user turned back on.
+ */
+let sessionsBegun = 0
 
 /** Wall-clock ms since `startTelemetry()` — 0 before it has run. */
 export function sessionUptimeMs(now = Date.now()): number {
@@ -82,7 +93,13 @@ export function beginSession(now = Date.now()): void {
   // what STAMPS the session clock those reports bucket their age against: `errorReports.ts`
   // cannot ask the collector for `sessionUptimeMs` without closing the errorLog cycle, so the
   // collector tells it instead, at the one moment both agree a session has begun.
-  resetErrorReports(now)
+  //
+  // …AND ON THE FIRST SESSION IT KEEPS WHAT WAS ALREADY THERE (JOS-272). Everything `logError` filed
+  // before this line ran was recorded and then cleared by it, which is why a store-schema quarantine
+  // — raised from `store.ts`'s module scope, long before a window exists — has never once reached
+  // the fleet. Only the FIRST session inherits: see `sessionsBegun` above.
+  resetErrorReports(now, sessionsBegun === 0)
+  sessionsBegun += 1
 }
 
 /**

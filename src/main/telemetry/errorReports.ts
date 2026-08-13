@@ -67,6 +67,32 @@
 // `logError` is the only place that owns those. That module's header carries the whole rule; what
 // matters here is that this file no longer decides on its own how many times a fingerprint may be
 // reported, and that the fingerprint is computed HERE because here is where it already was.
+//
+// ---------------------------------------------------------------------------------------
+// …AND THE ERRORS THAT HAPPEN BEFORE THERE IS A SESSION TO PUT THEM IN (JOS-272)
+// ---------------------------------------------------------------------------------------
+// `logError` works from the first line of the first module. `beginSession()` does not run until the
+// composition root has created a window and called `startTelemetry` — and its very first act is to
+// `resetErrorReports(now)`, which used to CLEAR everything filed up to that point. So every error
+// raised at module scope was recorded, held, and then thrown away a second before the pipeline that
+// could have carried it came up. Nothing in the fleet has ever seen one.
+//
+// That is not a hypothetical class. `src/main/store.ts` runs the schema migration from module scope,
+// before `new Store()` — deliberately, so no reader can observe a pre-migration shape — and the one
+// event a torn store write produces (`store schema: … is not valid JSON`) is filed from exactly
+// there. The single most important thing this app can say about a settings reset was the one thing
+// it structurally could not say.
+//
+// THE FIX IS A PARAMETER, NOT A LATCH. `resetErrorReports` takes `keepPending`, and the collector —
+// which is the module that knows what a session IS — passes true for the FIRST session of the
+// process and false for every one after it. Two consequences, both wanted:
+//   * everything filed before the first session survives INTO it, with its real exemplar, frames and
+//     capture site (they were computed at boot; nothing is re-derived later and nothing is faked);
+//   * a session that was ENDED and resumed still starts empty, because `endSession` clears and the
+//     collector's counter has already moved past one. An install that turned analytics off does not
+//     get the errors it filed while it was off, which is what `endSession`'s own docstring promises.
+// A pre-session report buckets its `sessionAgeMs` at 0 — `sessionStartedAt` was 0 when it was
+// built — and 0 is the honest answer for something that happened before the session existed.
 
 import { errorBudget, resetErrorBudget, type BudgetVerdict } from '../errorBudget'
 import {
@@ -345,9 +371,16 @@ export function takeErrorReports(): EvErrorReport[] {
  * process and the cap is per session. It also means the two can never drift: there is no path that
  * starts a fresh session's exemplars while the previous session's spend is still holding a
  * fingerprint silent.
+ *
+ * `keepPending` IS THE ONE EXCEPTION, AND IT BELONGS TO THE CALLER (JOS-272 — the header's last
+ * section argues it). The FIRST session of a process inherits whatever was filed before it existed,
+ * because module-scope errors have nowhere else to go and were previously dropped here. Every other
+ * boundary — a later session, a switch turned off, a switch turned back on — clears, exactly as it
+ * always did. This function does not decide which it is: `collector.ts` counts the sessions, and a
+ * flag passed in is a flag a test can drive without owning a hidden latch.
  */
-export function resetErrorReports(now = Date.now()): void {
-  pending.clear()
+export function resetErrorReports(now = Date.now(), keepPending = false): void {
+  if (!keepPending) pending.clear()
   sessionStartedAt = now
   currentView = 'unknown'
   resetErrorBudget()
