@@ -78,6 +78,8 @@ import {
   settleStable
 } from './appHarness.mjs'
 import { launchApp, mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
+// The remount guard (JOS-279) — see `skyMount` below and that module's header for the argument.
+import { mountGuard, type MountGuard } from './viewRemount.mjs'
 
 const NAV_SKY = '[data-testid="nav-posky"]'
 const NAV_OVERVIEW = '[data-testid="nav-overview"]'
@@ -164,6 +166,22 @@ function expandedNames(page: Page): Promise<string[]> {
     ROW
   )
 }
+
+/**
+ * THE PRECONDITION EVERY EXPANDED-ROW ASSERTION IN THIS FILE RESTS ON, and which for six ledgered
+ * runs was left to luck (AGENTS.md's flake ledger; fixed in JOS-279).
+ *
+ * This spec launches against the machine's OWN growing log rather than a staged fixture, so the
+ * `viewKey` rebuilds `App` pushes as the historical fold lands arrive while the spec is already
+ * driving the tab — and a rebuild remounts `PoskyView`, which closes an accordion the step opened
+ * one line ago. That is correct app behaviour and a false failure: the steps below ask whether
+ * FAVORITING collapses the list and whether CLOSING a panel unmounts it, never whether a character
+ * rebuild does. `viewRemount.mts` carries the whole argument and the vocabulary.
+ *
+ * The anchor is the Sky tab's own sub-tab strip: inside the keyed subtree, and mounted whichever
+ * sub-tab is showing.
+ */
+const skyMount = (page: Page): MountGuard => mountGuard(page, '[data-testid="posky-tab-quests"]')
 
 /** The chips a picker is showing, in order — what the user SEES their filter to be. */
 function chipsIn(page: Page, picker: string): Promise<string[]> {
@@ -280,21 +298,27 @@ async function stepDefault(page: Page): Promise<void> {
  * with nothing expanded.
  */
 async function stepCollapsedRowsDrawNoPanel(page: Page): Promise<void> {
-  // The list has to be settled before an absence means anything: a page of rows that is still
-  // arriving is trivially a page with no expanded panel in it.
-  await settle(() => countIn(page, ROW), (n) => n === PAGE, { timeoutMs: 15_000 })
-  const closed = await settleStable(() => countIn(page, DETAILS), { timeoutMs: 8_000 })
-  if (!check('a list of collapsed quests mounts NO expanded panel at all', closed === 0, String(closed))) {
-    return
-  }
-  await page.locator(EXPAND).first().click({ timeout: 15_000 })
-  const opened = await settle(() => countIn(page, DETAILS), (n) => n === 1, { timeoutMs: 8_000 })
-  if (!check('OPENING A QUEST BUILDS ITS PANEL', opened === 1, String(opened))) return
-
-  await page.locator(EXPAND).first().click({ timeout: 15_000 })
-  // The Collapse animates out before it unmounts, so this is a settle rather than a read.
-  const gone = await settle(() => countIn(page, DETAILS), (n) => n === 0, { timeoutMs: 8_000 })
-  check('…AND CLOSING IT TAKES THE PANEL BACK OUT OF THE DOM', gone === 0, String(gone))
+  const mount = skyMount(page)
+  await mount.run('the panel-unmount step', async () => {
+    // The list has to be settled before an absence means anything: a page of rows that is still
+    // arriving is trivially a page with no expanded panel in it.
+    await settle(() => countIn(page, ROW), (n) => n === PAGE, { timeoutMs: 15_000 })
+    const closed = await settleStable(() => countIn(page, DETAILS), { timeoutMs: 8_000 })
+    await page.locator(EXPAND).first().click({ timeout: 15_000 })
+    const opened = await settle(() => countIn(page, DETAILS), (n) => n === 1, { timeoutMs: 8_000 })
+    await page.locator(EXPAND).first().click({ timeout: 15_000 })
+    // The Collapse animates out before it unmounts, so this is a settle rather than a read.
+    const gone = await settle(() => countIn(page, DETAILS), (n) => n === 0, { timeoutMs: 8_000 })
+    // EVERY reading is taken before a single check runs; NOW ask whether the tab they were taken
+    // from is still the one the mark was planted on. A rebuild would have closed the row this step
+    // had just opened — "opening a quest builds its panel" would fail against correct behaviour —
+    // and it would also make the closing assertion pass for a reason nobody tested.
+    if (!(await mount.intact())) return false
+    check('a list of collapsed quests mounts NO expanded panel at all', closed === 0, String(closed))
+    check('OPENING A QUEST BUILDS ITS PANEL', opened === 1, String(opened))
+    check('…AND CLOSING IT TAKES THE PANEL BACK OUT OF THE DOM', gone === 0, String(gone))
+    return true
+  })
 }
 
 /**
@@ -330,20 +354,34 @@ async function stepShowAllSurvivesInteraction(page: Page): Promise<void> {
   }
   check(`…and the ask is stored under ${SHOW_ALL_KEY}`, (await storedValue(page, SHOW_ALL_KEY)) === '1')
 
-  await page.locator(EXPAND).last().click({ timeout: 15_000 })
-  const open = await settle(() => expandedNames(page), (n) => n.length === 1, { timeoutMs: 8_000 })
-  if (!check('the LAST quest in the list expands', open.length === 1, open.join())) return
+  // THE EXPANDED HALF RUNS ON A TAB THAT IS HOLDING STILL (JOS-279). This step is the first thing
+  // the spec does after the tab opens, which is exactly when the historical fold is still landing
+  // and `App` is still bumping `viewKey` — six ledgered sightings, every one of them this step's
+  // expansion assertion against a remount. See `viewRemount.mts`.
+  const mount = skyMount(page)
+  await mount.run('the show-all interaction step', async () => {
+    await page.locator(EXPAND).last().click({ timeout: 15_000 })
+    const open = await settle(() => expandedNames(page), (n) => n.length === 1, { timeoutMs: 8_000 })
+    if (!(await mount.intact())) return false
+    if (!check('the LAST quest in the list expands', open.length === 1, open.join())) return true
 
-  // The interaction itself. One click on a star used to hand the user back forty rows.
-  await page.click(STAR, { timeout: 15_000 })
-  const after = await settleStable(() => countIn(page, ROW), { timeoutMs: 8_000 })
-  check('FAVORITING A QUEST LEAVES THE WHOLE LIST LOADED', after === all, `${String(after)} of ${String(all)}`)
-  const still = await expandedNames(page)
-  check('…AND THE QUEST THAT WAS EXPANDED IS STILL EXPANDED', still.join() === open.join(), still.join())
+    // The interaction itself. One click on a star used to hand the user back forty rows.
+    await page.click(STAR, { timeout: 15_000 })
+    const after = await settleStable(() => countIn(page, ROW), { timeoutMs: 8_000 })
+    const still = await expandedNames(page)
+    if (!(await mount.intact())) {
+      // Put the star back before the retry, so a discarded attempt leaves no favorite behind.
+      if ((await countOf(page, UNSTAR)) > 0) await page.click(UNSTAR, { timeout: 15_000 })
+      return false
+    }
+    check('FAVORITING A QUEST LEAVES THE WHOLE LIST LOADED', after === all, `${String(after)} of ${String(all)}`)
+    check('…AND THE QUEST THAT WAS EXPANDED IS STILL EXPANDED', still.join() === open.join(), still.join())
 
-  await page.click(UNSTAR, { timeout: 15_000 })
-  const cleaned = await settleStable(() => countIn(page, ROW), { timeoutMs: 8_000 })
-  check('…and un-favoriting it does not collapse the list either', cleaned === all, String(cleaned))
+    await page.click(UNSTAR, { timeout: 15_000 })
+    const cleaned = await settleStable(() => countIn(page, ROW), { timeoutMs: 8_000 })
+    check('…and un-favoriting it does not collapse the list either', cleaned === all, String(cleaned))
+    return true
+  })
 }
 
 /**
@@ -646,10 +684,13 @@ async function main(): Promise<void> {
       await stepShowAllSurvivesInteraction(page)
       await stepShowFewerPutsTheCapBack(page)
       // JOS-206 straight after it: the cap is back, so the list is one page of CLOSED rows again
-      // (the quest the step above expanded was row 95 and the cap just unmounted it), and the app
-      // has been driven enough by now that the historical fold is not still remounting the tab
-      // underneath — which it can be in the first seconds of a launch against a real log, and
-      // which would close a row this step had just opened.
+      // (the quest the step above expanded was row 95 and the cap just unmounted it). The ORDER
+      // used to be the whole of this step's defence against the historical fold still remounting
+      // the tab underneath — which it can be in the first seconds of a launch against a real log,
+      // and which would close a row this step had just opened. Order alone was a bet, and it lost
+      // six times (AGENTS.md's ledger): both expanded-row steps now hold the precondition
+      // themselves, through `withStableMount`, and the order is kept only for what it was always
+      // also worth — starting from a paged list of closed rows.
       await stepCollapsedRowsDrawNoPanel(page)
       await stepSticksAcrossTabs(page)
       await stepUntickSticksToo(page)
