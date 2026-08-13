@@ -139,10 +139,10 @@ archive. Layout: `src/main` (Node), `src/preload`, `src/renderer`,
     (2026-08-11 phase-4 worker, 2026-08-12 JOS-230 worker, 2026-08-12 JOS-238
     worker, 2026-08-12 v0.23.0 release sweep at 115 vs 125 ms, 2026-08-13
     v0.25.0 release sweep — full-sweep only, green standalone every time; the
-    prior row said 3 while listing four events, count corrected) · diagnosis sharpened by the
-    JOS-229 worker: the sub-beat replay precondition holds on essentially every
-    run of this machine, so the failure is the always-on stutter probe recording
-    a tick inside the window — a tick-phase coin flip, not load ·
+    prior row said 3 while listing four events, count corrected) · the JOS-229
+    worker sharpened it to "the probe banks a tick inside the window — a
+    tick-phase coin flip, not load", which was right about the tick and wrong
+    about why ·
     **RESOLVED 0523dd90 (JOS-279)** — asked about the WRONG window: both probes
     run `appReady`→`replayDone`, wider than the fold it gated on (138 vs
     103 ms). Now `probeWindowMs`, plus a three-valued verdict so the naive
