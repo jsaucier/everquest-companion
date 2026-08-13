@@ -308,6 +308,84 @@ export function ownershipRowsFor(index: OwnershipIndex, name: string): readonly 
   return index.get(ownershipKey(name)) ?? []
 }
 
+// ---------------------------------------------------------------------------
+// THE TRANSPORT (JOS-285, phase 4) — the index as one IPC payload.
+// ---------------------------------------------------------------------------
+//
+// A `Map` is not what an IPC payload is, so the index crosses as its ENTRIES and is rebuilt on
+// the other side by `ownershipIndexFrom`. The two functions sit here, beside the fold, so the
+// shape has one definition rather than a main-side writer and a renderer-side reader that agree
+// by inspection.
+//
+// NO VERSION FIELD, unlike `GearIndexPayload` — and that is a difference in KIND, not an
+// oversight. The gear index's version guards a stat VECTOR whose keys and units are a contract;
+// this payload is `OwnershipRow` verbatim, derived at runtime from a file on the player's disk by
+// the same build that reads it. There is no bytes-from-another-version case to refuse.
+
+/** One key's rows, in the shape a structured clone actually carries. */
+export type OwnershipEntry = readonly [key: string, rows: readonly OwnershipRow[]]
+
+/**
+ * A keyring category the player's dump NAMES and this index does not count.
+ *
+ * It exists so the surface joining on this index can state the exclusion over the player's OWN
+ * file rather than as a sentence about EverQuest in general: "your dump has 1 row on an Activated
+ * key ring, which this app does not count". "Not counted" is not "not owned" — see the KEYRING
+ * section above — and the roster is `HELD_KEYRING_CATEGORIES`', never a second one written here.
+ */
+export interface UncountedKeyRing {
+  category: string
+  /** how many non-empty rows the dump filed under it */
+  rows: number
+}
+
+/** Everything a joining surface needs: the index, where it came from, and what it left out. */
+export interface OwnershipPayload {
+  /** the dump this was folded from; null when the character has never written one */
+  path: string | null
+  /** the dump's own mtime — WHEN THE PLAYER wrote it, never when we folded it */
+  loadedAt: string | null
+  entries: readonly OwnershipEntry[]
+  uncounted: readonly UncountedKeyRing[]
+}
+
+/** The answer for a character with no dump: not "you own nothing", but "there is nothing to read". */
+export const NO_OWNERSHIP: OwnershipPayload = {
+  path: null,
+  loadedAt: null,
+  entries: [],
+  uncounted: []
+}
+
+/** Every keyring category the dump names that `HELD_KEYRING_CATEGORIES` does not admit. */
+export function uncountedKeyRings(dump: InventoryDump): UncountedKeyRing[] {
+  const counts = new Map<string, number>()
+  for (const entry of dump.keyRing) {
+    if (HELD_KEYRING_SET.has(entry.category)) continue
+    if (entry.name === '' || entry.name === 'Empty') continue
+    counts.set(entry.category, (counts.get(entry.category) ?? 0) + 1)
+  }
+  return [...counts].map(([category, rows]) => ({ category, rows }))
+}
+
+/** The fold plus its provenance, as one payload. `null` in ⇒ `NO_OWNERSHIP` out. */
+export function ownershipPayload(
+  loaded: { path: string; loadedAt: string; dump: InventoryDump } | null
+): OwnershipPayload {
+  if (!loaded) return NO_OWNERSHIP
+  return {
+    path: loaded.path,
+    loadedAt: loaded.loadedAt,
+    entries: [...ownershipIndex(loaded.dump)],
+    uncounted: uncountedKeyRings(loaded.dump)
+  }
+}
+
+/** The transport's inverse: entries back into the index every reader above expects. */
+export function ownershipIndexFrom(entries: readonly OwnershipEntry[]): OwnershipIndex {
+  return new Map(entries)
+}
+
 /** How many copies these rows state, all places and all plus levels together. */
 export function ownedCount(rows: readonly OwnershipRow[]): number {
   let total = 0

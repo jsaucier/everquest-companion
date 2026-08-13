@@ -20,6 +20,20 @@
  * base vector is copied from `tests/gearIndex.test.mts`, which asserts it against the corpus — so
  * a rescrape that changes Thelvorn turns THAT file red first, naming the corpus rather than the UI.
  *
+ * AND SINCE JOS-285 (phase 4) IT ASSERTS THE OWNERSHIP JOIN, which is the half no unit test can
+ * see. `tests/gearOwnership.test.mts` owns every WORD the join produces, without a DOM; what needs
+ * a real app is the CHAIN — a `/outputfile inventory` dump staged into the install root → main's
+ * outputs registry finding and stating it → the fold → one IPC payload → a map keyed by `row.key`
+ * → a cell on a windowed row — plus the second witness, the LIVE log, arriving by a completely
+ * different route (an appended loot line → the tailer → the loot module → a delta) and landing on
+ * the same key. Two processes, two transports, one join key: that is what this spec is for.
+ *
+ * The dump is the committed `Primitive_freeport-Inventory.txt`, and the two rows it is read for
+ * were chosen because they are the join's two interesting cases in the OWNER'S OWN file:
+ * Thelvorn is equipped at +5 (with its own exaltation socketed beside it, which must NOT read as
+ * a second copy), and `Guise of the Deceiver` sits on the `Activated` key ring the fold does not
+ * count — the exclusion the header of the Owned column has to admit to.
+ *
  * The one thing it deliberately does NOT assert is a row count: the corpus grows (AGENTS.md,
  * "frozen numbers rot"), so every count here is a floor or an identity.
  *
@@ -39,7 +53,7 @@ import {
   settleCount
 } from './appHarness.mjs'
 import { mainWindow } from './appWindow.mjs'
-import { launchOnFixture } from './logFixture.mjs'
+import { launchOnFixture, type FixtureLog } from './logFixture.mjs'
 // Phase 0's scaler and phase 2's ratio, so the EXPECTED numbers are computed rather than typed.
 import { gearRatio, scaleGearRow } from '../../src/shared/planner/gearScale'
 import type { GearRow } from '../../src/shared/planner/gear'
@@ -60,9 +74,33 @@ const SORT_RATIO = '[data-testid="gear-sort-RATIO"]'
 const TIER_SLIDER = '[data-testid="gear-tier-slider"] input[type="range"]'
 const FRACTION_SLIDER = '[data-testid="gear-fraction-slider"] input[type="range"]'
 const UPGRADE_LABEL = '[data-testid="gear-upgrade-label"]'
+// ---- phase 4 (JOS-285) ----
+const OWNED_TOGGLE = '[data-testid="gear-owned-toggle"]'
+const OWNED_HEADER = '[data-testid="gear-owned-header"]'
+const OWNED_CELL = '[data-testid="gear-cell-owned"]'
+const DUMP_LINE = '[data-testid="gear-dump-line"]'
 
 /** The row key every index in this app joins on — and, from phase 4, the ownership join key. */
 const THELVORN_KEY = 'thelvorn, blade of light'
+
+/**
+ * The dump the app is handed, and the two rows read out of it.
+ *
+ * `Thelvorn, Blade of Light +5` is on Primary and `Thelvorn, Blade of Light (Exaltation)` is in
+ * one of its sockets — so `Equipped +5` is also the assertion that the exaltation row did NOT
+ * become a second copy (gearOwnership.ts, rule 2).
+ */
+const DUMP_FIXTURE = 'Primitive_freeport-Inventory.txt'
+const THELVORN_OWNED = 'Equipped +5'
+/** The one key ring the fold does not count, and the word its exclusion has to be stated in. */
+const UNCOUNTED_RING = 'Activated'
+
+/**
+ * THE SECOND WITNESS: an item the corpus has, the dump does NOT name, and the LOG will. Secondary
+ * slot and Classic era, so neither the era toggle nor a slot filter can hide it from this spec.
+ */
+const LOOTED_ITEM = 'Shiny Brass Shield'
+const LOOTED_KEY = 'shiny brass shield'
 
 /**
  * Thelvorn's BASE vector, exactly as `tests/gearIndex.test.mts` asserts the corpus states it. Only
@@ -210,6 +248,93 @@ async function stepEra(page: Page): Promise<void> {
     grew,
     `${String(before)} in era → ${String(after)} in total`
   )
+}
+
+/**
+ * 3b. THE OWNERSHIP JOIN — the phase this ticket exists for, read off two different transports.
+ *
+ * The dump half is already on disk when the app launches, so its assertion is simply what the cell
+ * says. The LOG half is written here, while the app is up, and travels chokidar → Tailer → parser
+ * → loot module → delta → the join's memo: an item the dump does not name reads `Looted`, which is
+ * the answer JOS-285 asked for and the one a wiki tab can never give.
+ */
+async function stepOwnedCells(page: Page, log: FixtureLog): Promise<void> {
+  // The `/outputfile` freshness line, RE-USED rather than restated: this tab renders JOS-253/268's
+  // own component, so the dump's two instants have exactly one author on this screen.
+  check('the Gear tab carries the /outputfile freshness line rather than its own age', (await countOf(page, DUMP_LINE)) === 1)
+
+  await typeAndSettle(page, SEARCH, 'thelvorn')
+  const owned = await cellText(page, THELVORN_KEY, 'owned')
+  check(
+    'a row the staged dump names says WHERE it is and at what +N',
+    owned === THELVORN_OWNED,
+    `reads "${owned}", wanted "${THELVORN_OWNED}"`
+  )
+  // The same row has a `(Exaltation)` child in the dump. One copy, not two — rule 2 of the join.
+  check('…and the item`s own (Exaltation) row did not become a second copy', !owned.includes(' · '), owned)
+
+  const hint = await page.getAttribute(OWNED_HEADER, 'title', { timeout: 15_000 })
+  check(
+    'the Owned header admits which key rings the fold does not count - "not counted" is not "not owned"',
+    (hint ?? '').includes(UNCOUNTED_RING),
+    (hint ?? '').slice(-160)
+  )
+
+  // THE SECOND WITNESS, written into the very log the app is tailing.
+  log.append(`--You have looted a ${LOOTED_ITEM} from a decaying skeleton corpse.--`)
+  await typeAndSettle(page, SEARCH, LOOTED_ITEM)
+  const looted = await until(async () => (await cellText(page, LOOTED_KEY, 'owned')) === 'Looted', 30_000)
+  check(
+    'an item the LOG saw looted and the dump does not name reads Looted, live',
+    looted,
+    `reads "${await cellText(page, LOOTED_KEY, 'owned')}"`
+  )
+}
+
+/**
+ * 3c. THE OWNER'S CHECKBOX. Asserted as an IDENTITY and an INVARIANT, never as a number: the
+ * corpus grows, so what is pinned is that the filter removes rows, keeps only rows the join can
+ * say something about, and is fully reversible.
+ */
+async function stepOwnedFilter(page: Page): Promise<void> {
+  const all = await typeAndSettle(page, SEARCH, '')
+  await page.click(OWNED_TOGGLE, { timeout: 15_000 })
+  const narrowed = await until(async () => (await counts(page)).shown < all, 15_000)
+  const shown = (await counts(page)).shown
+  check(
+    'Owned or looted narrows the corpus to what this character has actually handled',
+    narrowed && shown > 0,
+    `${String(all)} in era → ${String(shown)} owned or looted`
+  )
+
+  // THE INVARIANT: every surviving row has something to say. A blank Owned cell under this filter
+  // would mean a row got through that the join knows nothing about.
+  const blanks = await page.evaluate(
+    (sel) => [...document.querySelectorAll(sel)].filter((c) => (c as HTMLElement).innerText.trim() === '').length,
+    OWNED_CELL
+  )
+  check('every row the filter keeps states where it is or that it was looted', blanks === 0, `${String(blanks)} blank`)
+
+  // The looted-but-not-in-the-dump arm — the one the checkbox exists for, and the one an ownership
+  // index alone cannot answer.
+  await typeAndSettle(page, SEARCH, LOOTED_ITEM)
+  check(
+    'a looted item the dump never named survives the filter on the log`s word alone',
+    (await countOf(page, `${ROW}[data-item-key="${LOOTED_KEY}"]`)) === 1
+  )
+
+  // …and something neither witness has ever seen is gone, and comes back when the filter is off.
+  await typeAndSettle(page, SEARCH, 'fungus covered scale tunic')
+  const hiddenWhenOn = await countOf(page, ROW)
+  await page.click(OWNED_TOGGLE, { timeout: 15_000 })
+  const backWhenOff = await until(async () => (await countOf(page, ROW)) > 0, 15_000)
+  check(
+    'an item neither the dump nor the log has seen is hidden by the filter and returns without it',
+    hiddenWhenOn === 0 && backWhenOff,
+    `${String(hiddenWhenOn)} rows with the filter on`
+  )
+  await typeAndSettle(page, SEARCH, '')
+  check('…and turning it off restores the whole corpus', (await counts(page)).shown === all)
 }
 
 /** 4. SEARCH NARROWS THE TABLE, and it finds an item by name. */
@@ -376,9 +501,14 @@ async function stepUpgrade(page: Page): Promise<void> {
   )
 }
 
-async function steps(page: Page): Promise<void> {
+async function steps(page: Page, log: FixtureLog): Promise<void> {
   if (!(await stepRows(page))) return
   await stepEra(page)
+  // Phase 4 runs here, on a table narrowed by NOTHING but the era toggle the step above turned
+  // off: the ownership steps put the search box back to empty and the checkbox back off, so the
+  // phase-3 steps below start from the state they were written against.
+  await stepOwnedCells(page, log)
+  await stepOwnedFilter(page)
   if (await stepSearch(page)) {
     await stepFilters(page)
     await stepSort(page)
@@ -396,7 +526,10 @@ async function main(): Promise<void> {
   buildIfStale()
 
   console.log('launch: hidden Electron (EQ_E2E=1) against tests/fixtures/e2e-planner.log…')
-  const { app, close } = await launchOnFixture('e2e-planner.log')
+  // WITH A DUMP IN THE INSTALL ROOT (the `/outputfile` carve-out, logFixture.mts): every launch
+  // this suite has ever made was a machine where the command had never been run, which is exactly
+  // the half of phase 4 that would then never be measured.
+  const { app, close, log } = await launchOnFixture('e2e-planner.log', { inventory: DUMP_FIXTURE })
 
   let page: Page | null = null
   try {
@@ -407,7 +540,7 @@ async function main(): Promise<void> {
     })
     page.on('pageerror', (e) => consoleErrors.push(String(e)))
 
-    if (await stepMount(page)) await steps(page)
+    if (await stepMount(page)) await steps(page, log)
 
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
 

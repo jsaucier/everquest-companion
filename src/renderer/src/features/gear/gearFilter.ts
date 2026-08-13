@@ -79,6 +79,15 @@ export interface GearFilters {
   thresholds: StatThreshold[]
   /** hide rows the era join places outside the current expansion */
   eraOnly: boolean
+  /**
+   * THE OWNER'S CHECKBOX (JOS-285): keep only what this character owns or has looted.
+   *
+   * "Or looted" is not a softening — it is the second witness. The dump is one instant and the log
+   * is a history, and an item you looted last week and put in a bag the dump does not cover is
+   * still an item you have handled. `gearOwnership.ts` decides what qualifies (a wearable copy, an
+   * exaltation made from one, or a loot line); this flag only says whether to apply it.
+   */
+  ownedOnly: boolean
 }
 
 export const DEFAULT_GEAR_FILTERS: GearFilters = {
@@ -95,13 +104,28 @@ export const DEFAULT_GEAR_FILTERS: GearFilters = {
   // ON by default — the same argument the exaltation browser's era toggle carries: more than half
   // the corpus drops in expansions this server has not opened, and a plan built on them is a wish
   // list. `plannerData.eraHides` is the one verdict; this flag only says whether to apply it.
-  eraOnly: true
+  eraOnly: true,
+  // OFF by default, and that is the search-first ruling again: the tab opens on the CORPUS, which
+  // is the question a planner asks first ("what is out there"). "What do I already have" is the
+  // second question and it is one click away.
+  ownedOnly: false
 }
 
 /** What the pure model cannot answer for itself — see the header. */
 export interface GearFilterDeps {
   /** `plannerData.eraHides(row, true)`, injected. Default: nothing is ever hidden by era. */
   eraHidden?: (row: GearRow) => boolean
+  /**
+   * Does this character own or have they looted this row (`gearOwnership.ts`)? Injected for the
+   * same reason `eraHidden` is: the answer comes from a live dump and the loot module, neither of
+   * which a pure filter may reach.
+   *
+   * DEFAULT: NOTHING QUALIFIES — so a caller that turns `ownedOnly` on without supplying an
+   * answer gets an EMPTY table rather than a filter that silently did nothing. An empty table is
+   * visible and the view names the toggle responsible for it (the JOS-67 law); a no-op filter is
+   * a control that lies about being on.
+   */
+  ownedOrLooted?: (row: GearRow) => boolean
 }
 
 // ---- threshold parsing --------------------------------------------------------------------
@@ -190,10 +214,16 @@ function matchesNumbers(row: GearRow, filters: GearFilters): boolean {
   return ratio !== undefined && ratio >= filters.minRatio
 }
 
-/** The whole filter for one row — the three predicates above, ANDed, and the injected era verdict. */
+/**
+ * The whole filter for one row — the three predicates above, ANDed, and the two injected verdicts.
+ *
+ * The two injected ones are LAST on purpose: both reach data outside this module (the mob-catalog
+ * inversion, a parsed dump), and a row rejected by a cheap local predicate never pays for them.
+ */
 export function matchesGear(row: GearRow, filters: GearFilters, deps: GearFilterDeps = {}): boolean {
   if (!matchesIdentity(row, filters)) return false
   if (!matchesNumbers(row, filters)) return false
+  if (filters.ownedOnly && !(deps.ownedOrLooted?.(row) ?? false)) return false
   return !(filters.eraOnly && (deps.eraHidden?.(row) ?? false))
 }
 

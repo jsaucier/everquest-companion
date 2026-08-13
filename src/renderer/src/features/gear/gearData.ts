@@ -23,6 +23,8 @@ import type { ClassAbbr } from '@shared/classCombo'
 import { resolvedClasses } from '@shared/classCombo'
 import { ITEM_UPGRADE_BASE, type ItemUpgradeState } from '@shared/itemUpgrade'
 import { GEAR_INDEX_VERSION, type GearBuildStats, type GearRow } from '@shared/planner/gear'
+import { NO_OWNERSHIP, type OwnershipPayload } from '@shared/planner/ownership'
+import { useLootHistory } from '../loot/useLootHistory'
 import { useComboSnap } from '../profiles/ClassComboData'
 // ONE era verdict for the whole app: the exaltation browser's, reached through the same three
 // witnesses (mob catalog ∪ the page's own drop list ∪ the era banner). A `GearRow` carries `key`,
@@ -31,6 +33,7 @@ import { useComboSnap } from '../profiles/ClassComboData'
 import { eraChip, eraHides, type EraChipInfo } from '../planner/plannerData'
 import { sourceIndex } from '../planner/sourceIndex'
 import { sameClasses } from '../planner/plannerClasses'
+import { gearOwnershipMap, ownershipFor, type GearOwnershipMap } from './gearOwnership'
 
 // ---- the fetch ----------------------------------------------------------------------
 
@@ -107,6 +110,92 @@ export function useGearIndex(): GearIndexState {
 /** The era verdict as the pure filter model wants it — a stable identity, so the memo can key on it. */
 export function useEraHidden(): { eraHidden: (row: GearRow) => boolean } {
   return useMemo(() => ({ eraHidden: (row: GearRow) => eraHides(row, true) }), [])
+}
+
+// ---- the ownership join (JOS-285, phase 4) --------------------------------------------
+
+/**
+ * WHAT THIS CHARACTER OWNS, joined to the corpus by `row.key`.
+ *
+ * TWO WITNESSES, TWO CADENCES, ONE MAP. The dump crosses IPC and is re-asked ONLY on
+ * `inventory:autoReloaded` (the plannerInventory precedent — main is the one thing that knows
+ * which dump belongs to the active character, so the answer is re-asked rather than patched from
+ * the push). The loot history is already in this window as a module snapshot and moves with every
+ * kill. Both feed ONE memo, so the join is rebuilt when either witness moves and NEVER on a
+ * keystroke, a sort, or a drag of the plus-state slider — ownership does not depend on any of
+ * those, and a 6,766-row table would re-join on all three.
+ *
+ * MAIN MEMOIZES ITS HALF ON THE FILE'S IDENTITY (ipc/planner.ts), so re-asking is a stat and not
+ * a re-fold. The two caches answer different questions: main's says "the dump has not moved",
+ * this one says "neither witness has moved".
+ */
+export interface GearOwnershipState {
+  /** the join, or `null` when this character has never written a dump AND has looted nothing */
+  map: GearOwnershipMap | null
+  /** the dump's provenance — the path/mtime the payload arrived with, for the freshness line */
+  payload: OwnershipPayload
+  /** when THIS WINDOW last read the payload (epoch ms), or null before the first read settles */
+  readAt: number | null
+}
+
+export function useGearOwnership(): GearOwnershipState {
+  const [payload, setPayload] = useState<OwnershipPayload>(NO_OWNERSHIP)
+  const [readAt, setReadAt] = useState<number | null>(null)
+  const history = useLootHistory()
+
+  const read = useCallback((alive: () => boolean) => {
+    void window.eq
+      .gearOwnership()
+      .then((next) => {
+        if (!alive()) return
+        setPayload(next)
+        setReadAt(Date.now())
+      })
+      .catch(() => {
+        /* main never rejects; no dump is an empty payload, not a failure to render */
+        if (alive()) setReadAt(Date.now())
+      })
+  }, [])
+
+  useEffect(() => {
+    let alive = true
+    const live = (): boolean => alive
+    read(live)
+    const off = window.eq.onInventoryReload(() => read(live))
+    return () => {
+      alive = false
+      off()
+    }
+  }, [read])
+
+  // The loot names, deduped before the join so a thousand `Bone Chips` lines cost one key.
+  const lootedNames = useMemo(() => [...new Set(history.map((e) => e.item))], [history])
+
+  const map = useMemo(() => {
+    if (payload.entries.length === 0 && lootedNames.length === 0) return null
+    return gearOwnershipMap(payload.entries, lootedNames)
+  }, [payload.entries, lootedNames])
+
+  return { map, payload, readAt }
+}
+
+/**
+ * The owned filter as the pure model wants it — the same injected-predicate shape `useEraHidden`
+ * returns, and stable while the join is, so `filterGearRows`' memo can key on it.
+ */
+export function useOwnedOrLooted(map: GearOwnershipMap | null): { ownedOrLooted: (row: GearRow) => boolean } {
+  return useMemo(
+    () => ({
+      ownedOrLooted: (row: GearRow): boolean => {
+        if (map === null) return false
+        const o = ownershipFor(map, row)
+        // An exaltation counts: it is proof a copy passed through this character's hands, which is
+        // exactly what the checkbox asks (gearOwnership.ts, rule 2).
+        return o.owned || o.looted || o.exaltations > 0
+      }
+    }),
+    [map]
+  )
 }
 
 /** The one chip the era join draws on a gear row, or null when it is in-era and has nothing to say. */

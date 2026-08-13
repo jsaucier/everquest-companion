@@ -350,6 +350,19 @@ export const IPC = {
   // them (shared/planner/gearScale.ts), never another round trip.
   gearIndex: 'gear:index',
 
+  // ---- gear planner (JOS-285, phase 4) ----
+  // renderer -> main: THE OWNERSHIP INDEX for the active character — every thing their newest
+  // `/outputfile inventory` dump names, filed under the same key the gear index and the loot
+  // history use (shared/planner/ownership.ts), so the Gear tab joins by `row.key` with no
+  // translation. Returns OwnershipPayload; `path: null` means the command has never been run,
+  // which is "there is nothing to read", never "you own nothing".
+  //
+  // MEMOIZED ON THE DUMP'S OWN IDENTITY (path + mtime), not on a signal somebody has to remember
+  // to send: every ask re-stats the file (one readdir + one stat, the registry's own rule) and
+  // re-folds only when it MOVED. So the renderer re-asking on `inventory:autoReloaded` gets the
+  // new dump, and a keystroke that re-renders the table gets the cached fold.
+  gearOwnership: 'gear:ownership',
+
   // ---- character sheet (JOS-45) ----
   // renderer -> main: the armory grid + the gear sum, built from the active character's newest
   // `/outputfile inventory` dump and joined to the committed item DB in main (where the 8.6 MB

@@ -10,10 +10,12 @@
 // every time scrolling swapped the rows underneath).
 //
 // A ROW'S KEY IS `row.key` — `itemKey(name)`, the corpus join key every other index in this app
-// uses (loot, ownership, donors). That is deliberate and load-bearing beyond React: phase 4
-// (JOS-285) joins OWNERSHIP onto these rows by exactly that key, so its columns append to
-// `visibleColumns`' output and its cells read a map keyed here. Nothing in this file knows what
-// you own, and nothing in it needs to change for it to.
+// uses (loot, ownership, donors). That is deliberate and load-bearing beyond React, and phase 4
+// (JOS-285) is what it was for: the OWNED column appends after `visibleColumns`' numerics and its
+// cell is one `Map.get(row.key)` — no name matching, no normalising, nothing per row but a lookup.
+// The words in that cell are all decided in `gearOwnership.ts`, which is pure and node-tested; the
+// only judgement made HERE is that no witness at all means no column, because a blank ownership
+// cell and "you do not own this" are two different statements and the app cannot tell them apart.
 //
 // NO MUI TOOLTIP ANYWHERE (JOS-143). These are dense rows under a toolbar full of selects and a
 // slider; an interactive popper opened from the first row lands on those controls and eats the
@@ -26,12 +28,14 @@ import type { WindowedRows } from '../../lib/useWindowedRows'
 import { EraChip, DonorName, MismatchChip } from '../planner/PlannerChips'
 import {
   CLASS_COLUMN_WIDTH,
+  OWNED_COLUMN_WIDTH,
   SLOT_COLUMN_WIDTH,
   numericWidth,
   statText,
   type GearColumn
 } from './gearColumns'
 import { classMismatch, sortValue, type GearSort, type GearSortKey } from './gearFilter'
+import { ownedCellText, ownedCellTitle, ownershipFor, type GearOwnershipMap } from './gearOwnership'
 import type { ClassAbbr } from '@shared/classCombo'
 
 /** Dense row height (px), MUI `size="small"` — the number the windowing hook is handed. */
@@ -65,6 +69,14 @@ export interface GearTableProps {
   sort: GearSort
   /** the class filter the mismatch chip is measured against — never enforced, only pointed at */
   classes: readonly ClassAbbr[]
+  /**
+   * The ownership join (JOS-285), keyed by `row.key` — `null` when this character has never
+   * written a dump, which removes the column entirely rather than drawing a blank one
+   * (gearColumns.ts states why).
+   */
+  ownership: GearOwnershipMap | null
+  /** the Owned header's own explanation, including the uncounted-keyring note when there is one */
+  ownedHint: string
   onSort: (key: GearSortKey) => void
   /** deep-link an item into the Loot tab's drill-down, where the ItemWindow draws its tier block */
   onOpenLoot?: (item: string) => void
@@ -90,14 +102,19 @@ const GearLine = memo(function GearLine({
   row,
   columns,
   classes,
+  ownership,
   onOpenLoot
 }: {
   row: GearRow
   columns: readonly GearColumn[]
   classes: readonly ClassAbbr[]
+  ownership: GearOwnershipMap | null
   onOpenLoot?: (item: string) => void
 }): JSX.Element {
   const mismatch = classMismatch(row.classes, classes)
+  // ONE MAP LOOKUP PER RENDERED ROW, and only for the screenful the window mounted. `row.key` is
+  // already the ownership key — phase 3's seam — so there is nothing to normalise here.
+  const owned = ownership === null ? null : ownershipFor(ownership, row)
   return (
     <TableRow hover data-testid="gear-row" data-item-key={row.key} sx={FIXED_ROW}>
       <TableCell>
@@ -117,6 +134,11 @@ const GearLine = memo(function GearLine({
           {statText(sortValue(row, c.key), c.key)}
         </TableCell>
       ))}
+      {owned !== null && (
+        <TableCell data-testid="gear-cell-owned" title={ownedCellTitle(owned)}>
+          {ownedCellText(owned)}
+        </TableCell>
+      )}
     </TableRow>
   )
 })
@@ -156,10 +178,12 @@ export default function GearTable({
   win,
   sort,
   classes,
+  ownership,
+  ownedHint,
   onSort,
   onOpenLoot
 }: GearTableProps): JSX.Element {
-  const span = columns.length + 3
+  const span = columns.length + (ownership === null ? 3 : 4)
   const width = numericWidth(columns.length)
   return (
     <Table size="small" stickyHeader sx={FIXED_TABLE}>
@@ -172,12 +196,27 @@ export default function GearTable({
           {columns.map((c) => (
             <SortHeader key={c.key} column={c} sort={sort} width={width} align="right" onSort={onSort} />
           ))}
+          {/* The one column that is not a number and not sortable: it reports a live file, and the
+              header carries the two things a reader has to know about it — that a `+N` is its own
+              copy, and which key rings the fold left out. */}
+          {ownership !== null && (
+            <TableCell sx={{ width: OWNED_COLUMN_WIDTH }} title={ownedHint} data-testid="gear-owned-header">
+              Owned
+            </TableCell>
+          )}
         </TableRow>
       </TableHead>
       <TableBody>
         <PadRow height={win.topPad} colSpan={span} />
         {rows.slice(win.start, win.end).map((row) => (
-          <GearLine key={row.key} row={row} columns={columns} classes={classes} onOpenLoot={onOpenLoot} />
+          <GearLine
+            key={row.key}
+            row={row}
+            columns={columns}
+            classes={classes}
+            ownership={ownership}
+            onOpenLoot={onOpenLoot}
+          />
         ))}
         <PadRow height={win.bottomPad} colSpan={span} />
       </TableBody>

@@ -27,27 +27,39 @@
 // screenful whether the filter matches 12 rows or 6,766, and the table lives inside its own
 // fixed-height scroller so a growing list never grows the page (the standing UI law).
 //
-// WHAT IS DELIBERATELY NOT HERE. Ownership — "do I own it", "where is it", "at what plus" — is
-// PHASE 4 (JOS-285). The seam is already in place and is the row key: `row.key` is `itemKey(name)`,
-// the join key the ownership index (JOS-282) is built on, and it is on every row as
-// `data-item-key`. Sets are phase 5. Neither is stubbed here, because a stub is a promise this
-// file would then have to keep.
+// AND SINCE JOS-285 (phase 4) IT SAYS WHAT YOU ALREADY HAVE. The ownership join hangs off exactly
+// the seam phase 3 left — `row.key` is `itemKey(name)` is `ownershipKey` — so the OWNED column is
+// one map lookup per rendered row and the "Owned or looted" filter is one injected predicate,
+// beside the era one. Two things are deliberately NOT restated here: the dump's age (the
+// `/outputfile` freshness line owns both instants — JOS-253/268) and the keyring exclusion (the
+// fold owns the roster; this tab only reports what the fold left out of the player's own file).
+// Sets are phase 5, and are not stubbed, because a stub is a promise this file would have to keep.
 
 import { type JSX, useDeferredValue, useMemo, useRef, useState } from 'react'
 import { Box, Stack, Typography } from '@mui/material'
 import type { ItemUpgradeState } from '@shared/itemUpgrade'
 import type { GearRow } from '@shared/planner/gear'
+import OutputKindLine from '../../components/OutputKindLine'
 import { useWindowedRows } from '../../lib/useWindowedRows'
 import GearFilterBar from './GearFilterBar'
 import GearTable, { ROW_HEIGHT } from './GearTable'
 import { visibleColumns, type GearColumn } from './gearColumns'
-import { useEraHidden, useGearClasses, useGearIndex, useUpgradeState } from './gearData'
+import {
+  useEraHidden,
+  useGearClasses,
+  useGearIndex,
+  useGearOwnership,
+  useOwnedOrLooted,
+  useUpgradeState
+} from './gearData'
+import { uncountedNote, type GearOwnershipMap } from './gearOwnership'
 import {
   DEFAULT_GEAR_FILTERS,
   DEFAULT_GEAR_SORT,
   filterGearRows,
   scaleAll,
   sortGearRows,
+  type GearFilterDeps,
   type GearFilters,
   type GearSort,
   type GearSortKey
@@ -77,6 +89,8 @@ interface TableState {
   columns: GearColumn[]
   /** how many rows the era filter alone is holding back — only computed when the table is EMPTY */
   hiddenByEra: number
+  /** …and the same question for the Owned toggle, which can hide 6,693 of 6,766 rows in one click */
+  hiddenByOwned: number
 }
 
 /**
@@ -87,35 +101,56 @@ function useTableRows(
   rows: readonly GearRow[],
   state: ItemUpgradeState,
   filters: GearFilters,
-  sort: GearSort
+  opts: { sort: GearSort; deps: GearFilterDeps }
 ): TableState {
-  const deps = useEraHidden()
+  const { sort, deps } = opts
   const scaled = useMemo(() => scaleAll(rows, state), [rows, state])
   const filtered = useMemo(() => filterGearRows(scaled, filters, deps), [scaled, filters, deps])
   const sorted = useMemo(() => sortGearRows(filtered, sort), [filtered, sort])
   const columns = useMemo(() => visibleColumns(filters, sort), [filters, sort])
   // WHY THE LIST IS EMPTY, when it is (the JOS-67 law: a filter that can hide everything must be
-  // able to admit it). The era filter is the one that is on by DEFAULT rather than by choice, and
-  // it is the one that can quietly hold back a real answer. Costs one extra pass, at the moment
-  // there is nothing else to draw.
-  const hiddenByEra = useMemo(
-    () =>
-      sorted.length > 0 || !filters.eraOnly
-        ? 0
-        : filterGearRows(scaled, { ...filters, eraOnly: false }, deps).length,
-    [sorted.length, scaled, filters, deps]
-  )
-  return { rows: sorted, columns, hiddenByEra }
+  // able to admit it). Two filters can do it on their own: the era one, which is on by DEFAULT
+  // rather than by choice, and the Owned one, which is one click and removes 99% of the corpus by
+  // design. Each costs one extra pass, and only at the moment there is nothing else to draw.
+  const hidden = useMemo(() => {
+    if (sorted.length > 0) return { hiddenByEra: 0, hiddenByOwned: 0 }
+    const count = (over: Partial<GearFilters>): number => filterGearRows(scaled, { ...filters, ...over }, deps).length
+    return {
+      hiddenByEra: filters.eraOnly ? count({ eraOnly: false }) : 0,
+      hiddenByOwned: filters.ownedOnly ? count({ ownedOnly: false }) : 0
+    }
+  }, [sorted.length, scaled, filters, deps])
+  return { rows: sorted, columns, ...hidden }
 }
 
-/** The one sentence an empty table says, naming the filter responsible when there is one. */
-function emptyText(ready: boolean, refused: boolean, hiddenByEra: number): string {
+/**
+ * The one sentence an empty table says, naming the filter responsible when there is one.
+ *
+ * OWNED IS NAMED FIRST when both are holding rows back, because it is the one the user just
+ * clicked — and because it is the one whose effect is total rather than partial.
+ */
+function emptyText(ready: boolean, refused: boolean, table: TableState): string {
   if (refused) return 'This build cannot read the gear index it was served - it states a newer version.'
   if (!ready) return 'Reading the item database…'
-  if (hiddenByEra > 0) {
-    return `No gear matches these filters - but ${String(hiddenByEra)} items are hidden by the Current era toggle above.`
+  if (table.hiddenByOwned > 0) {
+    return `Nothing here is owned or looted - ${String(table.hiddenByOwned)} items match the other filters. Ownership is read from your newest /outputfile inventory dump plus this character's loot history.`
+  }
+  if (table.hiddenByEra > 0) {
+    return `No gear matches these filters - but ${String(table.hiddenByEra)} items are hidden by the Current era toggle above.`
   }
   return 'No gear matches these filters.'
+}
+
+/**
+ * The Owned header's own explanation: the two rules a reader of that column has to know, plus the
+ * uncounted-keyring note when the player's dump actually has rows in one (`uncountedNote` — the
+ * exclusion is stated over THEIR file, not as a fact about EverQuest).
+ */
+function ownedHint(map: GearOwnershipMap | null, uncounted: string | null): string {
+  if (map === null) return ''
+  const base =
+    'Where your newest /outputfile inventory dump names a copy, and at what +N. Each +N is its own copy, never a total. Looted means the log saw it and the dump names none.'
+  return uncounted === null ? base : `${base} ${uncounted}`
 }
 
 export interface GearViewProps {
@@ -131,6 +166,7 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
   const { rows, ready, refused, scrapedAt } = useGearIndex()
   const classes = useGearClasses()
   const upgrade = useUpgradeState()
+  const ownership = useGearOwnership()
   const [own, setOwn] = useState<GearFilters>(DEFAULT_GEAR_FILTERS)
   const [text, setText] = useState('')
   const [sort, setSort] = useState<GearSort>(DEFAULT_GEAR_SORT)
@@ -148,8 +184,17 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
     () => ({ ...own, text: deferredText, classes: classes.classes }),
     [own, deferredText, classes.classes]
   )
-  const table = useTableRows(rows, state, filters, sort)
+  // The two injected verdicts the pure filter cannot answer for itself, merged into one stable
+  // object so `filterGearRows`' memo re-runs when either MOVES and never merely because it rendered.
+  const era = useEraHidden()
+  const owned = useOwnedOrLooted(ownership.map)
+  const deps = useMemo(() => ({ ...era, ...owned }), [era, owned])
+  const table = useTableRows(rows, state, filters, { sort, deps })
   const win = useWindowedRows({ count: table.rows.length, rowHeight: ROW_HEIGHT, scrollRef })
+  const hint = useMemo(
+    () => ownedHint(ownership.map, uncountedNote(ownership.payload.uncounted)),
+    [ownership.map, ownership.payload.uncounted]
+  )
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }} data-testid="gear-view">
@@ -172,6 +217,12 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
             · wiki data from {scrapedAt.slice(0, 10)}
           </Typography>
         )}
+        {/* THE DUMP'S AGE, SAID ONCE, BY THE THING THAT OWNS IT (JOS-253/268). The Owned column
+            rests on a file the player rewrites, and "when did they write it" / "when did we read
+            it" is exactly what this line answers — so nothing in this feature restates an age, and
+            the looted-not-in-dump wording points here instead of guessing. `loadedAt` is THIS
+            window's own read instant, which is the fact the prop is documented to want. */}
+        <OutputKindLine kind="inventory" quiet loadedAt={ownership.readAt} testId="gear-dump-line" />
       </Stack>
 
       <Box
@@ -185,12 +236,14 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
           win={win}
           sort={sort}
           classes={classes.classes}
+          ownership={ownership.map}
+          ownedHint={hint}
           onSort={(key) => setSort((prev) => nextSort(prev, key))}
           onOpenLoot={onOpenLoot}
         />
         {table.rows.length === 0 && (
           <Typography variant="body2" color="text.secondary" data-testid="gear-empty" sx={{ p: 2 }}>
-            {emptyText(ready, refused, table.hiddenByEra)}
+            {emptyText(ready, refused, table)}
           </Typography>
         )}
       </Box>

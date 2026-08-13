@@ -46,6 +46,24 @@ const MIN_NUMERIC_WIDTH = 5
 export const SLOT_COLUMN_WIDTH = '13%'
 export const CLASS_COLUMN_WIDTH = '11%'
 
+/**
+ * THE OWNERSHIP COLUMN (JOS-285, phase 4) — appended AFTER `visibleColumns`' numerics, and only
+ * when the character has a dump to answer from.
+ *
+ * IT IS ONE COLUMN, not three. "Do you own it", "where" and "at what +N" are one sentence about
+ * one item (`ownedCellText`: `Equipped · Bank +2`), and splitting them into three columns would
+ * put three blank cells on every one of the ~6,700 rows a player does not own. It is also NOT a
+ * `GearColumn`: those keys are `GearSortKey`s and every one of them is a number the plus-state
+ * scaler moves. Ownership is text off a live file, so it lives beside the numeric list rather than
+ * inside it — which is exactly why it needs no entry in the shared numeric budget below.
+ *
+ * NOTHING TO ANSWER FROM ⇒ NO COLUMN. On a machine with no dump AND no loot history, an empty
+ * ownership cell would be indistinguishable from "you do not own this" — and the app cannot tell
+ * the difference either. So the column is absent and the `/outputfile` freshness line beside the
+ * count says why (GearView). Either witness alone is enough to draw it.
+ */
+export const OWNED_COLUMN_WIDTH = '15%'
+
 export interface GearColumn {
   key: GearSortKey
   /** the header's words — `SV MAGIC`, `HP REGEN`, `Ratio` */

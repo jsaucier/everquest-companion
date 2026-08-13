@@ -228,6 +228,18 @@ function IdentityRow({ filters, setFilters, text, setText, classes }: Omit<GearF
         hint={`Hide items from outside ${CURRENT_ERA_LABEL}`}
       />
 
+      {/* THE OWNER'S CHECKBOX (JOS-285). It belongs on the WHICH ITEMS row, beside era and class:
+          all three ask who a row is, none of them asks what it reads. The hint states both
+          witnesses and the one thing a player would otherwise have to guess — that "not counted"
+          key rings exist; which ones, over their own dump, is on the Owned column's header. */}
+      <ToggleChip
+        label="Owned or looted"
+        testId="gear-owned-toggle"
+        on={filters.ownedOnly}
+        onToggle={() => setFilters({ ...filters, ownedOnly: !filters.ownedOnly })}
+        hint="Keep only what your newest /outputfile inventory dump names or your loot history saw. Some key rings are not counted - see the Owned column."
+      />
+
       {classes.offer !== null && (
         <Chip
           size="small"

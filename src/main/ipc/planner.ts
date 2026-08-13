@@ -19,8 +19,9 @@ import { equippedHosts, type PlannerInventory } from '../../shared/planner/inven
 import { buildPlannerIndex, searchPlannerItems, type PlannerIndex } from '../planner/effectIndex'
 import { buildGearIndex } from '../planner/gearIndex'
 import type { GearIndexPayload } from '../../shared/planner/gear'
+import { NO_OWNERSHIP, ownershipPayload, type OwnershipPayload } from '../../shared/planner/ownership'
 import { sanitizeExaltPlans } from '../planner/validate'
-import { loadInventoryDump } from '../outputs'
+import { loadInventoryDump, outputStatus } from '../outputs'
 import { activeCharId, getActiveCharacter } from '../session'
 import { getExaltPlans, setExaltPlans } from '../store'
 import { itemKey, type ItemDbFile } from '../itemsDb'
@@ -47,6 +48,42 @@ function gearIndex(): GearIndexPayload {
   return gear
 }
 
+/**
+ * THE OWNERSHIP INDEX (JOS-285, phase 4), MEMOIZED ON THE DUMP'S OWN IDENTITY.
+ *
+ * The two caches above are memoized for the life of the process because their input is committed
+ * bytes. This one's input is a file the player rewrites mid-session on purpose, so "memoized" has
+ * to mean something narrower — and the narrow thing is exactly what `plannerInventory` above
+ * declines to cache at all, because IT is one parse per ask and this is a parse plus a fold that
+ * every keystroke in the Gear tab would otherwise re-run.
+ *
+ * SO THE CACHE KEY IS THE FILE, NOT A FLAG. `outputStatus` is one readdir + one stat (the
+ * registry caches nothing, deliberately — see its header), and path + mtime identify the dump
+ * completely: a rewrite moves the mtime, a character switch moves the path, and a deleted dump
+ * moves both to null. Nothing has to remember to invalidate this, which is the failure mode an
+ * explicit `invalidateOwnership()` called from the auto-load path would have been one refactor
+ * away from at all times. The renderer re-asks on `inventory:autoReloaded`; that push is what
+ * makes the answer TIMELY, and this key is what makes it CORRECT.
+ */
+let owned: { path: string; loadedAt: string; payload: OwnershipPayload } | null = null
+
+function gearOwnership(): OwnershipPayload {
+  const character = getActiveCharacter()
+  const status = outputStatus('inventory', { name: character?.name, server: character?.server })
+  if (status.path === null || status.updatedAt === null) {
+    owned = null
+    return NO_OWNERSHIP
+  }
+  if (owned !== null && owned.path === status.path && owned.loadedAt === status.updatedAt) {
+    return owned.payload
+  }
+  // `loadInventoryDump` re-resolves the same status, so the two can never disagree about WHICH
+  // file was folded — and a dump that vanished between the stat and the read is simply no dump.
+  const payload = ownershipPayload(loadInventoryDump(character?.name, character?.server))
+  owned = payload.path === null ? null : { path: payload.path, loadedAt: payload.loadedAt ?? '', payload }
+  return payload
+}
+
 export function registerPlannerIpc(): void {
   // Every effect the corpus states, one row per (item, effect). The renderer fetches this once
   // and keeps it — it is derived from committed bytes and cannot change while the app runs.
@@ -56,6 +93,10 @@ export function registerPlannerIpc(): void {
   // the renderer scales it to any plus-state itself (shared/planner/gearScale.ts), so no upgrade
   // slider ever comes back here.
   ipcMain.handle(IPC.gearIndex, (): GearIndexPayload => gearIndex())
+
+  // What the active character OWNS, keyed the way the gear index is (JOS-285). Re-asked by the
+  // renderer on every `inventory:autoReloaded`; re-folded here only when the file itself moved.
+  ipcMain.handle(IPC.gearOwnership, (): OwnershipPayload => gearOwnership())
 
   // Host picking: substring over item names, capped. A non-string query is not an error the UI
   // should have to render — it is simply no hits.
