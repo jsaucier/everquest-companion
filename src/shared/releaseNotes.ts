@@ -125,6 +125,31 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '0.26.0',
+    date: '2026-08-13',
+    entries: [
+      {
+        kind: 'fixed',
+        text: "A group-mate's summoned pet joins the meter. When its owner runs /pet who leader once, the pet gets its own row - Pet (Name) with the owner's name - and its damage stops falling on the floor. Charm pets are untouched: they still bind off the charm itself and still end when it breaks.",
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: "An ally's pet row no longer expires on a clock. It used to vanish after the spell's listed duration even mid-fight - wrong for every AA-extended charm and meaningless for a summon. The row now lives as long as the pet keeps appearing in the log, and only death, zoning, or the log's own break evidence ends it.",
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: "Feedback log slices now keep the one mechanical line where a pet names its leader, even when the leader is a group-mate. It is the sentence that proves whose pet is whose, the same name already appears in every combat line of the slice, and player chat stays scrubbed exactly as before."
+      },
+      {
+        kind: 'new',
+        text: 'Pick your default sound pack once, and it sticks. A star in the sound-pack browser makes any installed pack the default for new and suggested alerts, and deleting a shipped pack now means deleted - the app stops quietly re-downloading it at the next start. Nothing goes silently mute: sounds from a removed pack play through your default with a caption saying so.',
+        fromReport: true
+      }
+    ]
+  },
+  {
     version: '0.25.0',
     date: '2026-08-13',
     entries: [
