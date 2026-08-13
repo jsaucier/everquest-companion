@@ -409,6 +409,43 @@ install's span covers that day, `user` otherwise. Days the owner shared with a r
 folded into `user`. That is the honest limit, and it is the reason the split is a KEY from the
 swap onward rather than a filter applied at read time.
 
+## PENDING: the inventory attachment (JOS-296) — three steps, in this order
+
+A bug report can now carry a **second** attachment beside the log slice: the player's
+`/outputfile inventory` dump, gzipped, on its own presign, under its own `inventory/` prefix.
+The client half is on `main`; **nothing below has been applied yet.**
+
+Adding a column is the **schema-first** order (the section below explains why removing one is
+the reverse), and the client is a third step behind both:
+
+1. **Schema.** `npx tsx scripts/triage-feedback.mts migrate --profile <profile>` — applies
+   `ALTER TABLE report ADD COLUMN inventory_json text` and `… inventory_key text`. Idempotent;
+   a cluster that already has them reports `exists` (42701).
+   *Why first:* the new handler's `INSERT` names both columns unconditionally, and naming a
+   column that does not exist is `42703` on **every** submit, instantly, with the endpoint open.
+
+2. **Infra.** `node infra/build.mjs` (THE DEPLOY LAW — the plan hashes the zips, so a plan run
+   without a build deploys nothing), then `terraform plan` / `terraform apply`. Three things
+   change beside the bundle, and each is additive:
+   - `iam.tf` — the ingest role may now presign `inventory/*` as well as `logs/*`, and the
+     triage role may Get/Delete/List it. Presigning is bounded by what the signer itself may
+     `PutObject`, so this list *is* the set of paths a client can be granted.
+   - `s3.tf` — a **second** lifecycle rule, `expire-inventory-dumps`, on the same window. The
+     existing rule filters on `logs/` and would never have touched the new prefix, so without
+     this the dumps would live forever.
+   - `lambda.tf` — untouched; only `source_code_hash` moves.
+
+3. **Client.** Only then does a release carrying the new field go out. A client that declares an
+   `inventory` attachment to a server without the columns gets a 500 on every report; one that
+   declares it to a server without the presign permission uploads nothing and says it did.
+   The reverse order is safe in the other direction: the new server accepts an old client
+   unchanged, because `inventory` is an **additive optional** field and
+   `FEEDBACK_API_VERSION` deliberately stays `1` (a bump is a hard gate — see the constant's
+   note in `src/shared/feedback.ts`).
+
+Smoke it with the local stack first (`npm run dev:stack`), which mints the same two presigns and
+enforces the same policy: `tests/devFeedbackServer.test.mts` covers both legs.
+
 ## Removing a column: the ordering, and what DSQL will not do
 
 **THE BUNDLE GOES FIRST, THEN THE SCHEMA.** A running Lambda that still names a

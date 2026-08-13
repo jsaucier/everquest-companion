@@ -46,52 +46,45 @@
 import pg from 'pg'
 import type { Client as PgClient, QueryResultRow } from 'pg'
 import { DsqlSigner } from '@aws-sdk/dsql-signer'
-import {
-  DeleteObjectCommand,
-  GetObjectCommand,
-  HeadObjectCommand,
-  S3Client,
-} from '@aws-sdk/client-s3'
+import { S3Client } from '@aws-sdk/client-s3'
 import { fromTemporaryCredentials } from '@aws-sdk/credential-providers'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { gunzipSync } from 'node:zlib'
+import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import type { TriageReport } from '../../../scripts/triageCluster.mjs'
 import type { AppChannelTag, FeedbackType, ReportStatus, Severity } from '../../shared/feedback'
 import { sanitizeMultiline } from '../../shared/sanitizeText'
-import { rescrubSlice, type SliceRescrub } from './rows'
+import { INFRA_DIR, TRIAGE_DIR } from './paths'
+import type { InventoryDownload, SliceRescrub } from './rows'
 
-export type { SliceRescrub }
+export type { InventoryDownload, SliceRescrub }
+
+// The S3 half — which objects a report owns, how they are downloaded and cleaned, and how they
+// are deleted — lives in ./attachments.ts (see its header for why it is a half worth naming).
+// Re-exported by NAME, never `export *`: the star form becomes a runtime property copy under
+// tsx's CJS interop that cjs-module-lexer cannot see, and every named import through this file
+// stops resolving (the lesson the analytics re-export block below records at length).
+export {
+  attachmentKeysOf,
+  attachmentReports,
+  deleteSlice,
+  downloadInventory,
+  downloadSlice,
+  inventoryKeyOf,
+  logKeyOf,
+  logObjectExists,
+  type AttachmentReport
+} from './attachments'
 
 const { Client, types } = pg
 
-/**
- * The repo root — where `.triage/` and `infra/schema.sql` live.
- *
- * This used to be `resolve(import.meta.dirname, '..')`, one fixed hop up from `scripts/`. That
- * stopped being a single rule the moment the module gained a second caller: under `tsx` it
- * sits at `src/main/triage/`, and inside the dev app it has been bundled into `out/main/`.
- * Walking UP for the marker file is the one rule true for both, and it also survives a CLI
- * invocation from a subdirectory (which the old form handled and a bare `process.cwd()` would
- * not).
- */
-function findRepoRoot(): string {
-  let dir = process.cwd()
-  for (;;) {
-    if (existsSync(join(dir, 'infra', 'schema.sql'))) return dir
-    const up = dirname(dir)
-    if (up === dir) return process.cwd()
-    dir = up
-  }
-}
+// Where things live moved to ./paths.ts when `attachments.ts` became a second consumer of
+// TRIAGE_DIR (JOS-296) — a value import from here into a module this file re-exports would be a
+// runtime cycle. Re-exported so every consumer keeps importing from the one store module.
+export { SCHEMA_FILE, TRIAGE_DIR } from './paths'
 
-const ROOT = findRepoRoot()
-export const TRIAGE_DIR = join(ROOT, '.triage')
 const STACK_FILE = join(TRIAGE_DIR, 'stack.json')
-const SLICE_DIR = join(TRIAGE_DIR, 'slices')
-export const SCHEMA_FILE = join(ROOT, 'infra', 'schema.sql')
 
 /**
  * Same reasoning as the Lambda's db.ts: int8 comes back as a STRING by default,
@@ -147,7 +140,7 @@ export function loadStack(refresh = false): Stack {
     return JSON.parse(readFileSync(STACK_FILE, 'utf8')) as Stack
   }
   const raw = execFileSync('terraform', ['output', '-json'], {
-    cwd: join(ROOT, 'infra'),
+    cwd: INFRA_DIR,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'inherit'],
   })
@@ -400,6 +393,10 @@ export function toTriageReport(row: Row): TriageReport {
     spamScore: num(row.spam_score),
     receivedAt: num(row.received_at),
     hasLog: row.log_json !== null && row.log_json !== undefined,
+    // DECLARED, exactly like `hasLog` — whether the object actually landed costs a HeadObject
+    // and is a separate question the list deliberately does not ask (rows.ts's tri-state note).
+    // A row written before the column existed reads `undefined`, i.e. no dump, which is true.
+    hasInventory: row.inventory_json !== null && row.inventory_json !== undefined,
   }
 }
 
@@ -597,75 +594,4 @@ export async function stampRedacted(c: Clients, reportId: string): Promise<void>
 
 export async function deleteReportRow(c: Clients, reportId: string): Promise<void> {
   await c.execute('DELETE FROM report WHERE report_id = $1', [reportId])
-}
-
-// ---- the log objects ---------------------------------------------------------------
-
-export function logKeyOf(row: Row): string | null {
-  const key = str(row.log_key)
-  return key.length > 0 ? key : null
-}
-
-/** Did the upload actually land? One HeadObject, which is why no S3 event Lambda exists. */
-export async function logObjectExists(c: Clients, key: string): Promise<boolean> {
-  try {
-    await c.s3.send(new HeadObjectCommand({ Bucket: c.stack.bucket_name, Key: key }))
-    return true
-  } catch {
-    return false
-  }
-}
-
-/**
- * A CACHE HIT. A copy written BEFORE re-scrub-on-read existed has no sidecar, and reporting
- * zeros for it would be claiming a measurement nobody took — so it is flagged instead, and the
- * fix is to delete the cached file and read it again.
- */
-function cachedRescrub(path: string, metaFile: string): SliceRescrub {
-  const unknown = { path, dropped: 0, cleaned: 0, fromLegacyCache: true }
-  if (!existsSync(metaFile)) return unknown
-  try {
-    const m = JSON.parse(readFileSync(metaFile, 'utf8')) as Partial<SliceRescrub>
-    return { path, dropped: num(m.dropped), cleaned: num(m.cleaned), fromLegacyCache: false }
-  } catch {
-    return unknown
-  }
-}
-
-/**
- * Download + gunzip a slice to .triage/slices/<reportId>.log, RE-SCRUBBED ON READ.
- *
- * `rescrubSlice` (./rows.ts, pure and tested without AWS) is the third leg of "nothing a client
- * sends is trusted": the presign policy pins an upload's key, size and content-type and CANNOT
- * pin its content, so what landed in the bucket is only as scrubbed as the uploader chose to
- * be. The downloaded bytes go through the app's own shared scrubber and text sanitizer BEFORE
- * they touch the owner's disk, and what that removed is reported back to the caller.
- *
- * THE ORIGINAL S3 OBJECT IS NOT TOUCHED. It is the evidence; `forget` is the only thing that
- * deletes it. What is re-scrubbed is the owner's local copy.
- *
- * CACHED: a second call re-reads the sidecar rather than S3. The file is gitignored twice over
- * (`.triage/` and the blanket `*.log`) and its contents never reach a public issue.
- */
-export async function downloadSlice(
-  c: Clients,
-  reportId: string,
-  key: string,
-): Promise<SliceRescrub> {
-  mkdirSync(SLICE_DIR, { recursive: true })
-  const dest = join(SLICE_DIR, `${reportId}.log`)
-  // The sidecar remembers a download's counts, so a cache hit can still report them.
-  const metaFile = join(SLICE_DIR, `${reportId}.rescrub.json`)
-  if (existsSync(dest)) return cachedRescrub(dest, metaFile)
-  const res = await c.s3.send(new GetObjectCommand({ Bucket: c.stack.bucket_name, Key: key }))
-  if (!res.Body) throw new Error(`S3 returned no body for ${key}`)
-  const gz = Buffer.from(await res.Body.transformToByteArray())
-  const { text, dropped, cleaned } = rescrubSlice(gunzipSync(gz).toString('utf8'))
-  writeFileSync(dest, text)
-  writeFileSync(metaFile, `${JSON.stringify({ dropped, cleaned })}\n`)
-  return { path: dest, dropped, cleaned, fromLegacyCache: false }
-}
-
-export async function deleteSlice(c: Clients, key: string): Promise<void> {
-  await c.s3.send(new DeleteObjectCommand({ Bucket: c.stack.bucket_name, Key: key }))
 }

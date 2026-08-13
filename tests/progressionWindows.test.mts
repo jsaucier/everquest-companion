@@ -248,6 +248,61 @@ test('WL41 multi-zone: kills and time attribute to the zone they happened in', (
   assertIdentities(r, 'WL41')
 })
 
+/**
+ * WL41, AGAIN — THIS TIER vs EVERY TIER OF THE ZONE (JOS-291), over the real tiered names.
+ *
+ * This window is the shape the ticket is about, printed by the actual game: ONE camp the log spells
+ * two ways (`The Plane of Hate - Solo 1 (Awakened)` and `- Solo 2 (Adaptive)`) with a different zone
+ * in between, and the counts in each hand-read above. So the two memberships have measurably
+ * different answers here and neither of them is a synthetic construction.
+ *
+ * THE DEFAULT IS PINNED FIRST AND BYTE FOR BYTE: absent `zoneExactKey` is `null` is the read this
+ * app has given since JOS-130, over the same golden window whose every number is hand-counted a few
+ * lines up. Then the exact-tier reads, and then the property that makes the option honest rather
+ * than merely narrower — the tiers PARTITION the camp, so nothing is lost or double-counted by
+ * asking the question the other way.
+ */
+test('WL41 tiers: all-tiers is the unchanged read, and exact-tier admits one spelling', () => {
+  const snap = replay(readFixture('wl41-multizone.log'))
+  const range = { t0: snap.zoneStart[0], t1: snap.lastTs + 1000 }
+  const solo1 = 'the plane of hate - solo 1 (awakened)'
+  const solo2 = 'the plane of hate - solo 2 (adaptive)'
+
+  // 1. THE DEFAULT, BYTE-IDENTICAL — with the argument, without it, filtered and unfiltered.
+  assert.deepEqual(rangeStats({ snap, range, zoneExactKey: null }), rangeStats({ snap, range }))
+  assert.deepEqual(
+    rangeStats({ snap, range, zoneKey: 'plane of hate', zoneExactKey: null }),
+    rangeStats({ snap, range, zoneKey: 'plane of hate' })
+  )
+
+  // 2. ALL TIERS is the place: both spellings in, the Oasis hop out.
+  const every = rangeStats({ snap, range, zoneKey: 'plane of hate' })
+  assert.equal(every.kills, 15, '10 in the first tier + 5 in the second, and none of the 2 in Marr')
+  assert.equal(every.durationMs, 1_077_000 + 832_000, 'and the time is Σ of the two visits')
+  assert.equal(every.zones.length, 2, 'two spellings, two ROWS — the join fold is untouched by this')
+
+  // 3. EXACT TIER is the spelling. Each one alone, and the neighbour tier is as far out as Marr is.
+  const first = rangeStats({ snap, range, zoneKey: 'plane of hate', zoneExactKey: solo1 })
+  assert.equal(first.kills, 10)
+  assert.equal(first.durationMs, 1_077_000)
+  assert.deepEqual(first.zones.map((z) => z.zone), ['The Plane of Hate - Solo 1 (Awakened)'])
+  const second = rangeStats({ snap, range, zoneKey: 'plane of hate', zoneExactKey: solo2 })
+  assert.equal(second.kills, 5)
+  assert.equal(second.durationMs, 832_000)
+  assert.deepEqual(second.zones.map((z) => z.zone), ['The Plane of Hate - Solo 2 (Adaptive)'])
+
+  // 4. THE TIERS PARTITION THE CAMP. Nothing is lost between the two questions and nothing is
+  //    counted twice — the same claim tests/timeslice.test.mts makes for the zones of a range.
+  assert.equal(first.kills + second.kills, every.kills)
+  assert.equal(first.durationMs + second.durationMs, every.durationMs)
+  assert.equal(first.expSamples + second.expSamples, every.expSamples)
+  assert.equal(first.activeMs + second.activeMs, every.activeMs)
+
+  // 5. …and the tiers really do read differently, which is the whole reason the option exists: the
+  //    first tier of this camp paid a different rate from the second.
+  assert.notEqual(first.killsPerHourActive, second.killsPerHourActive)
+})
+
 // ─────────────────────────────────────────────────────────────────────────────
 // WL42 — IDLE. Hand-read from tests/fixtures/wl42-idle-gap.log (raw 1100597–1110597):
 //   00:54:58  entered Innothule Swamp — the range opens here, but the first ACTIVITY

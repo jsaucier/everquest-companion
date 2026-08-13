@@ -224,6 +224,26 @@ export interface RangeStatsArgs {
    * THE Σ IDENTITY SURVIVES: `activeMs + idleMs + offlineMs === durationMs` still holds, over the
    * visits rather than over the wall clock. `t0`/`t1` keep reporting the ENVELOPE the caller
    * asked for — the slice's own range — because that is what the surface's caption says.
+   *
+   * SINCE JOS-291 IT IS THE `allTiers` HALF OF A CHOICE, and it is still the default and still
+   * exactly this — see `zoneExactKey` below for the other half.
    */
   zoneKey?: string | null
+  /**
+   * …AND ADMIT ONLY THE TIER THE CURRENT ZONE NAMES (JOS-291) — a `zoneScope.zoneIdKey` fold of
+   * that zone's RAW name, or null/absent for every tier of the place.
+   *
+   * ABSENT IS THE DEFAULT AND THE DEFAULT IS `allTiers`: with this null the query is byte-identical
+   * to the one this function has answered since JOS-130, which the golden windows pin field by
+   * field. Present, it NARROWS `zoneKey` rather than replacing it — both keys are folds of ONE
+   * name, so `zoneIdKey(n) === zoneExactKey` implies `zoneKey(n) === zoneKey`, and the two compose
+   * as an AND (`shared/zoneScope.ts zoneAdmits` is the one predicate; nothing here re-spells it).
+   *
+   * WHY THE OPTION EXISTS: EQ Legends spells difficulty into the name, and the tiers of one camp do
+   * not pay alike — the Befallen audit measured the place fold admitting the plain `Befallen`
+   * interval alongside `Befallen 2 (Adaptive)`. The `zones` rows are UNCHANGED by this (they are
+   * grouped by `zoneIdKey` either way); what changes is how many of them there are, because an
+   * exact-tier query admits exactly one spelling and therefore hands back exactly one row.
+   */
+  zoneExactKey?: string | null
 }

@@ -16,6 +16,16 @@ left `new` after a triage session is an unfinished triage.
 1. **In-app feedback** — the DSQL backlog via the CLI (the PULL step below).
 2. **The error store** — `triage-feedback.mts errors list --days 14 --profile eqc`
    (and `errors show <fingerprint>` for exemplars, `--maps` to symbolicate).
+   LATEST-RELEASE TRACES GET THE HARDENING TREATMENT (owner directive
+   2026-08-13): every error family seen on the newest released version enters
+   the readout as its own numbered item carrying either (a) a concrete
+   hardening proposal — what code change makes this trace impossible or
+   survivable — or (b) an INVESTIGATION framing when the trace alone does not
+   pin the mechanism (say exactly what information is missing and how to get
+   it: `errors show` exemplar, `--maps` symbolication, a repro, the owner's
+   log). "Seen it before, still WATCHing" is a valid disposition only if the
+   ledger says so by fingerprint; a family with no recorded disposition is
+   new work, however familiar it feels.
 3. **GitHub issues** — `gh issue list --repo jmoyers/everquest-companion --state open`,
    then `gh issue view <n>` for bodies (screenshots live there).
 4. **The Reddit threads** — `?sort=new` to surface fresh comments:
@@ -147,6 +157,16 @@ slices never reach a public issue (the CLI enforces this; don't fight it).
   (`--note "JOS-N ... (2nd report)"`) and the ticket gets a comment adding the
   report ID and any NEW specifics (e.g. a trigger path the first report
   lacked) so the worker building it sees the extra evidence mid-build.
+- **Every disposition is RECORDED the moment it is decided** (owner directive
+  2026-08-13: things have come up more than once). A decision that lives only
+  in the conversation is not a disposition. The record lands where the item
+  lives: DSQL reports get stamped with the note, external items get their
+  ledger line on JOS-153, error families get a ledger line BY FINGERPRINT
+  (WATCH / hardened in JOS-N / investigating), and owner rulings that shape
+  future triage ("parked until a log arrives", "not supporting X for now")
+  get restated in the ledger comment that applied them. BEFORE classifying
+  any item as new, search the ledger and the stamped notes for it — a repeat
+  arrival is corroboration to attach, never a fresh line item.
 - **Triage flows into dispatch.** When the owner says "kick off the work",
   switch to the linear-board skill's loop: move tickets to In Progress with a
   wave comment, respect the 1-5 agent disjoint-file cap (queue overlapping

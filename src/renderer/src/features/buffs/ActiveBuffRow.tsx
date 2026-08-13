@@ -10,6 +10,10 @@ import type { ActiveBuff } from '@shared/types'
 import { rowRankLabel } from '@shared/buffTimers'
 import { fmtDuration, remainingFraction, isOverdue, classAccent, estimatorSourceTitle } from './format'
 import { Tooltip } from '../../lib/Tooltip'
+// The rich spell card (JOS-293). The row states what this INSTANCE is doing (elapsed, estimate,
+// provenance); the card behind the name states what the SPELL is - its effect list, its stated
+// duration, what it costs to put back up when this one falls off.
+import { SpellTooltip } from '../../lib/SpellCard'
 
 /** Everything the countdown bar needs, resolved once so nothing downstream re-derives it. */
 interface EstimateState {
@@ -161,9 +165,15 @@ export function ActiveRow({ buff, now }: { buff: ActiveBuff; now: number }): JSX
       }}
     >
       <Stack direction="row" alignItems="baseline" spacing={1}>
-        <Typography variant="body2" sx={{ fontWeight: 600 }}>
-          {buff.spell}
-        </Typography>
+        {/* The card is asked about the RANKED name when this instance came from a cast line that
+            spelled one (`rank` is non-null exactly then, and only for the same line) - that is the
+            only way the card can name what this rank replaces. Otherwise it is asked about the
+            identity, which is what the row prints. */}
+        <SpellTooltip name={rank != null && buff.castName != null ? buff.castName : buff.spell}>
+          <Typography variant="body2" data-testid="active-buff-name" sx={{ fontWeight: 600 }}>
+            {buff.spell}
+          </Typography>
+        </SpellTooltip>
         {/* THE RANK, BESIDE THE NAME AND NOT INSIDE IT (JOS-238). `spell` is the identity — the
             DB's own display name, which is what alerts, the learner and the wear-off sentence
             all speak — and the numeral the cast line spelled is a separate fact about this

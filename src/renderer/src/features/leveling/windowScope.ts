@@ -67,6 +67,13 @@ export interface ScopedStats {
    * different stretch of play than the numbers beside it.
    */
   zoneKey: string | null
+  /**
+   * The TIER half of that zone (JOS-291) — a `zoneScope.zoneIdKey` fold, or null for every tier of
+   * the place, which is the default and is byte-identical to every read before the option existed.
+   * It rides beside `zoneKey` for `zoneKey`'s own reason: a consumer filtering its own rows has to
+   * apply the WHOLE membership or it describes a different stretch of play than the numbers do.
+   */
+  zoneExactKey: string | null
   /** RAW display name of that zone, for wording. Null when the slice is not restricted. */
   zoneName: string | null
   stats: RangeStats
@@ -144,6 +151,9 @@ export interface ScopeArgs {
    * `rangeStats`; nothing here interprets it, which is what keeps "one derivation" true.
    */
   zoneKey?: string | null
+  /** The slice's tier restriction (JOS-291) — a `zoneScope.zoneIdKey` fold, or null. Handed
+   *  straight to `rangeStats` beside the key above; nothing here interprets either. */
+  zoneExactKey?: string | null
   /** The slice's own wording. Absent ⇒ `timescaleLabel(id)`, the JOS-71 spelling. */
   label?: string
   /** RAW display name of the restricted zone, for the wording only. */
@@ -158,6 +168,7 @@ export interface ScopeArgs {
 export function scopedStats(args: ScopeArgs): ScopedStats {
   const { snap, win, bounds, id, selection, combo } = args
   const zoneKey = args.zoneKey ?? null
+  const zoneExactKey = args.zoneExactKey ?? null
   const zoneName = args.zoneName ?? null
   const range = selection ?? args.range ?? statsRangeFor(win, bounds)
   // A DRAG NARROWS TIME AND NOTHING ELSE (JOS-130). The zone half of a slice is a different
@@ -169,7 +180,8 @@ export function scopedStats(args: ScopeArgs): ScopedStats {
     label: selection ? drag : (args.label ?? timescaleLabel(id)),
     range,
     zoneKey,
+    zoneExactKey,
     zoneName,
-    stats: rangeStats({ snap, range, combo, zoneKey })
+    stats: rangeStats({ snap, range, combo, zoneKey, zoneExactKey })
   }
 }

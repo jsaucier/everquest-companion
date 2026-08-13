@@ -25,8 +25,16 @@
 // who never touches the control sees each surface's own honest opening, which is what they saw
 // before this existed on both of them.
 //
+// THE ZONE MEMBERSHIP LIVES HERE TOO (JOS-291), and for the header's own reasons. It is the same
+// KIND of thing as the pick — a dimension of "which stretch of play am I looking at" — so it is
+// app-wide (a reader who narrows to this tier and then looks at what dropped there is asking ONE
+// question, and the answer follows them) and session-lifetime (a membership is a thing you choose
+// while you are looking, not a preference; the XP overlay's copy IS persisted, and `useRateBasis`'s
+// header states why a floating window and a tab differ). Its default is `ZONE_SCOPE_DEFAULT` —
+// every tier, which is what every surface answered before the option existed.
+//
 // The store is a five-line external store rather than a context: every consumer is a leaf, the
-// value is two scalars, and `useSyncExternalStore` over a VERSION counter is the whole thing (a
+// value is three scalars, and `useSyncExternalStore` over a VERSION counter is the whole thing (a
 // getSnapshot returning a fresh object would re-render forever).
 
 import { useCallback, useMemo, useSyncExternalStore } from 'react'
@@ -39,6 +47,7 @@ import {
   type SliceRange,
   type Timeslice
 } from '@shared/timeslice'
+import { ZONE_SCOPE_DEFAULT, type ZoneScope } from '@shared/zoneScope'
 import { useModule } from '../../lib/useModule'
 import { EMPTY_PROGRESSION, applyProgressionDelta } from '../leveling/progressionDelta'
 import { dataBounds, type DataBounds } from '../leveling/zoneBands'
@@ -47,6 +56,9 @@ import { dataBounds, type DataBounds } from '../leveling/zoneBands'
  *  `initialId`. See the header for why that is not a second control. */
 let pickedId: SliceId | null = null
 let pickedCustom: SliceRange | null = null
+/** NOT nullable, unlike the pick: every surface's opening membership is the same one, so there is
+ *  no "nobody has chosen yet" state for a surface to answer differently. */
+let pickedZoneScope: ZoneScope = ZONE_SCOPE_DEFAULT
 let version = 0
 const listeners = new Set<() => void>()
 
@@ -70,6 +82,7 @@ function emit(): void {
 export function resetTimeslice(): void {
   pickedId = null
   pickedCustom = null
+  pickedZoneScope = ZONE_SCOPE_DEFAULT
   emit()
 }
 
@@ -88,6 +101,24 @@ export interface TimesliceState {
   setId: (id: SliceId) => void
   custom: SliceRange | null
   setCustom: (range: SliceRange | null) => void
+}
+
+/**
+ * WHICH TIERS of the current zone the slice admits (JOS-291), and the setter for it.
+ *
+ * Its OWN hook, exactly like `useRateBasis` is its own beside this file: the control that renders
+ * it (`ZoneScopeBar`) is a leaf that needs the membership and nothing else, and making it a member
+ * of `TimesliceState` would mean every surface hauling two more props through its layout to reach
+ * one button. The value lives in THIS module's store because it is a dimension of the slice —
+ * `useTimeslice` applies it, so a reader can never see a membership the numbers did not use.
+ */
+export function useZoneScope(): { zoneScope: ZoneScope; setZoneScope: (next: ZoneScope) => void } {
+  useSyncExternalStore(subscribe, getVersion, getVersion)
+  const setZoneScope = useCallback((next: ZoneScope) => {
+    pickedZoneScope = next
+    emit()
+  }, [])
+  return { zoneScope: pickedZoneScope, setZoneScope }
 }
 
 const NO_EXTRA: readonly number[] = []
@@ -113,7 +144,11 @@ export function useTimeslice(extraTs: readonly number[] = NO_EXTRA, initialId: S
   // Leveling tab on a `Zone + Session` this record could not define.
   const id = resolveSliceId(pickedId ?? initialId, prog, bounds)
   const custom = pickedCustom
-  const slice = useMemo(() => resolveSlice({ snap: prog, bounds, id, custom }), [prog, bounds, id, custom])
+  const zoneScope = pickedZoneScope
+  const slice = useMemo(
+    () => resolveSlice({ snap: prog, bounds, id, custom, zoneScope }),
+    [prog, bounds, id, custom, zoneScope]
+  )
 
   const setId = useCallback((next: SliceId) => {
     pickedId = next

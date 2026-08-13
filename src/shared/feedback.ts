@@ -46,7 +46,18 @@
 
 import { hasWireControls, sanitizeMultiline } from './sanitizeText'
 
-/** Bumped only for a BREAKING wire change; the server rejects anything else outright. */
+/** Bumped only for a BREAKING wire change; the server rejects anything else outright.
+ *
+ *  IT STAYS 1 FOR THE INVENTORY ATTACHMENT (JOS-296), and that is a decision, not an omission.
+ *  `v` is a HARD GATE — `validateSubmit` refuses any other value outright — so bumping it would
+ *  make every already-installed client's report a 400 the instant the new server deployed. An
+ *  ADDITIVE field cannot break either side: an old client simply omits `inventory` (which reads
+ *  as `null`, the same as attaching nothing), and an old SERVER drops it, because these
+ *  validators construct their return value field by field rather than passing the input through.
+ *  A version bump is for a change that makes an old payload WRONG; this one makes it incomplete,
+ *  which the contract already has a spelling for. What the ordering law still demands is that
+ *  the SERVER ship first — a client that declares an attachment the server has no column for
+ *  would upload nothing and say it did (infra/README.md carries the runbook). */
 export const FEEDBACK_API_VERSION = 1
 
 // ---- the record ------------------------------------------------------------------------
@@ -114,6 +125,27 @@ export interface LogSliceMeta {
   sha256: string // hex digest of the gz bytes — integrity, and a free dedupe key
 }
 
+/**
+ * Metadata about an attached `/outputfile inventory` dump (JOS-296). The BYTES go to S3 on their
+ * own presign, exactly like the slice; this is the part that travels in the JSON body.
+ *
+ * WHAT IS DELIBERATELY NOT HERE: the file's NAME or PATH. EQ names the dump
+ * `<Character>_<server>-Inventory.txt`, so the filename is the one place the character's identity
+ * appears at all (the dump's CONTENTS carry none — see the format sweep in
+ * src/main/feedback/inventory.ts). The dialog shows the user their own filename because it is
+ * their own screen; the wire does not need it to diagnose an export-shaped bug, so it does not
+ * get it.
+ */
+export interface InventoryDumpMeta {
+  bytes: number // gzipped size the client is about to upload
+  lines: number // rows in the dump, as read (nothing is removed — see below)
+  /** The DUMP's mtime, epoch ms — when the PLAYER last typed `/outputfile inventory`, never when
+   *  we read it. This is the JOS-253 freshness truth, and it is the single most diagnostic field
+   *  here: a three-week-old export explains most "the app has the wrong items" reports outright. */
+  updatedAt: number
+  sha256: string // hex digest of the gz bytes — integrity, and a free dedupe key
+}
+
 export interface SubmitRequest {
   v: typeof FEEDBACK_API_VERSION
   draft: FeedbackDraft
@@ -122,10 +154,21 @@ export interface SubmitRequest {
   clientReportId: string // uuid v4 — IDEMPOTENCY key across offline retries (§6.4)
   clientTs: number // client clock, untrusted, kept for skew diagnostics
   log: LogSliceMeta | null
+  /** The SECOND attachment (JOS-296). Additive: absent reads as null, so a client built before
+   *  this field existed is a client that attached no dump, which is exactly what it meant. */
+  inventory: InventoryDumpMeta | null
 }
 
 export type SubmitResponse =
-  | { ok: true; reportId: string; upload: PresignedUpload | null }
+  | {
+      ok: true
+      reportId: string
+      upload: PresignedUpload | null
+      /** The dump's own presign. Optional on the wire so a server that predates JOS-296 is a
+       *  server that minted none — the client then uploads nothing and says `false`, rather
+       *  than reading a missing field as a failure. */
+      inventoryUpload?: PresignedUpload | null
+    }
   | {
       ok: false
       error: SubmitErrorCode
@@ -167,7 +210,25 @@ export interface FeedbackContext {
   queued: number
   /** False when no character log is resolved, so the attach section cannot be offered. */
   logAvailable: boolean
+  /** False when `/outputfile inventory` has never been run on this machine — the dump control
+   *  is then DISABLED with the command as its hint, rather than hidden (JOS-296). Hiding it
+   *  would leave the user with no idea the option exists, which is the state the hint fixes. */
+  inventoryAvailable: boolean
+  /** The dump's mtime, epoch ms, or null when there is none. Carried on the CONTEXT and not
+   *  only on the preview so the dialog can state the age BEFORE anything is read or gzipped. */
+  inventoryUpdatedAt: number | null
 }
+
+/** Why there is no inventory dump to attach. Exactly one of these or a built dump, never both. */
+export type InventoryUnavailable =
+  /** `/outputfile inventory` has never been run (or the file is gone). */
+  | 'no-dump'
+  /** The file exists and could not be read — permissions, a vanished drive. */
+  | 'unreadable'
+  /** The file is there and holds nothing. */
+  | 'empty'
+  /** Over MAX_UPLOAD_BYTES gzipped. REFUSED, never trimmed — see the note on the constant. */
+  | 'too-large'
 
 /**
  * What crosses IPC for the preview (§5.4): the true counts plus AT MOST `PREVIEW_MAX_LINES`
@@ -181,11 +242,31 @@ export interface FeedbackSlicePreview extends LogSliceMeta {
 }
 
 /**
+ * What crosses IPC for the DUMP preview (JOS-296) — the slice preview's twin, with one
+ * difference that is the whole design: exactly one of `meta` and `unavailable` is set.
+ *
+ * The slice can answer "nothing to attach" with a bare `null` because every way of getting
+ * there reads the same to a user ("no log lines in this window"). A dump cannot: "you have never
+ * run the command" and "your dump is too big to send" call for different sentences, and
+ * collapsing `too-large` into "no dump" would be the dialog telling a user their export does not
+ * exist while they are looking at it.
+ */
+export interface FeedbackInventoryPreview {
+  meta: InventoryDumpMeta | null
+  unavailable: InventoryUnavailable | null
+  previewLines: string[]
+  truncatedPreview: boolean
+  /** The dump's FILE NAME (never its path, never the wire's business — see InventoryDumpMeta).
+   *  Shown so the dialog can name the exact file it will send. Null when there is none. */
+  fileName: string | null
+}
+
+/**
  * The end of a Send. `submitFeedback` NEVER rejects — every outcome, including a dead network,
  * is one of these values (§4.2).
  */
 export type SubmitResult =
-  | { ok: true; reportId: string; logUploaded: boolean }
+  | { ok: true; reportId: string; logUploaded: boolean; inventoryUploaded: boolean }
   | { ok: false; error: SubmitErrorCode; message: string; queued: boolean }
 
 /** The "Save a copy…" escape hatch: the OS save dialog lives in main (§4.2). */
@@ -204,6 +285,21 @@ export const MAX_DESCRIPTION = 4_000
 export const MAX_BODY_BYTES = 32 * 1024 // whole JSON request
 export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 // gzipped slice
 export const MAX_SLICE_LINES = 50_000
+/**
+ * Rows in an attached inventory dump (JOS-296). The measured dev dump is 295 lines; a hoarder
+ * with every bank slot, both shared banks, the depot and a full keyring is still four figures.
+ * 50,000 is not a budget, it is the "this is not an inventory dump" line — the same job
+ * MAX_SLICE_LINES does for the log, which is why it is the same number.
+ *
+ * THE BYTE CAP IS `MAX_UPLOAD_BYTES`, SHARED WITH THE SLICE, AND IT IS ENFORCED BY REFUSAL.
+ * A slice that will not fit is TRIMMED FROM THE FRONT, because fewer log lines is simply less
+ * context. A dump cannot be treated that way: it is a complete statement of what a character
+ * owns, and a trimmed one is a well-formed file that silently claims the missing items do not
+ * exist — the exact failure mode `/outputfile inventory` already has when the Bank window is
+ * shut (shared/outputs/kinds.ts `steps`), and the one this attachment exists to diagnose. So an
+ * oversize dump is `unavailable: 'too-large'` and the dialog says so.
+ */
+export const MAX_INVENTORY_LINES = 50_000
 export const PREVIEW_MAX_LINES = 5_000 // what crosses IPC for the preview (§5.4)
 export const LOG_WINDOW_CHOICES = [15, 30, 60] as const // minutes
 export const DEFAULT_LOG_WINDOW = 30
@@ -463,6 +559,64 @@ export function validateLogMeta(input: unknown): Validated<LogSliceMeta> {
 }
 
 /**
+ * The attached DUMP's metadata (JOS-296) — `validateLogMeta`'s twin, and bounded in the same
+ * places for the same reason: these numbers size the presign policy
+ * (`content-length-range 1..MAX_UPLOAD_BYTES`) before a byte of the dump exists in the cloud.
+ *
+ * `updatedAt` is bounded as any epoch-ms stamp is and NOT compared against the server's clock:
+ * it is the file's mtime as the CLIENT's filesystem reports it, and a machine with a wrong clock
+ * is a machine whose bug report we still want. It is diagnostic, never authoritative —
+ * `received_at` is the authority for when anything happened, exactly as with `clientTs`.
+ *
+ * An EMPTY dump is not an attachment: main sends `inventory: null` rather than a zero-row dump,
+ * so `lines >= 1` and `bytes >= 1` are both real conditions here.
+ */
+export function validateInventoryMeta(input: unknown): Validated<InventoryDumpMeta> {
+  if (!isRecord(input)) return fail('inventory', 'inventory must be an object or null.')
+
+  const bytes = integerInRange(input.bytes, 'inventory.bytes', 1, MAX_UPLOAD_BYTES)
+  if (!bytes.ok) return bytes
+  const lines = integerInRange(input.lines, 'inventory.lines', 1, MAX_INVENTORY_LINES)
+  if (!lines.ok) return lines
+  const updatedAt = integerInRange(
+    input.updatedAt,
+    'inventory.updatedAt',
+    0,
+    Number.MAX_SAFE_INTEGER,
+  )
+  if (!updatedAt.ok) return updatedAt
+  const sha256 = matching(input.sha256, 'inventory.sha256', SHA256_HEX_RE, '64 hex characters')
+  if (!sha256.ok) return sha256
+
+  return {
+    ok: true,
+    value: {
+      bytes: bytes.value,
+      lines: lines.value,
+      updatedAt: updatedAt.value,
+      sha256: sha256.value,
+    },
+  }
+}
+
+/**
+ * AN OPTIONAL ATTACHMENT, in ONE place for both of them.
+ *
+ * `null` and ABSENT are the same statement — "nothing attached" — and this is the only function
+ * in the contract that says so. That matters more since there are two attachments than it did
+ * when there was one: the rule that makes a new optional field ADDITIVE (an old client omits it,
+ * a new server reads the omission as null) is now written down once rather than copied per
+ * field, so the next attachment cannot accidentally be spelled as required.
+ */
+function optionalMeta<T>(
+  raw: unknown,
+  validate: (v: unknown) => Validated<T>,
+): Validated<T | null> {
+  if (raw === null || raw === undefined) return { ok: true, value: null }
+  return validate(raw)
+}
+
+/**
  * The whole request, as the Lambda sees it (§8.3 step 2). Cheapest checks first; the first
  * failure wins and names its field.
  *
@@ -492,12 +646,12 @@ export function validateSubmit(input: unknown): Validated<SubmitRequest> {
   if (typeof input.clientTs !== 'number' || !Number.isFinite(input.clientTs))
     return fail('clientTs', 'clientTs must be a number.')
 
-  let log: LogSliceMeta | null = null
-  if (input.log !== null && input.log !== undefined) {
-    const meta = validateLogMeta(input.log)
-    if (!meta.ok) return meta
-    log = meta.value
-  }
+  // BOTH ATTACHMENTS, read the same way (JOS-296): absent and null are the same answer, and a
+  // present-but-malformed one is a named 400 rather than a silently dropped field.
+  const log = optionalMeta(input.log, validateLogMeta)
+  if (!log.ok) return log
+  const inventory = optionalMeta(input.inventory, validateInventoryMeta)
+  if (!inventory.ok) return inventory
 
   return {
     ok: true,
@@ -508,7 +662,8 @@ export function validateSubmit(input: unknown): Validated<SubmitRequest> {
       installId: installId.value,
       clientReportId: clientReportId.value,
       clientTs: input.clientTs,
-      log,
+      log: log.value,
+      inventory: inventory.value,
     },
   }
 }

@@ -1,11 +1,11 @@
-// planner/validate.ts — the one place a set of exaltation plans is proven to be a set of
-// exaltation plans.
+// planner/validate.ts — the one place a stored PLAN is proven to be a plan: exaltation sets
+// (`sanitizeExaltPlans`) and, since JOS-286, gear sets (`sanitizeGearSets`).
 //
 // TWO CALLERS, ONE ANSWER (the ipc/knowledge + presencePrefs arrangement):
 //   * `IPC.plannerSetPlans` runs it on the way IN. Renderer input is never trusted here, exactly
 //     as `combo:setCorrection` and `sounds:getData` are not trusted — today's only caller being
 //     the app's own UI is not a security property.
-//   * `store.getExaltPlans` runs it on the way OUT, so a hand-edited (or downgrade-written)
+//   * `storePlans.getExaltPlans` runs it on the way OUT, so a hand-edited (or downgrade-written)
 //     progress file cannot hand the renderer a shape it will crash on.
 // Because both directions pass through here, "what is a valid plan" has exactly one definition
 // and the round trip is a fixed point — which is what `tests/plannerStore.test.mts` asserts.
@@ -18,6 +18,8 @@
 // Electron-free and dependency-light on purpose: store.ts imports it from module scope.
 
 import { isClassAbbr, MAX_COMBO_SLOTS, type ClassAbbr } from '../../shared/classCombo'
+import { normalizeUpgradeState } from '../../shared/itemUpgrade'
+import type { GearAssignment, GearSet } from '../../shared/planner/gearSet'
 import {
   PLAN_SLOTS,
   SOCKET_TYPES,
@@ -146,6 +148,87 @@ export function sanitizeExaltPlans(raw: unknown, now: number = Date.now()): Exal
     if (!plan || seen.has(plan.id)) continue
     seen.add(plan.id)
     out.push(plan)
+  }
+  return out
+}
+
+// ---- gear sets (JOS-286, phase 5) --------------------------------------------------------
+//
+// THE SAME DOOR, THE SAME DISCIPLINE, A DIFFERENT DOCUMENT. A gear set is a cell → item map with
+// a per-assignment plus-state (shared/planner/gearSet.ts), and it goes through this file for
+// exactly the reasons the exaltation plans do: `IPC.gearSetSets` runs it on the way IN because
+// the renderer is not the authority on what may be stored, and `store.getGearSets` runs it on the
+// way OUT so a hand-edited progress file cannot hand the renderer a shape it will crash on. Both
+// directions ⇒ one definition ⇒ the round trip is a fixed point (tests/gearSetStore.test.mts).
+//
+// IT STRIPS RATHER THAN REJECTS, same as above: an unknown cell key, an assignment with no item
+// key, a plus-state outside the game's own 0..10 × 0..2^full-1 grid — each is dropped or clamped
+// and everything else is kept.
+//
+// THE PLUS-STATE IS CLAMPED BY PHASE 0'S OWN NORMALIZER (`normalizeUpgradeState`) rather than by
+// a range check written here. That function IS the rule about which states exist — tier 0 and
+// tier 10 bank nothing, a fraction lives in 0..2^full-1 — and a validator that re-stated it would
+// be a second opinion about the game's item window. A state that is not an object at all reads as
+// base, which is what an assignment carrying no state means.
+
+/** A plus-state, clamped to a state the game can actually be in. Anything unreadable is base. */
+function upgradeState(v: unknown): GearAssignment['state'] {
+  if (!isRecord(v)) return normalizeUpgradeState({ full: 0, fraction: 0 })
+  const full = typeof v.full === 'number' && Number.isFinite(v.full) ? v.full : 0
+  const fraction = typeof v.fraction === 'number' && Number.isFinite(v.fraction) ? v.fraction : 0
+  return normalizeUpgradeState({ full, fraction })
+}
+
+/** One assigned item, or `undefined` when it names none — a cell with no item is not an assignment. */
+function gearAssignment(v: unknown): GearAssignment | undefined {
+  if (!isRecord(v)) return undefined
+  const key = text(v.key, MAX_ID_CHARS)
+  if (!key) return undefined
+  return { key, name: text(v.name, MAX_NAME_CHARS) ?? key, state: upgradeState(v.state) }
+}
+
+/** The cell map, filtered to the twenty-three cells the board can draw (the `PLAN_SLOTS` allowlist). */
+function gearSlots(v: unknown): Partial<Record<PlanSlotId, GearAssignment>> {
+  const out: Partial<Record<PlanSlotId, GearAssignment>> = {}
+  if (!isRecord(v)) return out
+  for (const [name, value] of Object.entries(v)) {
+    if (!SLOT_SET.has(name)) continue
+    const assignment = gearAssignment(value)
+    if (assignment) out[name as PlanSlotId] = assignment
+  }
+  return out
+}
+
+/** One gear set, or `undefined` when it carries no usable identity. */
+function gearSet(v: unknown, now: number): GearSet | undefined {
+  if (!isRecord(v)) return undefined
+  const id = text(v.id, MAX_ID_CHARS)
+  if (!id) return undefined
+  const createdAt = stamp(v.createdAt, now)
+  return {
+    id,
+    name: text(v.name, MAX_NAME_CHARS) ?? 'Untitled set',
+    createdAt,
+    updatedAt: stamp(v.updatedAt, createdAt),
+    slots: gearSlots(v.slots)
+  }
+}
+
+/**
+ * Whatever the renderer (or the store file) offered → the gear sets this app will actually keep.
+ * Never throws, never rejects the batch; duplicate ids keep the FIRST occurrence, which is the
+ * renderer's own list order and therefore the user's.
+ */
+export function sanitizeGearSets(raw: unknown, now: number = Date.now()): GearSet[] {
+  if (!Array.isArray(raw)) return []
+  const out: GearSet[] = []
+  const seen = new Set<string>()
+  for (const entry of raw) {
+    if (out.length >= MAX_PLANS) break
+    const set = gearSet(entry, now)
+    if (!set || seen.has(set.id)) continue
+    seen.add(set.id)
+    out.push(set)
   }
   return out
 }

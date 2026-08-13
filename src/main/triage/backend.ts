@@ -40,6 +40,7 @@ import {
 } from '../../../scripts/triageCluster.mjs'
 import {
   deleteSlice,
+  attachmentKeysOf,
   downloadSlice,
   getFeedbackConfig,
   getReport,
@@ -299,11 +300,14 @@ export function awsBackend(
       const c = clients()
       const row = await getReport(c, reportId)
       if (!row) throw new Error(`no such report: ${reportId}`)
-      const key = logKeyOf(row)
-      // Statement for statement, this is the CLI's `forget`: the slice object goes and the row
-      // is stamped redacted. The report stays because the description IS the bug report — and
-      // there is no contact column left to clear, the schema dropped it.
-      if (key) await deleteSlice(c, key)
+      // Statement for statement, this is the CLI's `forget`: EVERY attachment object goes and
+      // the row is stamped redacted. The report stays because the description IS the bug report
+      // — and there is no contact column left to clear, the schema dropped it.
+      //
+      // `attachmentKeysOf` rather than `logKeyOf` since JOS-296: a report can carry a slice AND
+      // an inventory export, and the two front ends must destroy the same set or one of them is
+      // lying to the person who asked.
+      for (const key of attachmentKeysOf(row)) await deleteSlice(c, key)
       await stampRedacted(c, reportId)
     },
 

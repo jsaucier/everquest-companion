@@ -4,6 +4,8 @@ import { windowsApi } from './windows'
 import { plannerApi } from './planner'
 import { rosterApi } from './roster'
 import { soundsBridge } from './sounds'
+// "What IS this" — the spell/item/mob lookups, split out at the 400-line ceiling (preload/knowledge.ts).
+import { knowledgeBridge } from './knowledge'
 import type {
   AlertDef,
   AlertPrefs,
@@ -40,9 +42,8 @@ import type {
 } from '../shared/types'
 import type { CombatSnapshot, FightSearchResult, SnapshotOpts } from '../shared/combat'
 import type { ClassAbbr, ComboDelta, ComboSnap } from '../shared/classCombo'
-// "What's new at this level" (docs/plans/levelup-whats-new.md) — the unlock dataset rides the
-// spell-catalog channel with a flag; see the handler in src/main/ipc/knowledge.ts.
-import type { LevelUnlockData } from '../shared/levelUnlocks'
+// The level-unlock and planner types moved with their methods: knowledge.ts (JOS-293) carries
+// the spell/item/mob/unlock lookups, planner.ts (JOS-285) the exaltation + gear reads.
 import type { CharacterSheet } from '../shared/characterSheet'
 // The `/outputfile` registry's one IPC shape (JOS-44) — command, why-clause, and the dump's own
 // mtime, per kind. Every surface fed by an export command reads this and nothing else.
@@ -62,6 +63,12 @@ import type { ShareApplyResult, SharePreview } from '../shared/profiles'
 import type {
   FeedbackDraft,
   FeedbackEnv,
+  // The DUMP preview shape (JOS-296) is taken from the shared contract rather than re-declared
+  // here, unlike its slice sibling below. The slice's preload shape genuinely differs from the
+  // shared one (main adds `windowMinutes`, the window it actually used); the dump's does not, and
+  // a second hand-written copy of an identical shape is a shape that will eventually disagree
+  // with itself.
+  FeedbackInventoryPreview,
   LogSliceMeta,
   SubmitErrorCode
 } from '../shared/feedback'
@@ -133,6 +140,11 @@ export interface FeedbackContext {
   queued: number
   /** Is there a character log to slice at all? */
   logAvailable: boolean
+  /** Is there a `/outputfile inventory` dump on disk? False ⇒ the control is disabled with the
+   *  command as its hint, never hidden (JOS-296). */
+  inventoryAvailable: boolean
+  /** The dump's mtime, epoch ms, or null — the JOS-253 freshness truth, before anything is read. */
+  inventoryUpdatedAt: number | null
 }
 
 /**
@@ -149,22 +161,25 @@ export type FeedbackSlicePreview = LogSliceMeta & {
 
 /** Reply of feedback:submit. NEVER a rejection: a network failure resolves with `queued:true`. */
 export type SubmitResult =
-  | { ok: true; reportId: string; logUploaded: boolean }
+  | { ok: true; reportId: string; logUploaded: boolean; inventoryUploaded: boolean }
   | {
-      ok: false
-      error: SubmitErrorCode
-      message: string
-      queued: boolean
-      /** Set for `invalid_payload` so the dialog can focus the offending input. */
-      field?: string
-      /** Set for `quota_exceeded` — seconds until the daily counter rolls over. */
-      retryAfterSec?: number
-    }
+    ok: false
+    error: SubmitErrorCode
+    message: string
+    queued: boolean
+    /** Set for `invalid_payload` so the dialog can focus the offending input. */
+    field?: string
+    /** Set for `quota_exceeded` — seconds until the daily counter rolls over. */
+    retryAfterSec?: number
+  }
 
 /** Args of feedback:submit's second parameter — re-validated at the handler. */
 export interface SubmitOpts {
   attachLog: boolean
   windowMinutes: number
+  /** Attach the current `/outputfile inventory` dump (JOS-296). Default ON for bug reports —
+   *  an owner ruling, and a VISIBLE checkbox: this is per-report consent, never a silent send. */
+  attachInventory: boolean
 }
 
 export type { CharacterRef, EqConfig, EqConfigResult, LogLine, LootEvent, ProgressState }
@@ -184,7 +199,7 @@ export type { PackInstallProgress, PackMutationResult, PackPreviewList, Registry
 export type { AppFocus, UpdateStatus }
 export type { CursorRingPrefs, OverlayAutoHidePrefs }
 export type { ShareApplyResult, SharePreview }
-export type { FeedbackDraft, FeedbackEnv, LogSliceMeta, SubmitErrorCode }
+export type { FeedbackDraft, FeedbackEnv, FeedbackInventoryPreview, LogSliceMeta, SubmitErrorCode }
 export type { TelemetryEvent, TelemetryPayloadView, TelemetryPrefs }
 export type { PerfHudPrefs, PerfSample, StartupProfile }
 // Dev-only triage (above): re-exported for the same reason every other payload shape is — a
@@ -364,17 +379,8 @@ const api = {
     ipcRenderer.invoke(IPC.setAlertPrefs, prefs),
   /** Sound packs, the openpeon registry and the user's own imports — preload/sounds.ts. */
   ...soundsBridge,
-  /** Suggested-alerts wizard (Task #38): the searchable spell catalog + live usage. */
-  getSpellCatalog: (): Promise<SpellCatalog> => ipcRenderer.invoke(IPC.spellsCatalog),
-  /**
-   * "What's new at this level" (docs/plans/levelup-whats-new.md): every (class, level) unlock the
-   * committed DBs state — spells from spells.json, skills/discs/innates from classes.json.
-   *
-   * The SAME channel as the catalog above, with a flag, because shared/ipc.ts belonged to a
-   * concurrent wave the day this landed. Two questions of one door, both about the spell DB; the
-   * flag is re-validated in main. A dedicated channel is the right shape and is three lines away.
-   */
-  getLevelUnlocks: (): Promise<LevelUnlockData> => ipcRenderer.invoke(IPC.spellsCatalog, { unlocks: true }),
+  /** "What IS this" — spell / item / mob lookups, and the spell catalog: preload/knowledge.ts. */
+  ...knowledgeBridge,
 
   // ---- voice alerts / TTS (docs/plans/voice-alerts.md §3) ----
   // The 'system' tier needs NOTHING here: Chromium's `speechSynthesis` is already in the
@@ -412,31 +418,25 @@ const api = {
   setVoicePrefs: (prefs: VoicePrefs): Promise<VoicePrefs> =>
     ipcRenderer.invoke(IPC.voicePrefsSet, prefs),
 
-  /** Item knowledge (Task #53): "what's this lore/quest item for" — local posky-first,
-   *  then a cached, politely-throttled wiki lookup. Never rejects (degrades to a
-   *  cached-negative/offline record that still carries local posky associations). */
-  lookupItem: (name: string): Promise<ItemKnowledge> => ipcRenderer.invoke(IPC.itemsLookup, name),
-
-  /** Mob knowledge (Task #63): "what does this thing drop" — your own loot history + the local
-   *  quest catalog first, then a cached, politely-throttled wiki lookup. Never rejects. */
-  lookupMob: (name: string): Promise<MobKnowledge> => ipcRenderer.invoke(IPC.mobsLookup, name),
-
   // ---- the planner's slice, in its own file (src/preload/planner.ts) ----
-  // The exaltation planner's four reads + one write and the Gear tab's two reads. Split out
+  // The exaltation planner's four reads + one write and the Gear tab's two reads plus its own
+  // set read/write pair (JOS-286). Split out
   // under the same rule roster.ts/windows.ts/perf.ts state: this file is AT the measured
   // 400-code-line ceiling, and phase 4 (JOS-285) needed one more method than it had room for.
+  // (The item/mob lookups live in knowledge.ts beside the spell lookups — JOS-293's split.)
   ...plannerApi,
 
   // ---- character sheet (JOS-45) ----
-  /** The armory grid + the gear sum for the active character, from their newest
-   *  `/outputfile inventory` dump; `null` when no dump exists.
+  /** The armory grid, the gear sum and the carry-all ledger for the active character, from their
+   *  newest `/outputfile inventory` dump; `null` when no dump exists.
    *
-   *  UNLIKE EVERY OTHER METHOD HERE, THIS ONE CAN REJECT — and that is the design. The handler
-   *  behind it is registered only when `UNRELEASED` (src/main/unreleased.ts) is true, so in a
-   *  packaged build there is nothing on the other side and the invoke fails with Electron's own
-   *  "No handler registered for 'character:sheet'". The bridge is a door; a shipped app has no
-   *  renderer code to open it (the surface is stripped) and no handler if something tried.
-   *  Same shape as the `triage*` methods above. */
+   *  IT USED TO BE THE ONE METHOD HERE THAT COULD REJECT, and JOS-327 ended that: the handler was
+   *  registered only when `UNRELEASED` (src/main/unreleased.ts) was true, so a packaged build had
+   *  nothing on the other side and the invoke failed with Electron's own "No handler registered
+   *  for 'character:sheet'". The owner released the tab; the handler is unconditional. The
+   *  renderer's read still tolerates a rejection (features/character/useCharacterSheet.ts) — a
+   *  transport that answers `null` for "no dump" has no business turning anything into a red box —
+   *  but nothing is expected to produce one now. */
   characterSheet: (): Promise<CharacterSheet | null> => ipcRenderer.invoke(IPC.characterSheet),
 
   /** Report a renderer-detected event into the live event feed (Task #59) — today only quest
@@ -628,6 +628,11 @@ const api = {
    *  that makes "you can see exactly what is sent" literally true, not a claim about a preview. */
   saveFeedbackSlice: (windowMinutes: number): Promise<ShareSaveResult> =>
     ipcRenderer.invoke(IPC.feedbackSaveSlice, windowMinutes),
+  /** Package the CURRENT `/outputfile inventory` dump and return its counts + a capped preview,
+   *  or the named reason there is none (JOS-296). NO ARGUMENT, on purpose: which file is read is
+   *  main's answer through the outputs registry, never a path the renderer supplies. */
+  buildFeedbackInventory: (): Promise<FeedbackInventoryPreview> =>
+    ipcRenderer.invoke(IPC.feedbackBuildInventory),
   /** Submit. NEVER rejects: a network failure resolves `{ok:false, queued:true}` and the report
    *  is retried later; a 4xx resolves `{ok:false, queued:false}` and is not retried. */
   submitFeedback: (draft: FeedbackDraft, opts: SubmitOpts): Promise<SubmitResult> =>

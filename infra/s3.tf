@@ -79,4 +79,27 @@ resource "aws_s3_bucket_lifecycle_configuration" "logs" {
       days_after_initiation = 7
     }
   }
+
+  # The inventory attachment (JOS-296) lives under its OWN top-level prefix, so it needs its own
+  # rule: the rule above filters on `logs/` and an object under `inventory/` would match nothing
+  # and live forever. Same retention window, deliberately — a dump and the slice beside it are
+  # two halves of one report and expiring them on different days would leave half-answerable
+  # reports in the bucket. If they ever need to diverge, that is a second variable, not a second
+  # default.
+  rule {
+    id     = "expire-inventory-dumps"
+    status = "Enabled"
+
+    filter {
+      prefix = "inventory/"
+    }
+
+    expiration {
+      days = var.log_object_expiration_days
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
 }

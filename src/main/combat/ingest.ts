@@ -22,6 +22,7 @@ import { route, routeHeal, routeHealUnstated, routeMiss, routeMitigation, routeR
 import { SEC_ANALYTICS, SEC_DISPATCH } from './foldProbe'
 import {
   applyStance,
+  clearCoats,
   routeCoat,
   routeDispelLanding,
   routeDry,
@@ -30,6 +31,9 @@ import {
   routeProcBuffWearOff,
   routeSelfLandingProc
 } from './procRouting'
+// LEAVING ROGUE BARES THE BLADES (JOS-305) — its own module, because the whole feature is the
+// GATE on when the class model may be consulted, and that reasoning does not belong in a switch.
+import { sweepCoatClass } from './coatClass'
 import {
   QUICK_BUFF_AA,
   isCastlessHeal,
@@ -178,6 +182,12 @@ function ingestWorld(st: EngineState, ev: LogEvent): boolean {
       // …and the ally binds with them: they describe people standing beside a character that is
       // not this one. The friendly set goes too, because `reset()` is a whole-model wipe.
       st.ally.reset()
+      // …and the BLADE COATS go with them (JOS-305). This case used to censor the coat SPANS on
+      // the line below and leave `coatUtility` / `coatCombat` standing — the identical
+      // slot-versus-span disagreement the death rule was written to cure, rebuilt one boundary
+      // over. A rebirth is a different character; nothing was on these blades. Same shared door,
+      // so the two can never drift apart again.
+      clearCoats(st, ev.ts, 'epoch')
       // An epoch severs every active-state span: the beta character's stances, coats and buffs
       // are not this character's. CENSORED, never 'observed' (proc-analytics §3.1 boundaries).
       st.stateTimeline.censorAll(ev.ts)
@@ -659,22 +669,25 @@ function ingestModifier(st: EngineState, ev: LogEvent): void {
       if (idKey(ev.name) === QUICK_BUFF_AA) st.quickBuffTs = ev.ts
       return
     case 'playerDeath':
-      // A boundary that SEVERS every span. The end is unknowable, so it is 'censored' — never
-      // 'observed', and never a fabricated expiry (law 1).
-      st.stateTimeline.censorAll(ev.ts)
       // BLADE COATS DIE WITH YOU (corrected 2026-08-04). eqlwiki's Rogue page states poisons
       // "remain active until class swap or death", and the log corroborates it without ever
       // printing a dry line for it: `Your Paralytic Poison spell did not take hold. (Blocked by
       // Neurotoxic Poison.)` at 20:01:47 Aug 03, then — after `You have been slain by a rock
       // golem!` at 21:01:40 — the SAME Paralytic coat lands cleanly at 21:15:23. Something
-      // removed Neurotoxic in between and no line said so. Until this, the slot state and the
-      // span timeline disagreed at exactly this instant: censorAll ended the coat spans while
-      // `coatUtility` kept naming a poison the corpse no longer had, which made the header show
-      // a dead coat and `slowExpected` true for pulls that could not slow.
-      // NOT modeled, and stated rather than guessed: the wiki's other clearer, a CLASS SWAP.
-      // The combat engine sees no loadout signal, so a swap leaves the coats standing.
-      st.coatUtility = undefined
-      st.coatCombat = []
+      // removed Neurotoxic in between and no line said so.
+      //
+      // FIRST, and through the shared door (JOS-305). The coat clear runs BEFORE `censorAll`
+      // below so the coat spans close through `clearCoats`, which — unlike a bare censor — also
+      // STAMPS the window transition the way `routeDry` does. That stamp is what discards the
+      // boundary minute from the Tier-B purity gate, and a minute in which the player died and
+      // four coats ended is the last minute that should be believed clean. `censorAll` then
+      // finds the coat groups already closed and severs everything else.
+      //
+      // The wiki's OTHER clearer, a class swap, is no longer a stated gap: coatClass.ts models it.
+      clearCoats(st, ev.ts, 'death')
+      // A boundary that SEVERS every span. The end is unknowable, so it is 'censored' — never
+      // 'observed', and never a fabricated expiry (law 1).
+      st.stateTimeline.censorAll(ev.ts)
       return
     default:
       return
@@ -718,6 +731,13 @@ function ingestOne(st: EngineState, ev: LogEvent, live: boolean): void {
   // …and the pet nudge times out on it too (JOS-258), from here and from snapshot(now), for the
   // reason the other two do: whichever observes the deadline first should be the one that acts.
   st.petNudge.sweep(ev.ts)
+  // …and the BLADE COATS are consulted against the class model on the same log clock (JOS-305):
+  // a character who stopped being a rogue no longer has poison on their blades, and no line says
+  // so. Deliberately NOT in snapshot(now) beside the three above — those are display timers, this
+  // one MUTATES the fold, and a fold that advanced because the UI polled would make a replay
+  // disagree with the live tail. Guarded on two field reads for every non-rogue in the world; the
+  // gate that keeps it cheap for a rogue too is coatClass.ts's whole subject.
+  sweepCoatClass(st, ev)
   if (ingestWorld(st, ev)) return
   if (ingestCombat(st, ev)) return
   if (ingestCast(st, ev)) return

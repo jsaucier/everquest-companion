@@ -30,15 +30,16 @@ const BOX_HEIGHT = 220
 /** One monospace line at 11px/16px — the windowing hook needs a fixed row height. */
 const ROW_HEIGHT = 16
 
-/** `128 KB` / `1.4 MB` — the compressed size the upload would actually be. */
-function formatBytes(bytes: number): string {
+/** `128 KB` / `1.4 MB` — the compressed size the upload would actually be.
+ *  Exported for InventoryPreview: the two attachments state their size in ONE vocabulary. */
+export function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   return `${Math.max(1, Math.round(bytes / 1024)).toString()} KB`
 }
 
 /** Thousands-separated counts — these are LINE counts, not damage totals, so they are never
  *  k/M-scaled (`formatNum` would render 4,812 lines as '4.8k'). */
-function count(n: number): string {
+export function count(n: number): string {
   return n.toLocaleString()
 }
 
@@ -64,14 +65,24 @@ export function sliceMetaText(slice: FeedbackSlicePreview, requestedMinutes: num
   return parts.join(' · ')
 }
 
-/** The windowed body. Split out so the scroll container owns exactly one concern. */
-function PreviewLines({ lines }: { lines: readonly string[] }): JSX.Element {
+/**
+ * The windowed body. Split out so the scroll container owns exactly one concern — and EXPORTED
+ * so the inventory attachment (JOS-296) renders its rows in the same box rather than growing a
+ * second, subtly-different one. `testId` is the only thing that differs between the two.
+ */
+export function PreviewLines({
+  lines,
+  testId = 'feedback-preview'
+}: {
+  lines: readonly string[]
+  testId?: string
+}): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
   const win = useWindowedRows({ count: lines.length, rowHeight: ROW_HEIGHT, scrollRef })
   return (
     <Box
       ref={scrollRef}
-      data-testid="feedback-preview"
+      data-testid={testId}
       sx={{
         height: BOX_HEIGHT,
         overflow: 'auto',

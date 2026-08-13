@@ -10,6 +10,10 @@
 // arithmetic under it moves. Asserting that asymmetry as a PAIR is the point: a refactor that
 // flattened the zone filter into a time window would still pass every check over there.
 //
+// IT ALSO CARRIES THE BAR'S SHAPE (JOS-301): with `Zone` in force every control of the scope is
+// mounted at once, which is the only state in which "one row of controls, one line under them" can
+// be measured at all — so the layout claim is asserted from inside the step that creates it.
+//
 // WHAT NO UNIT TEST CAN REACH: `tests/timeslice.test.mts` pins the definitions and the partition
 // identity over a hand-built snapshot. It cannot see that the button in the real app resolves the
 // real progression module's last zone line, hands one `zoneKey` down through `scopedStats` into
@@ -19,12 +23,24 @@ import type { Page } from 'playwright-core'
 import { check, countOf, note, settle } from './appHarness.mjs'
 
 const TS_WINDOW = '[data-testid="leveling-slice-window"]'
+/** The ONE caption line under the row of controls (JOS-301) — both clauses live inside it. */
+const CAPTION = '[data-testid="leveling-scope-caption"]'
 const LOOT_SLICE = '[data-testid="loot-slice"]'
 const LOOT_SUMMARY = '[data-testid="loot-summary"]'
 const LOOT_RATES = '[data-testid="loot-rates"]'
 /** Narrowest first. Any of these is a real cut of the ledger; `custom` is not one until somebody
  *  types two instants into it, so it is deliberately never a candidate. */
 const NARROW_ORDER = ['h1', 'h6', 'h24', 'd7', 'session', 'zone'] as const
+
+/** Where a mounted box sits, in viewport coordinates; null when it isn't mounted. */
+function boxOf(page: Page, sel: string): Promise<{ top: number; bottom: number; h: number } | null> {
+  return page.evaluate((s) => {
+    const el = document.querySelector(s)
+    if (!el) return null
+    const r = el.getBoundingClientRect()
+    return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height) }
+  }, sel)
+}
 
 /** Rendered text of the first match; '' when the node isn't mounted. */
 function textOf(page: Page, sel: string): Promise<string> {
@@ -38,6 +54,95 @@ function offeredSlices(page: Page, prefix: string): Promise<string[]> {
     Array.from(document.querySelectorAll(`[data-testid^="${p}-"]`))
       .map((e) => (e.getAttribute('data-testid') ?? '').replace(`${p}-`, ''))
       .filter((id) => id.length > 0 && id !== 'window' && !id.includes('-')), prefix)
+}
+
+/**
+ * THE SCOPE IS ONE ROW OF CONTROLS WITH ONE LINE UNDER IT (JOS-301, owner feedback 2026-08-13).
+ *
+ * The bar used to arrive as three stacked bars — slice buttons and their caption, the tier toggle
+ * alone, the basis toggle and its caption — which the owner called unbalanced from a screenshot of
+ * this tab. The fix is a LAYOUT, so only a real render can hold it: `tests/zoneScope.test.mts` pins
+ * which components `ScopeBar` composes and cannot see what a browser then does with them.
+ *
+ * It is measured with `Zone` in force because that is the only state in which all three controls
+ * are mounted (the tier toggle is drawn exactly while the slice carries a zone), and it is measured
+ * WIDE — the row is allowed to wrap by group at the app's narrow end, which is a degradation rather
+ * than a violation, and `stepNarrowLayout` is what keeps that end honest.
+ */
+async function checkScopeRow(page: Page): Promise<void> {
+  const slice = await boxOf(page, '[data-testid="leveling-slice"]')
+  const tier = await boxOf(page, '[data-testid="leveling-tier"]')
+  const basis = await boxOf(page, '[data-testid="leveling-basis"]')
+  const caption = await boxOf(page, CAPTION)
+  if (!check('the scope draws its three controls and one caption line', !!slice && !!tier && !!basis && !!caption)) return
+  // Rounded tops within a couple of pixels: they are centred in one flex row and the two toggle
+  // groups are the same height, so this is an alignment claim and not a font measurement.
+  const level = Math.max(Math.abs(tier.top - slice.top), Math.abs(basis.top - slice.top))
+  check(
+    'every control sits on ONE level — the buttons are one row, not three stacked bars',
+    level <= 2,
+    `slice y=${String(slice.top)} · tier y=${String(tier.top)} · basis y=${String(basis.top)}`
+  )
+  check(
+    '…and the description is on its own line BELOW them, not inline with the buttons',
+    caption.top >= slice.bottom,
+    `controls end at ${String(slice.bottom)}, caption starts at ${String(caption.top)}`
+  )
+  const words = (await textOf(page, CAPTION)).replace(/\s+/g, ' ')
+  check(
+    '…carrying BOTH clauses as one sentence — which stretch, and per hour of what',
+    words.includes('→') && /rates per hour of (elapsed|active) time/.test(words),
+    words
+  )
+  // One LINE, not a paragraph: the caption keeps the compact-bar contract, so a second line of it
+  // would be the imbalance coming straight back in the other direction.
+  check('…on a single line', caption.h <= 24, `${String(caption.h)}px tall`)
+  await checkToggleTitles(page)
+}
+
+/**
+ * EVERY TOGGLE IN THE SCOPE EXPLAINS ITSELF ON HOVER (JOS-304, owner feedback 2026-08-13: the two
+ * pairs are *hard to understand*).
+ *
+ * The strings themselves are pinned as values next door (`tests/zoneScope.test.mts`,
+ * `tests/rateBasis.test.mts`); what only a render can show is that the attribute survived the trip
+ * through MUI's `ToggleButton` onto the element the pointer actually lands on. It does not: MUI
+ * forwards unknown props to the underlying `button`, and that is precisely the kind of thing a
+ * component-library bump breaks quietly. Measured from inside `checkScopeRow` because this is the
+ * one moment both pairs are on the tab at once.
+ *
+ * Read as ALL FOUR BUTTONS OR NOTHING, since a per-button title is the whole point — a group that
+ * explains only its selected half leaves the reader hovering the button they were thinking of
+ * pressing and learning nothing.
+ */
+async function checkToggleTitles(page: Page): Promise<void> {
+  const titles = await page.evaluate(() =>
+    ['leveling-tier-allTiers', 'leveling-tier-exactTier', 'leveling-basis-elapsed', 'leveling-basis-active'].map(
+      (id) => {
+        const el = document.querySelector(`[data-testid="${id}"]`)
+        return { id, title: el?.getAttribute('title') ?? '' }
+      }
+    )
+  )
+  const bare = titles.filter((t) => t.title.length === 0).map((t) => t.id)
+  check(
+    'every toggle in the scope carries its own native hover, selected or not',
+    bare.length === 0,
+    bare.length > 0 ? `no title on ${bare.join(', ')}` : titles.map((t) => t.id).join(', ')
+  )
+  // And the words are the two SIDES of each difference, not one sentence repeated: the tier pair
+  // talks about which visits count, the basis pair about which hour divides.
+  const by = (id: string): string => titles.find((t) => t.id === id)?.title ?? ''
+  check(
+    '…and the tier pair states the difference from either side',
+    /at any tier/.test(by('leveling-tier-allTiers')) && /only the tier you are standing in/.test(by('leveling-tier-exactTier')),
+    `${by('leveling-tier-allTiers')} || ${by('leveling-tier-exactTier')}`
+  )
+  check(
+    '…as does the basis pair, each carrying the definition of its own hour',
+    /Elapsed time = /.test(by('leveling-basis-elapsed')) && /Active time = /.test(by('leveling-basis-active')),
+    `${by('leveling-basis-elapsed')} || ${by('leveling-basis-active')}`
+  )
 }
 
 /**
@@ -66,6 +171,9 @@ export async function stepZoneSlice(page: Page, readDashboard: () => Promise<str
     '…while the numbers under it are re-derived for that zone alone',
     (await settle(() => readDashboard(), (t) => t !== allReadout, { timeoutMs: 8000 })) !== allReadout
   )
+
+  // Measured HERE because this is the one moment all three controls are on the tab at once.
+  await checkScopeRow(page)
 
   await page.click('[data-testid="leveling-slice-all"]', { timeout: 10_000 })
   const restored = await settle(() => readDashboard(), (t) => t === allReadout, { timeoutMs: 8000 })

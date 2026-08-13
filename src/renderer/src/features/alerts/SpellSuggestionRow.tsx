@@ -37,6 +37,10 @@ import {
 } from './suggestions'
 import { classLevelChips, type ClassLevelChip } from './lineIntel'
 import { Tooltip } from '../../lib/Tooltip'
+// The rich spell card (JOS-293). The row states what an ALERT can be built on; the card behind
+// the name states what the spell IS - the effect list, the cost, the duration, the rank it
+// replaces - which is the other half of "is this one worth an alert at all".
+import { SpellTooltip } from '../../lib/SpellCard'
 
 /** Everything a row needs beyond the catalog entry itself (line + loadout context). */
 export interface RowContext {
@@ -265,9 +269,19 @@ function SpellRow({
   return (
     <Box sx={SUGGEST_ROW_SX} data-testid="suggest-row">
       <Box sx={SUGGEST_ROW_FACTS_SX}>
-        <Typography variant="body2" sx={{ fontWeight: 500, minWidth: 0 }} noWrap>
-          {entry.name}
-        </Typography>
+        {/* The NAME is the card's anchor (JOS-293), and it is the name the row DISPLAYS - never
+            the preferred rank below, which the row may have picked without the user ever having
+            cast it. The card's own rank block lists the line's members anyway. */}
+        <SpellTooltip name={entry.name}>
+          <Typography
+            variant="body2"
+            data-testid="suggest-row-name"
+            sx={{ fontWeight: 500, minWidth: 0 }}
+            noWrap
+          >
+            {entry.name}
+          </Typography>
+        </SpellTooltip>
         {showType && (
           <Chip
             size="small"

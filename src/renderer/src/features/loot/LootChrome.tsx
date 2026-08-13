@@ -32,6 +32,7 @@ import type { CountSource } from '@shared/types'
 import type { WindowLootRates } from '@shared/lootRates'
 import type { Timeslice } from '@shared/timeslice'
 import { formatDateTime, formatTime } from '../../lib/formatDate'
+import { COUNT_SOURCE_OPTIONS } from '../inventory/countSource'
 import type { GroupRow } from './lootGrouping'
 import { LOOT_RATE_TITLE, lootRateText } from './lootRateText'
 import {
@@ -168,7 +169,12 @@ export function LootToolbar({
       <Box sx={{ flexGrow: 1 }} />
       {/* Still NO tooltip (JOS-127): this select is one of the controls the removed poppers were
           covering, so JOS-128 says what the options do IN THE OPTIONS instead of in a hover card
-          that cannot mount here. */}
+          that cannot mount here.
+
+          WHICH IS WHY THE OPTIONS HAD TO BE TRUE, and two of them were not (JOS-294): they spelled
+          out JOS-128's reset semantics on a build that reverted them in JOS-141. This dropdown and
+          the Sky tab's write the SAME stored key, so they now draw the same
+          `COUNT_SOURCE_OPTIONS` — two copies of one sentence is how the reverted one survived. */}
       <TextField
         select
         size="small"
@@ -177,9 +183,9 @@ export function LootToolbar({
         onChange={(e) => setCountSource(e.target.value as CountSource)}
         sx={{ minWidth: 190 }}
       >
-        <MenuItem value="log">Log (ever looted)</MenuItem>
-        <MenuItem value="inventory">Export, plus loot since</MenuItem>
-        <MenuItem value="both">Export if any, else log</MenuItem>
+        {COUNT_SOURCE_OPTIONS.map((o) => (
+          <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>
+        ))}
       </TextField>
       {/* No tooltip (JOS-127) — the ACCESSIBLE name still says what it does, and an aria-label
           mounts nothing that can cover the two selects it sits beside. */}

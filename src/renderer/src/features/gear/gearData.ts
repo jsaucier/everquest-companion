@@ -68,12 +68,12 @@ async function fetchIndex(): Promise<GearIndexState> {
   CACHE =
     payload.version === GEAR_INDEX_VERSION
       ? {
-          rows: payload.rows.map(toRow),
-          ready: true,
-          scrapedAt: payload.scrapedAt,
-          stats: payload.stats,
-          refused: false
-        }
+        rows: payload.rows.map(toRow),
+        ready: true,
+        scrapedAt: payload.scrapedAt,
+        stats: payload.stats,
+        refused: false
+      }
       : { ...EMPTY, ready: true, refused: true }
   return CACHE
 }
@@ -235,9 +235,17 @@ export function useUpgradeState(): {
  * may never overwrite it again — it can only offer, which is what `detectedOffer` is for on the
  * exaltation board and what the toolbar's "detected: …" chip does here.
  *
- * NOTHING IS EVER ENFORCED BY IT. A row outside the filter is hidden only while "Usable by these
- * classes" is on, and a row shown despite a mismatch is CHIPPED rather than removed (the
- * `MismatchChip` the planner already draws). Same rule, same chip, same words.
+ * WHAT IT DOES TO THE TABLE CHANGED ON 2026-08-13 (owner ruling, JOS-302). It used to enforce
+ * nothing: a row outside the filter was hidden only while a companion "Usable by these" toggle was
+ * on, and a row shown despite a mismatch was CHIPPED rather than removed. The owner overruled that
+ * for THIS surface — the picks now NARROW the corpus, the toggle is gone and so is the chip. The
+ * provenance rule above is untouched, and so is the planner build pane's own mismatch chip, which
+ * is a different surface answering a different question (`gearFilter.ts GearFilters.classes`).
+ *
+ * ONE CONSEQUENCE WORTH SAYING OUT LOUD, because this hook is what causes it: `detected` is the
+ * default, so an untouched Gear tab opens NARROWED to the classes the app infers you are running.
+ * That is the reading a gear planner wants, and it is visible in three places at once — the chips
+ * in the picker, the "N of 6,814 items" count line, and `GearView.emptyText` when it goes to zero.
  */
 export interface GearClasses {
   /** the classes the filter is reading for */

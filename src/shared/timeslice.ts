@@ -75,9 +75,32 @@
 // admits a zone INTERVAL, the join then groups whatever was admitted by its own spelling. So a
 // zone-filtered range can hand back two rows when the log spelled the camp two ways, and each row
 // is still exactly the row its drops join onto.
+//
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// AND SINCE JOS-291 WHICH OF THE TWO MEMBERSHIP RUNS ON IS THE READER'S CALL (owner directive
+// 2026-08-13: *there should be an option to differentiate between levels of the zone, d0 -> d4, vs
+// not*). `ZoneScope` is that choice and `shared/zoneScope.ts` owns its whole argument:
+//
+//   • `allTiers` — THE DEFAULT, and everything above stands verbatim: the place fold, every tier.
+//   • `exactTier` — the place fold AND the row fold of the zone the log last named, so only the
+//     tier you are standing in is admitted. `Befallen` and `Befallen 2 (Adaptive)` stop being one
+//     slice, because they do not pay alike.
+//
+// THE CHOICE IS A DIMENSION OF THE SLICE, NOT A SECOND SLICE. It travels on the resolved
+// `Timeslice` beside the range and the zone key, it is applied by the SAME one predicate
+// (`zoneAdmits`) everywhere, and it is NAMED IN THE CAPTION — because the span line is the
+// denominator (JOS-288's honesty rule), and a caption printing `Befallen 2 (Adaptive)` over numbers
+// that admitted plain `Befallen` is the exact defect this option was filed for.
 
 import type { ProgressionSnap } from './progressionTypes'
 import { zoneKey } from './zones'
+import {
+  ZONE_SCOPE_PHRASE,
+  resolveZoneScope,
+  zoneAdmits,
+  zoneIdKey,
+  type ZoneScope
+} from './zoneScope'
 // The one spelling of "the stretch the log could not place" — `zoneSegments` names that row, and
 // `lootRates` joins onto it. Imported rather than re-spelled, for the same reason as the fold.
 import { UNKNOWN_ZONE } from './lootRates'
@@ -141,6 +164,27 @@ export interface Timeslice {
   zoneKey: string | null
   /** RAW display name of that zone (law 2: canonicalize at boundaries, display raw). */
   zoneName: string | null
+  /**
+   * WHICH TIERS OF THAT ZONE THIS SLICE ADMITS (JOS-291). `allTiers` on every slice that carries no
+   * zone at all, so a consumer never has to ask two questions to find out it has nothing to filter.
+   */
+  zoneScope: ZoneScope
+  /**
+   * The ROW fold (`zoneScope.zoneIdKey`) of that zone's raw name — the EXACT-TIER membership key —
+   * or null. NULL UNDER `allTiers`, so every consumer can hand this straight to `rangeStats` /
+   * `windowItemRows` / `zoneAdmits` without re-reading the scope: absent is the default and the
+   * default is byte-identical to the read this app has always done.
+   */
+  zoneExactKey: string | null
+  /**
+   * The ZONE HALF, worded — `Befallen 2 (Adaptive), every tier`. Null when the slice is not
+   * restricted to a zone.
+   *
+   * It exists because two surfaces print the zone half WITHOUT the range half (`SliceBar`'s window
+   * caption states the two instants itself), and the membership has to read back in both. One
+   * spelling, composed once, exactly like `caption`.
+   */
+  zoneCaption: string | null
 }
 
 /** The button label for each id. `Zone + Session` is the one long label: neither half survives
@@ -242,6 +286,14 @@ export interface ResolveSliceArgs {
   /** The user's custom pair, when they have drawn one. Absent under `custom` ⇒ falls back to the
    *  whole record, which is the honest reading of "a custom range nobody has chosen yet". */
   custom?: SliceRange | null
+  /**
+   * WHICH TIERS OF THE CURRENT ZONE COUNT (JOS-291). Absent ⇒ `ZONE_SCOPE_DEFAULT` (`allTiers`),
+   * which resolves to exactly the slice this function returned before the option existed.
+   *
+   * It is ignored, deliberately silently, by every id that carries no zone: `Session` says nothing
+   * about where, so a membership for it would be a setting with no subject.
+   */
+  zoneScope?: ZoneScope | null
 }
 
 /** The whole-record range: the identity every other slice narrows. */
@@ -256,15 +308,37 @@ function clamp(range: SliceRange, bounds: RecordBounds | null): SliceRange {
   return { t0, t1: Math.max(t0, Math.min(range.t1, whole.t1)) }
 }
 
-/** How a slice is worded inside a sentence. The zone's RAW name carries the zone half. */
-function captionOf(id: SliceId, zoneName: string | null): string {
+/**
+ * THE ZONE HALF, WORDED — the RAW zone name (law 2) plus the clause that says which of its tiers
+ * the numbers admitted (JOS-291).
+ *
+ * The clause is ALWAYS printed, including under the default, and that is the honesty rule rather
+ * than a verbosity: `every tier` is the fact that a caption reading `Befallen 2 (Adaptive)` had
+ * been hiding since JOS-130 — the slice admitted plain `Befallen` too and said nothing. Under
+ * `exactTier` the name IS the whole membership, and the clause is what tells the reader that.
+ *
+ * Null zone ⇒ null caption: `resolveSlice` then falls back to the id's own wording, which is the
+ * pre-first-zone-line state the control normally prevents by not offering the button.
+ */
+function zoneCaptionOf(zoneName: string | null, scope: ZoneScope): string | null {
+  return zoneName === null ? null : `${zoneName}, ${ZONE_SCOPE_PHRASE[scope]}`
+}
+
+/** How a slice is worded inside a sentence. `zone` is the pair `zoneCaptionOf` composes from, so
+ *  the session phrase can slot BETWEEN the name and the membership clause. */
+function captionOf(id: SliceId, zone: { name: string; scope: ZoneScope } | null): string {
   switch (id) {
     case 'session':
       return 'this session'
     case 'zone':
-      return zoneName ?? 'this zone'
+      return zoneCaptionOf(zone?.name ?? null, zone?.scope ?? 'allTiers') ?? 'this zone'
     case 'zoneSession':
-      return `${zoneName ?? 'this zone'} this session`
+      // The membership clause lands LAST, after the session phrase, so the sentence reads as one
+      // subject with two qualifiers rather than as "only this session" — which would be a claim
+      // about the RANGE, and is not what this clause is about.
+      return zone === null
+        ? 'this zone this session'
+        : `${zone.name} this session, ${ZONE_SCOPE_PHRASE[zone.scope]}`
     case 'custom':
       return 'the custom range'
     case 'all':
@@ -302,18 +376,42 @@ function rangeFor(args: ResolveSliceArgs): SliceRange {
  * first zone line carries a null `zoneKey` (every zone, i.e. no restriction). Both are states the
  * control normally prevents by not offering the button; refusing here would be a crash where the
  * honest answer is available.
+ *
+ * THE MEMBERSHIP RIDES ALONG THE SAME WAY (JOS-291): `zoneScope` decides which tiers of that zone
+ * the slice admits, `zoneExactKey` is that decision as the key every consumer hands on, and both
+ * degrade to the default — a scope on a slice with no zone in it is not an error, it is a setting
+ * with no subject, and it resolves to `allTiers` with a null key.
  */
 export function resolveSlice(args: ResolveSliceArgs): Timeslice {
   const { snap, id } = args
   const zone = id === 'zone' || id === 'zoneSession' ? currentZoneOf(snap) : null
-  const range = rangeFor(args)
+  const where = zoneHalfOf(zone, args.zoneScope)
   return {
     id,
     label: LABELS[id],
-    caption: captionOf(id, zone?.name ?? null),
-    range,
-    zoneKey: zone?.key ?? null,
-    zoneName: zone?.name ?? null
+    caption: captionOf(id, zone ? { name: zone.name, scope: where.zoneScope } : null),
+    range: rangeFor(args),
+    ...where
+  }
+}
+
+/** The ZONE HALF of a resolved slice — its four fields, derived together so no caller can assemble
+ *  three of them from one membership and the fourth from another. */
+function zoneHalfOf(
+  zone: { key: string; name: string } | null,
+  picked: ZoneScope | null | undefined
+): Pick<Timeslice, 'zoneKey' | 'zoneName' | 'zoneScope' | 'zoneExactKey' | 'zoneCaption'> {
+  if (!zone) return { zoneKey: null, zoneName: null, zoneScope: 'allTiers', zoneExactKey: null, zoneCaption: null }
+  const zoneScope = resolveZoneScope(picked)
+  return {
+    zoneKey: zone.key,
+    zoneName: zone.name,
+    zoneScope,
+    // NULL UNDER `allTiers`, on purpose: every consumer passes this straight down, so "the default
+    // is byte-identical to the read before this existed" is a property of the DATA rather than a
+    // rule each caller has to remember.
+    zoneExactKey: zoneScope === 'exactTier' ? zoneIdKey(zone.name) : null,
+    zoneCaption: zoneCaptionOf(zone.name, zoneScope)
   }
 }
 
@@ -326,9 +424,12 @@ export function resolveSlice(args: ResolveSliceArgs): Timeslice {
  * `zoneSegments` and in `lootRates.itemZoneRows`: the three agree by construction rather than by
  * coincidence, and a slice for a NAMED zone therefore excludes it rather than guessing where it
  * happened (law 1).
+ *
+ * The zone half is `zoneScope.zoneAdmits` — the SAME predicate `rangeStats` and `lootRates` run, so
+ * the exact-tier choice (JOS-291) cannot reach one of the three and miss the others.
  */
 export function inSlice(slice: Timeslice, ts: number, zone?: string): boolean {
   if (ts < slice.range.t0 || ts >= slice.range.t1) return false
   if (slice.zoneKey === null) return true
-  return zoneKey(zone ?? UNKNOWN_ZONE) === slice.zoneKey
+  return zoneAdmits(zone ?? UNKNOWN_ZONE, slice.zoneKey, slice.zoneExactKey)
 }

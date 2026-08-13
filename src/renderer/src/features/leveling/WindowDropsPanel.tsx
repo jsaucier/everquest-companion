@@ -63,7 +63,8 @@ function useScopedDrops(scope: ScopedStats): WindowItemRow[] {
         // BOTH halves of the slice (JOS-130). `spans` above is already the zone's own time when
         // the slice carries a zone, so counting every zone's drops against it would put a rate
         // under a denominator it was never measured over.
-        zoneKey: scope.zoneKey
+        zoneKey: scope.zoneKey,
+        zoneExactKey: scope.zoneExactKey
       }),
     [events, scope]
   )
@@ -123,6 +124,14 @@ function DropRow({
   )
 }
 
+/**
+ * The panel's ceiling in px — about eighteen rows, which is the "generous, not a porthole" the
+ * JOS-289 constraint asks for. A pixel count rather than a percentage on purpose: the tab has no
+ * fixed height any more, so a `%` max-height has nothing to be a percentage OF and resolves to
+ * none — which for a 641-row `All` scope would be twenty thousand pixels of page.
+ */
+const DROPS_MAX_H = 520
+
 export function WindowDropsPanel({ scope, onOpenItem }: WindowDropsPanelProps): JSX.Element {
   const rows = useScopedDrops(scope)
   // ONE basis read for the panel (JOS-288): the caption's span and every row's denominator are the
@@ -132,13 +141,15 @@ export function WindowDropsPanel({ scope, onOpenItem }: WindowDropsPanelProps): 
   return (
     <Paper
       variant="outlined"
-      // THE FIXED-HEIGHT LAW, on a column that already holds two other panels: an explicit floor
-      // AND ceiling, with the scroll on the list inside. Without the floor this is just another
-      // shrinkable flex item — MEASURED in the e2e, where the three-panel column squeezed it to a
-      // clipped strip whose rows were in the DOM and unclickable. The ceiling is the AA ledger's
-      // own recipe (a share of the column, never a pixel count), so a tall window gives the list
-      // more room and a short one still leaves the progress feed something.
-      sx={{ p: 2, display: 'flex', flexDirection: 'column', minHeight: 132, maxHeight: '40%' }}
+      // THE ONE PANEL ON THIS TAB THAT KEEPS A WINDOW, AND IT IS A CEILING RATHER THAN A HEIGHT
+      // (JOS-289). Every other panel here now takes its honest height and lets the page scroll;
+      // this list cannot, because its row count is unbounded by the SCOPE rather than by the data:
+      // 641 distinct looted item names in the owner's log (measured 2026-08-13), all of which the
+      // `All` slice legitimately asks for. So the rule is the JOS-260 one — windowed where the row
+      // count demands it, and GENEROUS rather than a porthole. `maxHeight` (never `height`, never
+      // the old `40%` share of a column height that no longer exists) means a scope with a dozen
+      // drops shows all twelve with no scrollbar at all, and only a genuinely long list scrolls.
+      sx={{ p: 2, display: 'flex', flexDirection: 'column', maxHeight: DROPS_MAX_H }}
       data-testid="leveling-drops"
     >
       <Typography variant="subtitle2">Dropping in this window</Typography>
@@ -163,8 +174,9 @@ export function WindowDropsPanel({ scope, onOpenItem }: WindowDropsPanelProps): 
           no drops in {scope.label}
         </Typography>
       )}
-      {/* The list owns the scroll — a long window can hold hundreds of distinct items. */}
-      <Box sx={{ flexGrow: 1, minHeight: 0, overflow: 'auto', pr: 0.75 }}>
+      {/* The list owns the scroll, and only once it has outgrown the ceiling above — a long
+          window really can hold hundreds of distinct items (641 measured). */}
+      <Box sx={{ minHeight: 0, overflowY: 'auto', pr: 0.75 }} data-testid="leveling-drops-list">
         {rows.map((r) => (
           <DropRow key={r.key} row={r} read={read} onOpenItem={onOpenItem} />
         ))}

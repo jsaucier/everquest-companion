@@ -26,6 +26,15 @@ export interface ChipMultiSelectProps<T extends string> {
   max?: number
   /** the control never shrinks inside a nowrap toolbar, so its floor is the caller's call */
   minWidth?: number
+  /**
+   * THE WORDS AN OPTION WEARS, when the token is not already them (JOS-302's weapon picks:
+   * `ONE_HAND` is a fine union key and a terrible chip). Default: the token itself, which is what
+   * every caller before this one relied on — `WAR`, `PAL`, an island's own name.
+   *
+   * The option list stays the model's vocabulary either way. This maps tokens to words for the
+   * listbox and the chips; nothing about what is stored or compared changes.
+   */
+  optionLabel?: (option: T) => string
   testId?: string
 }
 
@@ -37,6 +46,7 @@ export function ChipMultiSelect<T extends string>({
   placeholder,
   max,
   minWidth = 280,
+  optionLabel,
   testId
 }: ChipMultiSelectProps<T>): JSX.Element {
   const full = max !== undefined && value.length >= max
@@ -48,6 +58,7 @@ export function ChipMultiSelect<T extends string>({
       value={value}
       onChange={(_e, v) => onChange(max === undefined ? v : v.slice(0, max))}
       getOptionDisabled={(o) => full && !value.includes(o)}
+      getOptionLabel={optionLabel ?? ((o) => o)}
       sx={{ minWidth }}
       data-testid={testId}
       renderInput={(params) => <TextField {...params} label={label} placeholder={placeholder} />}

@@ -2571,3 +2571,1078 @@ and kind tag shrink before the lock/close pair does. Measuring it found that the
 own clamp and asks every button and slider whether its rectangle is still inside the
 window; height 90 is 2px over the measured 88 the buffs footer needs at 140 wide, not
 a round number.
+
+## Flake ledger — the sky-filters remount row, resolved, full sighting history
+
+<!-- Moved verbatim from AGENTS.md (lines 101-109 at the 2026-08-13 collapse). -->
+
+  - `sky-filters.e2e` · expanded-quest step vs live-log viewKey remount ·
+    6 sightings (2026-08-10/11 x3, 2026-08-12 six-spec sweep during JOS-253,
+    2026-08-12 six-spec sky sweep during JOS-268, 2026-08-13 v0.26.0 release
+    sweep — green standalone immediately after, every time;
+    multi-spec-sweep only) · documented in-file
+    by the JOS-206 worker;
+    **RESOLVED 9816cd34 (JOS-279)** — order-hardening was a BET;
+    `tests/e2e/viewRemount.mts` HOLDS the precondition instead (mark the keyed
+    subtree, read before you `check`, discard an attempt that lost its mount).
+
+## Flake ledger — the respawn-timers row, resolved, full history
+
+<!-- Moved verbatim from AGENTS.md (lines 127-136 at the 2026-08-13 collapse). -->
+
+  - `respawn-timers.e2e` · the learned gap reads 3m 01s where four assertions
+    spell `3m 00s` · 1 sighting (2026-08-13 sweep, JOS-279; green standalone
+    after) · DIAGNOSED: `stepWatchFromRecentKills` stamps its two deaths off
+    two instants, so a second of wall clock makes the gap 181 s. Stamp both
+    off ONE instant; never widen the assertions. ·
+    **RESOLVED 0572c77f** — the diagnosis held exactly: `Date.now()` for the
+    first death and a bare `append()` (which is `appendAt(new Date())`) for the
+    second were two clock reads, and EQ stamps are second-granular. Both deaths
+    now stamp off one captured `now`, so the gap is 180 s by construction; the
+    assertions were left alone. Green standalone and in a five-spec sweep.
+
+## Flake ledger — the perf.e2e heartbeat row, resolved, full history
+
+<!-- Moved verbatim from AGENTS.md (lines 146-159 at the 2026-08-13 collapse). -->
+
+  - `perf.e2e` heartbeat boundary · "a replay shorter than one heartbeat states
+    NO drift figures" fails when the replay lands JUST under the beat and a tick
+    still gets counted (118 vs 125 ms twice, 123 vs 125 once) · 5 sightings
+    (2026-08-11 phase-4 worker, 2026-08-12 JOS-230 worker, 2026-08-12 JOS-238
+    worker, 2026-08-12 v0.23.0 release sweep at 115 vs 125 ms, 2026-08-13
+    v0.25.0 release sweep — full-sweep only, green standalone every time; the
+    prior row said 3 while listing four events, count corrected) · the JOS-229
+    worker sharpened it to "the probe banks a tick inside the window — a
+    tick-phase coin flip, not load", which was right about the tick and wrong
+    about why ·
+    **RESOLVED 0523dd90 (JOS-279)** — asked about the WRONG window: both probes
+    run `appReady`→`replayDone`, wider than the fold it gated on (138 vs
+    103 ms). Now `probeWindowMs`, plus a three-valued verdict so the naive
+    fix's mirror flake cannot appear.
+
+## The /pet who leader scrub carve-out — gate history (JOS-52, JOS-270)
+
+<!-- Moved verbatim from AGENTS.md (lines 184-195 at the 2026-08-13 collapse). -->
+
+  **CARVE-OUT: the `/pet who leader` answer** (JOS-52) — `<Name> says, 'My
+  leader is <anyone>.'`, EXACT shape, never a `/leader/` pattern. It was
+  SELF-GATED until **JOS-270** (owner ruling 2026-08-13): it is the first
+  pet-voiced line carrying a PLAYER's name inside the quote, so it borrowed
+  the self-`/who` row's argument. THE GATE IS GONE — the line is kept whatever
+  name it carries, on the 2026-08-05 group-membership reasoning (a structural
+  fact about the fight, and both names already appear uncensored in every
+  combat line of the same slice). The gate's measured cost was that the LIVE
+  app binds a group-mate's pet off this line while no feedback slice could
+  ever CONTAIN one, which made report 01KZVYMCAD72XFC36D73D8J2E8
+  structurally un-triageable. NO COMMITTED FIXTURE MOVED (one occurrence in
+  1.4M lines, in `extract-pet-claim`'s p2 window, and it names Primitive).
+
+## The vite define law — full story (2026-08-04)
+
+<!-- Moved verbatim from AGENTS.md (lines 378-388 at the 2026-08-13 collapse). -->
+
+- **Never reference a vite `define` bare**, and **anchor a dev-only flag on
+  `import.meta.env.DEV`, not on the `define`.** Defines exist only from
+  dev-server START, so a bare identifier under a stale server is a
+  `ReferenceError` that blanks the whole app (it did, 2026-08-04) — and
+  feature-hidden is still a SILENT wrong answer (the Triage tab vanished with
+  nothing to grep). ONE guarded reader per flag:
+  `import.meta.env.DEV && (typeof __X__ === 'undefined' || __X__)` — absent
+  define means STALE SERVER, degrade upward — and log the resolved value once
+  at boot. Config changes (defines, entries, externals) require the OWNER to
+  restart `npm run dev`; say so in the report. Full story:
+  docs/agents-archive.md.
+
+## Owner tooling gate, at full length (JOS-72)
+
+<!-- Moved verbatim from AGENTS.md (lines 389-401 at the 2026-08-13 collapse). -->
+
+- **OWNER tooling needs `EQ_OWNER_TOOLS=1`; plain DEV is not enough** (JOS-72).
+  Tier 1 (dev restart, `UNRELEASED`, boot diagnostics) stays on plain
+  `import.meta.env.DEV`; tier 2 (the Triage tab + every `triage:*` handler,
+  which read the owner's DSQL/S3/CloudWatch) additionally requires the env
+  var at BOTH ends — main refuses to register the IPC
+  (`src/main/ownerTools.ts`) and the renderer hides the nav row (devFlags.ts,
+  fed by `window.eq.ownerTools`). It exists because `app.isPackaged` is FALSE
+  in a self-compiled build of this public repo. Tier 2 degrades **CLOSED** —
+  the opposite of tier 1's degrade-upward; policy in
+  `src/shared/ownerTools.ts`. The owner sets it in the SHELL
+  (`setx EQ_OWNER_TOOLS 1`; electron-vite has no `.env` → `process.env`
+  path). Never commit it, never put an AWS profile name in the gate. Full
+  story: docs/agents-archive.md.
+
+## A logout pauses your character, at full length (JOS-134, JOS-262)
+
+<!-- Moved verbatim from AGENTS.md (lines 525-550 at the 2026-08-13 collapse). -->
+
+- **A LOGOUT PAUSES YOUR CHARACTER, NOT THE WORLD — SO BUFFS FREEZE AND
+  DEBUFFS DO NOT** (JOS-134, owner's design 2026-08-09). EQ resumes a
+  beneficial buff's REMAINING duration at login
+  (`BuffInstances.onOfflinePause`; the S5 fixture proves it to the second); a
+  debuff you left on a mob is a timer in the WORLD and is never shifted
+  (`modules/buffTimers.ts` takes an EXPLICIT no-op on `offlineGap`). **The
+  boundary is evidence, not a timeout — AND SINCE JOS-262 THERE IS NO TIMEOUT
+  LEFT ANYWHERE IN IT.** Every login prints a reconnect preamble, whose LENGTH
+  is a client-side duration; while the anchor was a 30s window and the hole's
+  answer a 30s timer, a slow-loading machine got no pause at all (measured:
+  31s of preamble = no `offlineGap` emitted; the heartbeat wiping the previous
+  session's buffs seconds before the `Welcome`). Both constants are gone. ONE
+  shared predicate decides both halves: `sessionDetector.ts inWorldEvidence` —
+  a line that could ONLY have been printed for THIS character. It anchors
+  `fromTs`, and `modules/buffsSession.ts` rules a hole unexplained only when
+  such a line arrives with no intervening login. **"Typed" is NOT the test and
+  the log says so**: other players' combat lands in the preamble (two `death`
+  events 2s before the Aug 07 Welcome), so a stranger's kill proves the CLIENT
+  is connected and nothing about you. The priced cost: `fromTs` stays a LOWER
+  bound, so a gap never under-states an absence and runs long by the trailing
+  run of lines that name nobody — 24s across an ordinary camp (the countdown
+  ticks are `unknown`), 56 min in the worst AFK park measured over 45 logins.
+  **And the learner refuses BOTH halves of a cycle that spans an absence**
+  (`spannedGap`) — both err LONG, the direction law 5's recency-weighted MAX
+  is most sensitive to. Censor, never correct. Zoning is not a logout; death
+  still clears (JOS-88). Full story: docs/agents-archive.md.
+
+## The spell scrape's revision cache — full note (JOS-251)
+
+<!-- Moved verbatim from AGENTS.md (lines 569-574 at the 2026-08-13 collapse). -->
+
+  **THE SCRAPE IS REVISION-KEYED AND BATCHED**
+  (`scripts/sources/cache/spells/index.json` records the revid per cached
+  page); a re-run with an unchanged spell list is a byte-identical no-op.
+  Re-scraping is cheap — but it is a DATA CHANGE, not a refresh (the JOS-251
+  run also picked up 160 wiki edits, one of them wrong). Diff it, do not
+  skim it.
+
+## The default sound pack preference, at full length (JOS-273)
+
+<!-- Moved verbatim from AGENTS.md (lines 584-610 at the 2026-08-13 collapse). -->
+
+  **PRESENCE IS NOT PRECEDENCE: THE DEFAULT PACK IS A PREFERENCE, AND A DELETION IS A
+  STATEMENT** (JOS-273, owner ruling 2026-08-13 — verbatim: *if someone deletes alan
+  rickman, they should be able to set a default and it should persist*). The shipped
+  pack used to be HARDCODED as the pack every picker pre-selected and every authored
+  alert pointed at, and startup provisioning re-installed it whenever it was missing
+  with no memory of a deletion — so deleting it held until the next launch, which
+  users experienced as "it re-enables itself with every update". Three parts, all in
+  `src/shared/soundPacks.ts` (the pure core) + `storeSoundPacks.ts` (accessors):
+  (1) the PREFERENCE `soundPacks.defaultPackId`, honoured by the picker pre-selection
+  (`SoundPicker.fallbackPack`, `alertForm` hydration, the row's `AudioPicker`), the
+  suggestion builder (every template/rank/illusion chip, the ready-made sets, the
+  observed slow offer) and the SEEDS (`alertSeeds.ts`); set from the pack browser's
+  star, beside the Uninstall the reporter was already reaching for. (2) the TOMBSTONE
+  `soundPacks.removedPackIds` — uninstalling a SHIPPED pack records it,
+  `packsToProvision` skips it, installing it again clears it; additive is not the same
+  as unconditional. (3) RESOLUTION, not silence: a ref whose pack (or sound) is gone
+  resolves through the preference keeping its CESP category (`resolveSoundRef` — the
+  live, pack-agnostic form of `migrateAlertSoundRef`'s intent mapping), and where
+  nothing can answer the alert ROW says so (`soundNotice`). `getSoundDataIn` used to
+  answer null for every pack but the reserved one; that rule was true right up until
+  deleting the shipped pack became a supported thing to do. FRESH INSTALLS ARE
+  UNCHANGED end to end — absent preference ⇒ every one of those is the identity
+  function, and the additive optional key needs no schema bump. The renderer's
+  `DEFAULT_PACK_ID` mirror (suggestions.ts) STAYS and keeps its mirror-sync law: it is
+  a compile-time fact about what the app SHIPS, and the preference arrives beside it
+  as runtime state. Pinned by tests/defaultPackPreference.test.mts +
+  tests/e2e/default-sound-pack.e2e.mts (two launches over one userData dir).
+
+## Rank-blind literal matchers, at full length (JOS-259)
+
+<!-- Moved verbatim from AGENTS.md (lines 621-636 at the 2026-08-13 collapse). -->
+
+  **A LITERAL `where.spell` MATCHER IS RANK-BLIND — ALL RANKS, FULL STOP**
+  (JOS-259, owner ruling 2026-08-12; domain law, verbatim: once you upgrade a
+  spell it never downgrades, even on a loadout swap). Only SOME of a spell's
+  lines carry the roman numeral — `castBegin`/`resist` keep it, the wear-off
+  family prints the bare name — so whole-string equality let one def satisfy
+  half its own spell's lines: a wizard's resisted alert for Elemental
+  Maelstrom went silent on the day they unlocked rank II while their fade
+  alert kept working. A literal spec now compiles with `spellLineKey(spec)`
+  beside it and `accepts` (main/modules/alerts.ts) compares the folded keys
+  when the exact compare misses — a pure WIDENING, so a def pinned to a rank
+  still fires on it. Untouched, on purpose: `/regex/` specs (user intent, not
+  a spelling), every non-`spell` key, and `damage.skill` (a spell name for
+  dtype spell/dot and a melee verb otherwise — an owner call of its own). NO
+  upgrade-offer compensation: `detectRankUpgrades` still only sees suffixed
+  defs, and that is now a convenience rather than the thing between a user
+  and a sound. Pinned in tests/rankBlindSpellAlerts.test.mts.
+
+## Template flags that lied, at full length (JOS-103)
+
+<!-- Moved verbatim from AGENTS.md (lines 659-670 at the 2026-08-13 collapse). -->
+
+  **A TEMPLATE FLAG IS A CLAIM THE ALERT CAN FIRE, AND THREE OF THEM WERE LYING**
+  (JOS-103). `suggestionTemplates` is now an exhaustive table over the DB's
+  33 observed `spellType`s — a spell with no template is DROPPED from the
+  catalog (Spirit of the Puma was invisible). `lands` is not offered where no
+  `buffApply` can ever be emitted; `wearsOff` is an `any` composite over
+  `buffExpired` + `buffWearOff` (a buff somebody else cast never becomes an
+  active instance). Puma's landing line has NO typed event at all, so its
+  shipped capture suggestion is a `raw` trigger — the only thing that exists
+  for that family. **AND `suggestions.ts` IS NODE-TESTED NOW** (imports
+  relative, repo law): `tests/suggestedAlertsFire.test.mts` drives a real
+  suggested def through the real parser into the real module. Full story:
+  docs/agents-archive.md.
+
+## The external-link allowlist widening, at full length (JOS-254, JOS-263)
+
+<!-- Moved verbatim from AGENTS.md (lines 714-729 at the 2026-08-13 collapse). -->
+
+  **That allowlist is the boundary, not a formality**: link URLs are built from
+  WIKI PAGE TITLES (`shared/wiki.ts`), and an unvalidated openExternal would let
+  one ask the OS to run `file:///…exe`. Widen `EXTERNAL_LINK_ALLOWLIST`
+  (security.ts) deliberately or not at all, **and an entry is a HOST PLUS AN
+  OPTIONAL PATH SCOPE — write the narrowest one that serves the link** (owner
+  ruling, JOS-263). It has been widened ONCE, for `github.com` (JOS-254, the
+  What's new panel's link to the releases page), and that entry is
+  REPO-SCOPED: only `https://github.com/jmoyers/everquest-companion/…` opens,
+  never github.com's root or anyone else's repo. The three wiki entries stay
+  host-wide because a wiki link's PATH is the page title this app cannot
+  predict; github.com is not one site the way a wiki is. The justification is
+  written where it lives: the URL is a constant in the renderer bundle rather
+  than scraped text, and that repo is where every build of this app comes from.
+  The path prefix is matched SEGMENT-AWARE (`…-companion-evil` is not inside
+  `…-companion`) against the WHATWG-normalized pathname, so `..` — and its
+  `%2e%2e` spelling — is already resolved away before the check.
+
+## Respawn rounds 7-9 — the distilled block as it stood
+
+<!-- Moved verbatim from AGENTS.md (lines 903-910 at the 2026-08-13 collapse). -->
+
+   Rounds 7-9, distilled: the tab is Timers; the duration + source label are
+   ONE bordered unit whose edit icon opens `RespawnEditDialog.tsx`
+   (whitelist grammar `parseRespawnDuration`; `respawnOverridden` = the
+   ladder saying `source === 'custom'`); the OVERLAY carries no editing;
+   **a watched row NEVER vanishes while watched** (round 8 — the expiry
+   sweep is gone; stale rows read "due long ago"; what ages out is the SEEN
+   state; unwatch is the only way a row leaves); the mob hover card is
+   IN-APP ONLY. Full rounds history: docs/agents-archive.md.
+
+## The fold checkpoint post-mortem paragraph, as it stood (JOS-208, JOS-230)
+
+<!-- Moved verbatim from AGENTS.md (lines 914-928 at the 2026-08-13 collapse). -->
+
+For two days the app could restore its world model from a binary checkpoint
+and replay only the log's tail (~5,000 lines of machinery). It worked; the
+owner removed it anyway: the cold-read stall it targeted did not survive its
+own instrumentation (fleet p95 time-to-first-MB 10-25 ms — the real cost is
+fold CPU under the slicer's fixed duty), it shipped OFF behind a gate whose
+denominator could never move, and it taxed every fold change with
+schema/goldens/census ceremony. WHAT SURVIVED, because it is the app's and
+not the feature's: `tests/foldDeterminism.test.mts` (**a historical replay
+reads no wall clock**), the engine's `st.hydrating` gate
+(`tests/combatReplayClock.test.mts`), and
+`MessageOverlayMiner.lastObservedTs` (a published snapshot's `updatedAt` is
+the LOG's clock). Both product fixes were found by folding the same bytes
+twice and diffing — reach for that again, harness or no harness. If a
+startup-cost ticket comes back: measure first, and read
+`git log 5038f6f0..1c3e584f`. Full post-mortem: docs/agents-archive.md.
+
+## The class-skill melee lanes and their per-lane proofs, at full length (JOS-77, JOS-81, JOS-92, JOS-163)
+
+<!-- Moved verbatim from AGENTS.md (lines 957-987 at the 2026-08-13 collapse). -->
+
+- **A VERB THAT NAMES A CLASS SKILL GETS ITS OWN LANE; A WEAPON VERB DOES
+  NOT** (JOS-77, JOS-81). `meleeSkill()` (log/parseCombat.ts) splits
+  Backstab, Bash, Kick, Frenzy, Flurry, Cleave (WAR) and Smite (PAL);
+  slash/pierce/crush/hit/slice/claw/gore are what a weapon in a hand prints
+  and share the generic "Melee" row (the Rounds panel splits those BY VERB).
+  The table is HAND-AUTHORED against `data/classes.json`'s skill→class map —
+  never a matcher over spelling. The proofs differ per lane; know them
+  before adding one:
+  - Cleave (JOS-77): an ABSENCE — the owner slashes 71,104 times, cleaves
+    ZERO, receives 20,334 incoming cleaves; a verb that never prints for a
+    player who lacks the skill is gated on the skill.
+  - Smite (JOS-81): THE SKILL-UP STREAM — a weapon verb never ticks under
+    its own name (`better at Slash!` does not exist) while `Smite` ticks
+    beside Kick/Bash/Backstab. **THE SKILL LANE AND THE SPELL LANE SHARE A
+    STEM AND MUST NEVER MERGE** — a spell literally named `Smite` exists;
+    `tests/combatSmiteLane.test.mts` pins the collision on real bytes.
+  - Ranged (JOS-92): **a weapon verb fired from a different SLOT than the
+    hands is not the hand lane** — `shoot` ticks under `Archery`. THE
+    DISCRIMINATOR IS THE VERB AND NOTHING ELSE (a stance- or class-keyed
+    split would mis-assign a stance-switcher's fight); no thrown lane is
+    invented beside it (awaiting-sample law); the self arm is INJECTED in
+    `tests/combatRangedLane.test.mts` — the owner has never fired a bow.
+  - Strike (JOS-163): the GENERIC VERB every monk special prints as — not a
+    class skill, not a slot — so an unnamed strike earns a row called
+    **`Strike`**, the verb, never a name from the chain. The bug was the
+    PRE-STATE FLOOR (the `You will now use <X> …` line prints once, at
+    level-up, so a log that begins after it read "Melee" forever): the verb
+    earns the ROW, the state line earns the NAME, and **no lane is ever
+    seeded from the chain's first entry** (specialAttacks.ts's stated law).
+  Law 8 held byte-identical across all four changes; full counts, fixtures
+  and hand tallies: docs/agents-archive.md.
+
+## Mend, at full length (JOS-86)
+
+<!-- Moved verbatim from AGENTS.md (lines 988-999 at the 2026-08-13 collapse). -->
+
+- **A HEAL THE LOG ANNOUNCES BUT NEVER VALUES GETS A LANE THAT CARRIES A COUNT
+  AND NO NUMBER** (JOS-86 — the monk's Mend). `You mend your wounds and heal
+  some damage.` is the whole sentence: no amount, no target, no third-person
+  twin (whole-log partition: 876 of 1,178 `mend` lines are that sentence, the
+  rest skill-ups and chat). THE FIX IS A KIND, NOT A FLAG: `healUnstated`,
+  with **no amount field at all** and a third `HealClassification`
+  `'unstated'` — a `heal` with `amount: 0` would be a lie with a long tail.
+  It enters NO sum and rides its own `HealSourceView.unstatedCount` so the
+  crit and overheal rates beside it keep their VALUED denominator; every
+  string that would render that 0 prints the reason there isn't one. FIRST
+  PERSON ONLY, no invented arms (awaiting-sample law). Law 8 gate: every
+  fixture diff was an ADDITION. Full story: docs/agents-archive.md.
+
+## Special attacks print no verb, at full length (JOS-163 context)
+
+<!-- Moved verbatim from AGENTS.md (lines 1000-1011 at the 2026-08-13 collapse). -->
+
+- **SPECIAL ATTACKS PRINT NO VERB OF THEIR OWN.** Dragon Punch, Eagle Strike
+  and Tiger Claw ALL land as `You strike …`; Round Kick and Flying Kick as
+  `You kick …`. The game names the live one exactly once, in two
+  first-person-only shapes (`You will now use <X> while auto attacking.` — a
+  GRANT, also how a lane RESETS — and `… instead of <Y> …`, an in-lane
+  upgrade), so the lane label is STATE, not parsing:
+  `combat/specialAttacks.ts` tracks the live special per VERB lane and ingest
+  renames the skill. **`Slam instead of Bash` is REFUSED**: Slam never prints
+  `slam` and `better at Slam!` does not exist — a documented
+  non-distinguishable (law 6), not a guess. SKILL-UPS ARE NOT AN INPUT
+  anywhere here (Tiger Claw keeps ticking after it was replaced). Full
+  evidence: docs/agents-archive.md.
+
+## Resist shapes and the full-log sweep counts
+
+<!-- Moved verbatim from AGENTS.md (lines 1041-1048 at the 2026-08-13 collapse). -->
+
+- Resists (`resist` event, Task #51 v2): THREE shapes — `<target> resisted
+  your <Spell>!` (caster=you), `<target> resisted <caster>'s <Spell>!`
+  (caster=name; test YOUR form FIRST — 712 spell names contain `'s`, e.g.
+  Denon's), `You resist[ed] <mob>'s <Spell>!` (incoming). Spell keeps rank
+  suffix for display, rank-normalized (spellCanonKey) for keys. Full-log
+  sweep: 5747 (you 1749 / pet 390-by-name but ~2019 once charmed mobs
+  resolve / other-mob 1695 dropped / incoming 1913). Misses: `tries to … but
+  misses!` family (miss/dodge/parry/riposte/block/absorb).
+
+## The pet-summon nudge, at full length (JOS-258)
+
+<!-- Moved verbatim from AGENTS.md (lines 1095-1117 at the 2026-08-13 collapse). -->
+
+  **AND THE APP NOW SAYS SO, ONCE, AND THEN STOPS** (JOS-258, owner ruling
+  2026-08-12 — option (a), explicitly NOT a reopening of JOS-49). The blind
+  spot is still accepted; what changed is that the meter no longer stays
+  silent about it. `combat/petNudge.ts` arms on the player's own pet-summon
+  cast (`spellEffectClass.ts`'s derived `summonPet` class — 104 effect rows
+  against the 83 `spellType: Pet` files, the gap being the magician's
+  Vocarates and the necro's three differently-spelled pets; `Call Pet` is
+  excluded, it moves a pet rather than making one) and the overlay meter
+  draws ONE sentence on its content background: *Pet summoned - order it
+  once or type /pet who leader so the meter can see it.* **STALENESS AND
+  REPETITION ARE THE FAILURE MODES, so the whole feature is a timeout**:
+  a 10s GRACE (the p2 fixture measures the summon→tell fast path at SIX
+  seconds — a nudge drawn and yanked teaches nobody anything), a 45s SHOW,
+  and a 5m QUIET after one is ignored. ONE SLOT, so chain-summoning cannot
+  stack nudges; cleared by any `bindPetClaim` (all three routes, one seam),
+  by a fizzle/interrupt, or by its own clock — swept from the event stream
+  AND from `snapshot(now)`, the `sweepCharm` pattern. Armed only when
+  `hydrating` is false. **IT COACHES, IT NEVER ADOPTS** — the unbound pet's
+  damage is still dropped at routing while the sentence is up, and
+  `tests/petSummonNudge.test.mts` asserts exactly that beside the timings.
+  The renderer holds NO dismiss state: the snapshot's `petNudge` is absent
+  in every state but the one, which is what makes "no persistent banner"
+  structural rather than a promise.
+
+## A /who row is ground truth — the JOS-287 worked example
+
+<!-- Moved verbatim from AGENTS.md (lines 1136-1148 at the 2026-08-13 collapse). -->
+
+  **A `/who` ROW IS GROUND TRUTH AT ITS TIMESTAMP, AND INFERENCE NEVER
+  OUTRANKS IT** (JOS-192, JOS-287; the two live-log tripwires in
+  comboWindows/comboWhoBoundary are this law): an interval may not
+  contradict a row it covers, nor be extended or created BACKWARD over
+  evidence that contradicts it. Two rows are two statements, never one
+  event — so `mergeBoundaries` may narrow, move or absorb an INFERRED
+  boundary but never a `/who` cut (`resolveGroup`), and an inferred window
+  that covers a row cut is that swap dated better by the game (absorbed,
+  recorded in `startAlso`). JOS-287 was a six-day level-drop window
+  (50 → 11 re-roll) overlapping four row cuts: one boundary came out where
+  there were four and a row typed on Aug 10 was stated over the Aug 09
+  morning and the wizard era behind it. Frozen shape: fixture
+  `cw7-who-swap-boundary-aug12.log` + tests/comboSwapBoundary.test.mts.
+
+## The worn-focus shimmer reversal, at full length (JOS-79)
+
+<!-- Moved verbatim from AGENTS.md (lines 1149-1157 at the 2026-08-13 collapse). -->
+
+- **`Your <item> shimmers briefly.` / `feels alive with power.` IS A WORN
+  FOCUS TALKING, NOT AN ITEM CASTING** (JOS-79, measured whole-log — this
+  entry previously said the opposite and it was wrong). All five items that
+  print it are focus items; the combo rule that dropped a `castBegin` within
+  2.5 s of one was discarding 44.2% of own casts and EVERY wizard observation
+  in the log. The rule is gone; the event stays (it keeps 7,921 lines out of
+  `unknown`) and says nothing about class in either direction. A
+  self-announcing clicky needs its own observed sample before any rule acts
+  on one. Measurements: docs/agents-archive.md.
+
+## Slows are a roster, at full length (JOS-69, JOS-233)
+
+<!-- Moved verbatim from AGENTS.md (lines 1168-1185 at the 2026-08-13 collapse). -->
+
+- **SLOWS ARE A ROSTER, NOT A NAME** (JOS-69). A slow wearing off a mob is
+  the ordinary named-target `buffFade`, so the SPELL is the matcher and it
+  has to be the whole family — a slow is the spell you replace as you level.
+  spells.json enumerates it by landing emote (`Someone slows down.` = the
+  enchanter ladder, `Someone yawns.` = the shaman one; NPC-only members
+  excluded). The ON-YOU side is two shared messages that resolve to all-slow
+  candidate lists, so the alert reports the family, never which one. Its
+  tripwire is one word away: `Your speed returns to normal.` is NINE HASTES
+  (law 3).
+  **AND THE ROSTER HAS TWO SIDES NOW, BECAUSE ONE MEMBER CANNOT SAFELY BE ON BOTH**
+  (JOS-233, owner ruling 2026-08-12): the bard binding pair (Largo's
+  Melodic/Assonant Binding) joined the MOB side only — `The strands fade
+  away.` is shared VERBATIM with a beneficial buff, and a `where.spell`
+  matcher tests the whole candidate list (JOS-84), so one shared roster would
+  announce a slow every time that buff lapsed; anchoring cannot fix identical
+  sentences, only the split roster can. The wider binding line is EXPLICITLY
+  UNRULED and stays silent; the table is in tests/charmCcRoster.test.mts.
+  Full story: docs/agents-archive.md.
+
+## Charm and mez rosters and the oracle's reversals, at full length (JOS-84, JOS-200, JOS-225, JOS-233)
+
+<!-- Moved verbatim from AGENTS.md (lines 1186-1207 at the 2026-08-13 collapse). -->
+
+- **CHARM AND MEZ ARE ROSTERS TOO — AND THE SPELL DB IS THE ORACLE** (JOS-84).
+  `Your <spell> spell has worn off of <mob>.` is ONE sentence for three
+  facts; `rulesets.ts` matches the spell NAME: `charmSpell` ⇒ `uncharm`,
+  `ccSpell` ⇒ `cc {refresh:true}`, neither ⇒ an ordinary `buffFade`. The
+  rosters are enumerable from spells.json's landing-message families, and
+  `tests/charmCcRoster.test.mts` RE-DERIVES both families every run — a
+  future scrape that adds a member fails the suite instead of going mute.
+  **A MESSAGE FAMILY IS NOT AN EFFECT FAMILY — THE ORACLE HAS BEEN WRONG IN
+  BOTH DIRECTIONS**: Solon's Bewitching Bravura read as a mez off its shared
+  landing family and is really the bard's level-39 CHARM (JOS-200); both
+  Largo's binding songs left `ccSpell` entirely (JOS-225) — movement debuffs
+  whose wear-off was firing "Mez / root broke" at a bard, settled by the log
+  (the target trades melee blows through the song; `awakened` accompanies 0
+  of 81 Largo's wear-offs against 67-86% for every genuine mez). Both
+  reversals live as EVIDENCE-CARRYING TABLES in tests/charmCcRoster.test.mts
+  (`FAMILY_EXCEPTIONS`, `NOT_A_HOLD`) precisely so the next scrape cannot
+  sweep them back in; adding a row is a claim about what the game DOES,
+  backed by log lines — never a way to quiet a noisy alert.
+  **AND "NOT A HOLD" IS NOT "NOT AN ALERT"** (JOS-233): the SLOW group's
+  mob-side roster claims both Largo's by name, and `NOT_A_HOLD` carries a
+  `fires` column so a row states which group it ends up in and cannot drift
+  silently between the two. Full story: docs/agents-archive.md.
+
+## The bundled wiki art, at full length (JOS-198)
+
+<!-- Moved verbatim from AGENTS.md (lines 1255-1271 at the 2026-08-13 collapse). -->
+
+- **THE WIKI ART SHIPS IN THE BOX, AND THE FETCH IS THE FALLBACK** (JOS-198,
+  `src/main/bundledImages.ts` + `resources/wiki-images/`): every distinct
+  item iconId + all 29 boss portraits (780 files, 3.75 MB), COMMITTED — a
+  build-time fetch would make `npm run dist` depend on two volunteer wikis'
+  uptime. `npm run fetch:images` regenerates them + `manifest.json` (upstream
+  URL, byte length, sha256 per file). Files are named by the cache's OWN
+  `cacheFileName()`, so the bundle and `<userData>/image-cache` are ONE
+  namespace that cannot drift; `bundledImageRoots` probes the dir's three
+  addresses (dev/e2e, `app.asar`, `app.asar.unpacked`) in order.
+  electron-builder names `resources/wiki-images/**` EXPLICITLY, never
+  `resources/**` (gitignored soundpacks sit beside it). A source build
+  without images is a SUPPORTED state that falls back to the runtime cache.
+  `tests/bundledImages.test.mts` holds the manifest against both data files
+  and re-hashes all 780; the e2e proof is `bosses-week.e2e.mts` on a cold
+  userData with no network. CREDIT IS PART OF THE FEATURE: Preferences →
+  Thanks, README and the 0.19.0 note name both wikis. Full story:
+  docs/agents-archive.md.
+
+## Discovery spawns nothing, at full length (JOS-184)
+
+<!-- Moved verbatim from AGENTS.md (lines 1556-1570 at the 2026-08-13 collapse). -->
+
+- **DISCOVERY SPAWNS NOTHING, AND THAT IS AN AV DECISION AS MUCH AS A SPEED ONE
+  (JOS-184).** `src/main/log/discovery.ts` used to shell out (eight `reg.exe`
+  queries + `wmic`); both reads now go in-process through `native-reg`
+  (~150 ms of blocked main thread → ~6 ms, and no "unsigned exe sweeps the
+  uninstall registry seconds after install" heuristic signature). Two
+  invariants pinned by `tests/eqDiscovery.test.mts`: `eqInstallPathValue`
+  reproduces the OLD command's contract exactly (a DATA match, verified
+  against real reg.exe behaviour, not the docs), and `fixedDrives` reads
+  `HKLM\SYSTEM\MountedDevices` (mapped NETWORK drives are never there — the
+  property that keeps the offline-share hang fixed; removable local volumes
+  are a harmless superset). `native-reg` over registry-js because it ships
+  its N-API prebuild INSIDE the tarball (`.npmrc`'s `ignore-scripts=true` is
+  load-bearing); it is `require`d LAZILY and its failure swallowed — a bad
+  `.node` must cost one of three discovery paths, not the launch. Full
+  story: docs/agents-archive.md.
+
+## The scroll grip, at full length (JOS-138)
+
+<!-- Moved verbatim from AGENTS.md (lines 1714-1730 at the 2026-08-13 collapse). -->
+
+- **SCROLLING AND CLICK-THROUGH CANNOT BOTH BE TRUE OF THE SAME PIXEL (JOS-138).**
+  Pinned is `setIgnoreMouseEvents(true, {forward:true})`, and `forward`
+  forwards mouse MOVES and nothing else — a wheel notch goes to the game.
+  The owner's disposition ("we should allow scroll") is paid for in pixels:
+  the **SCROLL GRIP** (`SCROLL_GRIP_W`, overlay/overlayScale.tsx) is a 22px
+  strip over the drawn scrollbar; while LOCKED *and* the rows genuinely
+  overflow, a forwarded move inside it raises the named-reason sensor
+  (`capture('scroll', …)`) and the window takes the mouse for exactly the
+  time the pointer spends there — the wheel AND dragging the bar, because
+  the grip hands the real scrollbar real events instead of re-implementing
+  scrolling. NO new IPC, NO new mouse hook; the rest of the body stays
+  genuinely click-through (asserted in `tests/e2e/overlayScrollSteps.mts`).
+  Honest limits, stated: entry from outside the right border can miss the
+  strip, and Windows' hover-scroll setting is what carries the notch. The
+  event log and buffs/debuffs windows need no grip — they hold capture over
+  their WHOLE window while hovered, the same trade at the other extreme.
+  Full story: docs/agents-archive.md.
+
+## The buff/timer overlay bar law, at full length (JOS-89)
+
+<!-- Moved verbatim from AGENTS.md (lines 1738-1756 at the 2026-08-13 collapse). -->
+
+- **THE BUFF/TIMER OVERLAY'S BAR IS A CLAIM, AND ITS ABSENCE IS THE HONEST HALF**
+  (JOS-89, docs/plans/buff-timer-overlay.md). ONE law decides every row: **a
+  duration `spells.json` STATES becomes a receding countdown; a duration
+  nobody states becomes ELAPSED time counting UP; there is no third case.**
+  A bar is a promise about when something ends, so an unknown-duration row
+  has NO BAR and a `+` before its time; the mined `observed` estimate is NOT
+  a stated duration (`durationSource === 'db'` is the whole discriminator).
+  The mez was invisible because of CASCADE ORDER (`classifyCcApply` above
+  `classifyDbBuff`); the parser now carries the DB candidate list on the
+  application shape and `modules/buffTimers.ts` owns per-target holds keyed
+  by mob. Everything else reads off `BuffsSnap.active` — a second fold is
+  the two-models scar law 4 is made of; candidates narrow by YOUR OWN CAST
+  HISTORY (law 3), and a broadcast with no own cast opens NO hold. A KNOWN
+  GAP, deliberately not fixed here: a CC-roster wear-off never reaches
+  `onBuffFade`, so the overlay corrects it in its own projection
+  (`endedByCc`) — fixing `recordFade` would mint duration samples and move
+  mined statistics suite-wide. Selectors are scope-filtered custom
+  `OverlaySelect` (the overlay bundle stays MUI-free by law); PERSISTED
+  bounds always win. Full story: docs/agents-archive.md.
+
+## A hidden window cannot paint, at full length (JOS-120)
+
+<!-- Moved verbatim from AGENTS.md (lines 1757-1773 at the 2026-08-13 collapse). -->
+
+- **A HIDDEN WINDOW CANNOT PAINT, SO `hide()` IS NEVER HOW YOU CLEAR ONE
+  (JOS-120).** A hidden `BrowserWindow` produces no frames and `show()`
+  re-presents its last composited surface — an IPC "clear" sent after
+  `hide()` is recorded and never drawn (MEASURED: the pending rAF fired 1 ms
+  after `showInactive()`, one frame too late). Two rules: **(a) Clear BEFORE
+  you hide** (`suspendCursorStream`); **(b) better, do not hide for a state
+  you will leave in a few hundred ms** — `ringDisposition` (replayGate.ts)
+  splits `idle` (the game no longer owns the screen ⇒ really come off it)
+  from `parked` (empty the halo and LEAVE THE WINDOW VISIBLE). The second
+  half of the same bug was a CADENCE RATIO: `cursorVisible` gated an 8 ms
+  consumer but was read on the 150 ms watcher tick, so the child's loop is
+  SPLIT (`GetCursorInfo` every ~16 ms tick, the expensive foreground block
+  every tenth). **Whenever a poll GATES a faster consumer, the number that
+  matters is the ratio, not either period**
+  (`unguardedSamplesPerHiddenCursor`). `tests/cursorRingClick.test.mts`
+  models all four clocks and reproduces the twitch on the old path first, so
+  the fixed assertion means something. Full story: docs/agents-archive.md.
+
+## The presence watcher rebuild, at full length (JOS-182)
+
+<!-- Moved verbatim from AGENTS.md (lines 1774-1794 at the 2026-08-13 collapse). -->
+
+- **…AND THE LOOP THAT DROVE ALL OF IT NO LONGER SPAWNS ANYTHING (JOS-182).**
+  The presence watcher was a hidden `powershell.exe` with runtime `Add-Type`
+  — an infostealer signature to a behavioural AV engine, and it never ran at
+  all on 578 installs' machines (`spawn ENOENT`, fail-open, nobody could
+  tell). It is now a **worker thread** calling user32/kernel32/psapi through
+  **koffi**. Three rules, all general:
+  - **A NATIVE DEPENDENCY HERE MUST SHIP PREBUILT N-API BINARIES IN ITS NPM
+    TARBALL** (`.npmrc` ignores install scripts, `npmRebuild` is false); a
+    CI-only compile exists only where nobody can debug it. Pin koffi
+    **2.x** — 3.x downloads prebuilds in its install hook.
+  - **NEVER `worker.terminate()` A THREAD THAT CALLS NATIVE CODE** —
+    MEASURED: terminating inside a koffi call aborts the whole process, no
+    catch anywhere. Ask it to stop over the port; a `'message'` handler runs
+    only BETWEEN ticks. This would have been a rare, unattributable crash at
+    quit, which every session reaches.
+  - **MOVING WORK OFF A PROCESS IS NOT THE SAME AS MOVING IT ONTO MAIN** —
+    the running scan is 8.4 ms and main is busy; the child's one virtue was
+    being somewhere else. Keep that, drop the process. (Same argument as
+    `speechWorker`; both are separate rollup inputs because
+    `new Worker(path)` loads a FILE.)
+  Full story: docs/agents-archive.md.
+
+## Two windows over one model, at full length (JOS-119)
+
+<!-- Moved verbatim from AGENTS.md (lines 1795-1810 at the 2026-08-13 collapse). -->
+
+- **…AND IT IS TWO WINDOWS, OVER ONE MODEL (JOS-119).** The one 'buffs' kind
+  became 'buffs' + 'debuffs' — two configs, two windows, two toggles. **THE
+  SPLIT IS A FILTER, NOT A FORK**: `buildTimerRows` still folds the models
+  exactly once and `shared/buffTimers.ts timerRowSurface` routes each row by
+  its own `kind` (`group` is deliberately NOT the discriminator — a Symbol
+  on your pet is `group:'target'` and still a BUFF). ONE component
+  (`BuffsOverlay.tsx` + a `kind` prop; a copy would be the defect). NO
+  MIGRATION by design: `overlays.buffs` keeps its key so bounds carry over;
+  `overlays.debuffs` reads the default and arrives OFF. The seventh meter
+  slot broke the fixed first-open size, so the uniform size is a FUNCTION OF
+  THE DISPLAY (a fixed shrink ladder — largest rung whose grid seats every
+  kind; 1080p+ untouched). Two measured e2e gotchas: a programmatic
+  `setBounds` from MAIN does not raise `moved`/`resized` (a persistence spec
+  must write through `overlay:setConfig`), and `overlayWindow()` matched
+  `?kind=` by SUBSTRING (`kind=debuffs` contains `kind=buffs`) — it parses
+  the query now. Full story: docs/agents-archive.md.
+
+## Wine detection, at full length (JOS-31)
+
+<!-- Moved verbatim from AGENTS.md (lines 1826-1842 at the 2026-08-13 collapse). -->
+
+- **…AND UNDER WINE THE APP TAKES THAT PATH BY ITSELF (JOS-31).** The
+  switches are THREE-STATE (`'auto' | 'on' | 'off'`, store v11) and
+  `shared/wineDetect.ts` decides what `auto` means. **PRECEDENCE, one
+  function, three rungs**: `EQ_DISABLE_GPU` > an explicit user choice >
+  detection > off; `resolveGraphics` is the ONLY place that folds them, read
+  by all three consumers so a window cannot be built one way and labelled
+  another. **DETECTION IS CONSERVATIVE OR IT IS NOTHING** — a false positive
+  costs EVERY Windows user their GPU. Two signals, either sufficient, both
+  impossible on real Windows: Wine's own tools in `system32` (exact
+  filenames, never a `wine*` pattern), and the env vars Wine's own ntdll
+  injects into every hosted process (WINEHOMEDIR et al — NOT `WINEPREFIX`,
+  which is launcher-set and a false positive we may not have). Gated on
+  `platform === 'win32'`. Safe mode under Wine is WineHQ bug 48618, not a
+  guess. The 10→11 migration reads a stored `false` as 'auto' and `true` as
+  'on'. **NOTHING HERE WAS VERIFIED UNDER WINE** — the tests pin the
+  NEGATIVE exhaustively and the reporter is the verification path. Rejected
+  signals and why: docs/agents-archive.md.
+
+## F2 deployment note, at full length
+
+<!-- Moved verbatim from AGENTS.md (lines 1868-1875 at the 2026-08-13 collapse). -->
+
+- **F2: DEPLOYED AND LIVE (2026-08-04).** Live-verified: submit 201 + ULID,
+  idempotent replay 200 same id, oversize 413; kill switch OPEN; the three
+  constants filled in net.ts (api pcy0z3xjp9… · bucket
+  eqcompanion-logs-6c58f5cc · us-east-1). Two DSQL live findings encoded:
+  grants on the system-owned `public` schema are unsupported (table-level
+  grants suffice), and `statement_timeout` cannot be SET (client-side
+  query_timeout only; db.ts fixed). Remaining negatives + the SNS
+  confirmation: docs/agents-archive.md.
+
+## The cohort-split migration bullet, as it stood
+
+<!-- Moved verbatim from AGENTS.md (lines 1876-1883 at the 2026-08-13 collapse). -->
+
+- **ANALYTICS COHORT SPLIT — LIVE (2026-08-05, waves R+S, run under the
+  standing authorization).** Owner vs user cohort lives IN the counter
+  tables' primary keys; the migration ran COPY-FIRST per owner ruling
+  (staging tables, row-count AND sum(n) verification, swap via DSQL's
+  documented `RENAME TO`; nothing dropped until its verified copy existed).
+  Runbook preserved in infra/README.md "THE COHORT MIGRATION". Owner
+  installs marked; **a ROTATED analyticsId arrives unmarked — re-run
+  `analytics owner-add`**.
+
+## The toolchain wave note, as it stood (JOS-63)
+
+<!-- Moved verbatim from AGENTS.md (lines 1965-1971 at the 2026-08-13 collapse). -->
+
+- **TOOLCHAIN WAVE — LANDED** (verified 2026-08-06, JOS-63): electron
+  43.2.0, vite 7.3.6, electron-vite 5.0.0 are what the tree runs. Still open
+  from the same flag: the installer ships ~150MB of other-platform onnx
+  binaries (trim via asarUnpack filters; koffi's excluded other-platform
+  prebuilds are the worked example beside it). The .npmrc / npmRebuild
+  comments were rewritten by JOS-182 and state the prebuilt-N-API rule.
+  History: docs/agents-archive.md.
+
+## Open chips of 2026-08-05, as they stood
+
+<!-- Moved verbatim from AGENTS.md (lines 1987-1992 at the 2026-08-13 collapse). -->
+
+- **Open chips (2026-08-05, each with a full brief in its chip):** the combo
+  swap-back blind spot — the hardest inference fix in the repo, do not rush
+  it; **PARTLY CLOSED by JOS-79** (`reinstatedDrops`; a swap between capped
+  classes still dings for nothing and remains evidence-only); the e2e
+  per-checkout lockfile; copyText still serializing the melee-rounds footer
+  the Rounds panel replaced. Full briefs: docs/agents-archive.md.
+
+## Awaiting real samples — the Double Bow Shot note, at full length (JOS-92)
+
+<!-- Moved verbatim from AGENTS.md (lines 1993-2003 at the 2026-08-13 collapse). -->
+
+- **Awaiting real samples** (the outputs registry refuses them typed until
+  a committed fixture graduates each): /outputfile guild, raid, spellbook,
+  factions, achievements, alternateadv — one in-game `/outputfile <kind>`
+  from anyone provides it. Same law for the **Double Bow Shot annotation**,
+  still unobserved after JOS-92's whole-log sweep: `(Critical)` is the only
+  annotation any of the nine `shoots` lines carries, and the file's one
+  `bow shot` hit is a player bragging in General chat. The rest of that note
+  is now SUPERSEDED — archery does appear, just never the owner's: 9 landed
+  and 8 avoided bow lines from other players, all third-person, and the Ranged
+  lane (above) is built on them. `You shoot` remains ZERO, so the FIRST-PERSON
+  arm is the shape still awaiting a sample.
+
+## The feature-surface intro, as it stood before the 2026-08-13 collapse
+
+<!-- Moved verbatim from AGENTS.md (lines 14-32 at the 2026-08-13 collapse). -->
+
+**EverQuest Legends** log in real time. Surfaces: an Overview landing tab
+(default view — DPS w/ inline drill, live curve, current mob, zone, leveling
+rate + next-level ETA, class loadout, recent drops/kills), Plane of Sky quest
+tracking, loot, inventory reconcile, leveling/AA analytics, a Maps tab
+(Brewall/default rendering, POI search, label declutter, floor slicing,
+typed-/loc marker), class-combo inference with user corrections, proc
+analytics (PPM + state attribution), raid targets, buffs simulation, alerts
+with sounds + rank-upgrade intelligence, a Details-style DPS meter with
+drill-down/timeline (drilled by default, pet nested), floating overlay
+meters, an EXALTATIONS tab (the Exaltation/BiS planner — labelled Exaltations
+since JOS-42; the `planner` view id, route, store keys and `planner-*`
+testids are unchanged — docs/plans/exaltation-planner.md), celebration toasts
+(docs/plans/celebration-toasts.md), and a TIMERS tab + overlay (JOS-194 —
+law 13 below). Committed knowledge DBs: mobs (7.9k), items (11.2k incl.
+dropsfrom + eraTag), spells (1.9k), classes, zones (era-annotated), wiki
+respawn floors (507 rows, 394 readable). First stable release v0.2.0
+(2026-08-03); per-release history lives in `shared/releaseNotes.ts` and the
+archive. Layout: `src/main` (Node), `src/preload`, `src/renderer`,
+`src/shared`, `tests/`, `scripts/`.
+
+## The six pet-voiced SAYS carve-out, at full length (JOS-47)
+
+<!-- Moved verbatim from AGENTS.md (lines 155-162 at the 2026-08-13 collapse). -->
+
+  **CARVE-OUT: the six pet-voiced SAYS** (JOS-47) — the six exact sentences
+  in `shared/logScrub.ts PET_SAY_LINES`, matched as EXACT SENTENCES, never as
+  a `/Master/` pattern (the enumerating sweep found six kinds of mob flavor a
+  loose pattern would leak). Same argument as the tell: an NPC's words under
+  an NPC's name. They prove the speaker is somebody's pet — NOT that it is
+  YOURS (JOS-49 deleted the offer that paired them with a shared target). The
+  carve-out STAYS: every combat fixture is already cut through it and the six
+  still parse into `petSay`. Full argument: docs/agents-archive.md.
+
+## The feedback triage loop bullet, as it stood
+
+<!-- Moved verbatim from AGENTS.md (lines 268-272 at the 2026-08-13 collapse). -->
+
+- **Feedback triage loop** (proven 2026-08-05, three same-day turnarounds):
+  report → integrator diagnoses against the REAL log/slice FIRST (the brief's
+  diagnosis was WRONG twice; the executor's evidence overruled it; a slice
+  may prove more than the prose) → wave → stamp `triaged` with an honest note
+  via `triage-feedback set`. Stories: docs/agents-archive.md.
+
+## The delta-and-rebuild transport, at full length (JOS-172)
+
+<!-- Moved verbatim from AGENTS.md (lines 466-480 at the 2026-08-13 collapse). -->
+
+- **A WINDOW THAT FOLDS A MODULE NEEDS BOTH HALVES OF THE TRANSPORT — THE DELTAS
+  AND THE REBUILD** (JOS-172). `module:delta` is an INCREMENT and a
+  historical fold emits none (`endReplay()` DISCARDS — JOS-60's rule, and it
+  stays), so "hydrate once, then ride deltas" is only complete if something
+  says *ask again*. An overlay already open at launch hydrated mid-fold and
+  then rode increments describing none of it. `sendWorldRebuilt`
+  (pipeline.ts) is the ONE answer to "who is told the world was rebuilt" —
+  the main window and `MODULE_READING_OVERLAYS`; every `IPC.onCharacter` send
+  goes through it. The fix is the DELIVERY, never the discard. **And
+  re-hydration is a SECOND reason a row can vanish**: anything watching a row
+  set for removals is told which kind of change it sees (`timerDrops` takes a
+  `rebuilt` flag and says nothing across a re-fold). Measuring this in e2e
+  needs a SLOW fold — `tests/e2e/buffRestartSteps.mts` pads the log with 400k
+  real lines and CHECKS the fold was still running. Full story:
+  docs/agents-archive.md.
+
+## Never seed a fold with its own output, at full length (JOS-231)
+
+<!-- Moved verbatim from AGENTS.md (lines 873-889 at the 2026-08-13 collapse). -->
+
+**A FOLD MUST NEVER BE SEEDED WITH WHAT IT IS ABOUT TO RE-DERIVE, AND THE ONLY
+HONEST WAY TO KNOW IS TO FILE EVERY COUNT UNDER ITS SOURCE** (JOS-231). The
+message overlay re-mines the whole log every launch; seeding it from its own
+persisted served view double-counted every cold launch (22 → 44 → 88,
+measured — verdicts drifting toward "how many times the app has started").
+`MessageOverlayMiner` keeps ONE BUCKET PER SOURCE (`BASELINE_SOURCE` for the
+committed baseline), `beginSource(key)` DISCARDS a bucket before its log is
+folded again, `build()` sums the buckets — a re-fold REPLACES its source's
+contribution; idempotence is structural. The persisted file is v2, a
+REGISTER with no verdicts (a stored verdict is a second opinion waiting to
+disagree with the derived one); v1 files are ignored, retiring the inflation
+in the field. The fix deliberately KEEPS the persisted seed (a bucket for a
+character you are not folding is knowledge nothing can re-derive, and
+`effectiveSpellDb` derives parser corrections from the seed BEFORE the fold)
+and does not dedupe by log position.
+`tests/messageOverlayIdempotence.test.mts` pins it all, with a tripwire that
+re-creates the old shape and watches the counts double.
+
+## The pet tell binding bullet, at full length (JOS-47, JOS-49)
+
+<!-- Moved verbatim from AGENTS.md (lines 1002-1011 at the 2026-08-13 collapse). -->
+
+  - The owner-only tell `<Name> told you, '… Master.'` — **THE TELL ONLY
+    FIRES WHEN THE PET IS ORDERED** (JOS-47); a pet engaging on its own
+    aggro emits nothing private at all. **THE TELL IS THE WHOLE STORY, AND
+    THE BLIND SPOT IS ACCEPTED** (owner, JOS-49): the ask-the-user offer and
+    the pet-say nomination rung are DELETED — the answer to "the meter
+    doesn't show my pet" is to order it once; an unordered pet is a
+    documented, accepted non-distinguishable (law 6). **A TELL BINDS
+    FORWARD, NOT BACKWARD** — nothing reaches back over damage already filed
+    as nobody's; losing the deleted claim's retroactive path is the real
+    cost of the cut.
+
+## The permanent image cache, at full length
+
+<!-- Moved verbatim from AGENTS.md (lines 1186-1204 at the 2026-08-13 collapse). -->
+
+- **Downloaded images are cached PERMANENTLY** (`src/main/imageCache.ts`): no
+  image the app fetches may ever be fetched twice — and since JOS-198 a
+  normal install fetches NONE. Item icons serve from `eqimg://item/<id>` (a
+  `protocol.handle` on the DEFAULT session — one handler covers every
+  window); a miss is ONE polite fetch (shared UA, in-flight dedupe), written
+  ATOMICALLY and only if the bytes sniff as an image. NEGATIVES ARE NEVER
+  CACHED **ON DISK** — but a refusal IS remembered IN MEMORY for the
+  session, and only when the HOST SPOKE; a NETWORK failure is DELIBERATELY
+  NOT remembered (a just-woken laptop must not be locked out of every icon).
+  On disk: no TTL, no eviction — wiki file ids are immutable. A second
+  route, `eqimg://url/<encoded>`, covers absolute URLs (the boss portraits;
+  wrapping happens at render via `cachedImageUrl()`); its boundary is a
+  STRICT host allowlist — exact `new URL().hostname` equality, https only;
+  never substring/endsWith (`wiki.project1999.com.evil.com` must fail).
+  Entry name = `url-<sha256[0:24]>.<sniffed ext>` (the URL lies about
+  extensions). **`img-src` does NOT list `https:`** (exactly
+  `'self' data: eqimg:`): that is what makes "every downloaded image is
+  cached" structurally true — widening the CSP is never the fix; wrap the
+  URL through the `url` route. Full story: docs/agents-archive.md.
+
+## The growing-list layout bug, at full length
+
+<!-- Moved verbatim from AGENTS.md (lines 1298-1304 at the 2026-08-13 collapse). -->
+
+- **A growing list lives in a FIXED-height scroll box.** The combat log was
+  `flex: 0 0 auto` + `minHeight`, so it sized to its 150-line content, couldn't
+  shrink, and squeezed the whole dashboard to 0px (the tab read as "just a
+  scrolling combat log"; the app's content area is `overflow:auto`, so
+  `height:100%` clamps nothing). Any append-only panel gets an explicit height +
+  its own `overflow:auto`; the panel that must survive gets `flexGrow:1` +
+  `minHeight:0`. Verified by the headless e2e harness, which measures it.
+
+## Migration 1-to-2's salvage detail, at full length
+
+<!-- Moved verbatim from AGENTS.md (lines 1539-1543 at the 2026-08-13 collapse). -->
+
+- Migration 1→2 is REAL work, not a dormant no-op: it also recovers the
+  top-level `progress` blob that commit 41831cc orphaned when it re-keyed
+  progress by character (salvaged under the reserved id
+  `legacy:pre-character` only when no real character exists — never guess an
+  owner) and drops the dead `liveLoot` map.
+
+## Windows Sandbox tier 2, at full length
+
+<!-- Moved verbatim from AGENTS.md (lines 1566-1584 at the 2026-08-13 collapse). -->
+
+2. **Windows Sandbox** — the REAL clean-machine test: disposable pristine VM,
+   maps `release/` read-only + a results folder; LogonCommand silently
+   installs, verifies files/shortcut/**Add-Remove-Programs registration**/
+   process-start, AND asserts the fresh-machine experience (no EQ installed →
+   app still boots to the zero-logs empty state), uninstalls, asserts files
+   AND the uninstall key are gone, then writes PASS/FAIL to the mapped results
+   dir. 19 checks; `arp-*` names each ARP field individually so a failure says
+   exactly what was missing.
+   **Invoke via `scripts/sandbox/run-installer-test.ps1`** (never the raw
+   .wsb): it force-closes a stale VM (only ONE sandbox instance is allowed
+   machine-wide), refuses to boot without a CURRENT Setup exe, parks the VM
+   window off the primary monitor without stealing focus (the user games on
+   the primary — keep it clear), force-kills the client when the results
+   land, and exits 0/1. Harness invariants: ASCII-only (the guest's PS 5.1
+   reads a BOM-less .ps1 as ANSI), always writes a verdict from a `finally`,
+   and POLLS after uninstall instead of trusting `Start-Process -Wait`.
+   Requires the `Containers-DisposableClientVM` feature (if
+   `WindowsSandbox.exe` is missing while DISM says Enabled, disable +
+   re-enable elevated and reboot). Full detail: docs/agents-archive.md.
+
+## The post-release smoke test, at full length
+
+<!-- Moved verbatim from AGENTS.md (lines 1593-1607 at the 2026-08-13 collapse). -->
+
+### Post-release feedback smoke test (`npm run smoke:release`)
+
+ON-DEMAND ONLY — not in CI, not in `npm test`, not in `test:e2e`. Run once
+after a release publishes: a sandbox DOWNLOADS the published installer
+(verified against the release's `SHA256SUMS.txt`), plants a mocked EQ log,
+launches the installed app with `EQ_SMOKE_FEEDBACK=<nonce>`, and
+`src/main/smokeFeedback.ts` files ONE real bug report through the ordinary
+`submitFeedback` path (every normal layer, NO endpoint override, refused
+under `EQ_E2E`). The host half reads the LIVE backlog (`triage/store.ts`,
+profile `eqc`) and asserts the row, the slice upgrading to `present`, and —
+the point — that the slice CONTAINS the run's nonce and does NOT contain
+`CHAT_MARKER`: the scrub proof, measured on the bytes that made the round
+trip. A pass cleans up; a failure leaves evidence; a `closed` answer is its
+OWN verdict (kill switch on, plumbing proven). Reuses the tier-2 lifecycle
+via `scripts/sandbox/sandbox-lifecycle.ps1`.
+
+## The overlay catalog bullet, at full length
+
+<!-- Moved verbatim from AGENTS.md (lines 1608-1624 at the 2026-08-13 collapse). -->
+
+- Overlay: Electron suffices for windowed/borderless EQ; exclusive
+  fullscreen cannot be overlaid by anything (native-helper escape hatch:
+  feed it the same snapshot IPC). ONE overlay.html bundle, kind read from
+  `?kind=`; each kind has its own persisted config (`store overlays.<kind>`)
+  and can run simultaneously; all overlay IPC channels take the kind as
+  first arg (`onOverlayState` payload is `{kind, open}`). Interactive mode
+  adds a dense selector + a mini drill-down; locked mode stays fully
+  click-through but RENDERS the persisted drill read-only
+  (`overlays.<kind>.drill` — config IS the drill state, no renderer mirror;
+  stale ids render level 1 without clearing). EIGHT kinds: fight/overall
+  (damage), heal-fight/heal-overall, events, buffs + debuffs (JOS-89, split
+  by JOS-119 — below), and toast (celebration cards —
+  docs/plans/celebration-toasts.md; queue reducer in overlay/toastQueue.ts,
+  producers in App.tsx, payloads resolved in main/toast.ts). The toast is
+  the ONE kind that defaults OPEN (owner, 2026-08-05; schema v9 corrects
+  stores written at the old default) and has NO SOUND of its own — the
+  seeded boss/quest ALERTS speak on the same events.
+
+## Analytics operations, at full length
+
+<!-- Moved verbatim from AGENTS.md (lines 1772-1798 at the 2026-08-13 collapse). -->
+
+- **ANALYTICS OPERATIONS (how usage questions get answered):**
+  - Daily/adoption truth: `triage-feedback analytics digest --days N
+    --profile eqc` (user cohort by default; `--cohort all` prints both,
+    NEVER summed). Series history STARTS 2026-08-04 — there is no earlier
+    data and never will be.
+  - Live concurrency: CloudWatch `EQCompanion/Telemetry` `Heartbeats`,
+    `Channel=prod`, **Sum over 600s** ≈ concurrent sessions (channel-split,
+    not cohort-split — EMF dimension identity would orphan every widget).
+    **THE PERIOD IS THE CLIENT'S HEARTBEAT CADENCE, NOT A CHOICE** (JOS-269
+    took it 5 min → 10 min, so 300s was right until 2026-08-12 and halves the
+    answer now). `liveSessions.ts BUCKET_MS` is the same number and the two
+    move together or the readout silently lies.
+  - Install truth is `analytics_install`; GitHub `download_count` is NOT
+    installs (the auto-updater dominates it). DAU can slightly exceed
+    installs across UTC day boundaries — artifact, not phantom users.
+  - The kill switch is cached in warm Lambdas for 60s — a 503 right after
+    `analytics open` is the cache, not a failure.
+  - **THE PULSE'S LIVE HALF IS A CLOUDWATCH READ, NOT A COUNTER** (JOS-39):
+    `liveSessions.ts` reads `Heartbeats` directly, merged at the two
+    presentation edges — never inside `buildAnalytics`, which stays pure.
+    The average age is labelled `est.`, can only under-claim, and is NULL —
+    never 0 — when nobody is alive.
+  - **`upgrades` IS DERIVED SERVER-SIDE**, from the stored `app_version`
+    read BEFORE the install UPSERT; once per version change; downgrades
+    count; disjoint from `newInstalls`.
+  - Pre-marking counter rows carry no id and stay in the user cohort
+    forever — read old days with that in mind.
+
+## The local dev feedback server bullet, as it stood
+
+<!-- Moved verbatim from AGENTS.md (lines 1799-1803 at the 2026-08-13 collapse). -->
+
+- **Local dev story**: `scripts/dev-feedback-server.mts` (wave in flight
+  at write time) — same contract, same shared validator, failure knobs;
+  the app reaches it via `EQ_FEEDBACK_URL`, honored ONLY behind
+  `!app.isPackaged` (the lawful exception to the no-override rule —
+  packaged builds must prove the env var does nothing).
+
+## The telemetry cadence dial, at full length (JOS-269)
+
+<!-- Moved verbatim from AGENTS.md (lines 1816-1829 at the 2026-08-13 collapse). -->
+
+  **THE CADENCE IS A COST DIAL, THE CONTENT IS NOT (JOS-269, owner ruling
+  2026-08-12).** `FLUSH_INTERVAL_MS` 5 min and `HEARTBEAT_INTERVAL_MS` 10 min
+  (flush.ts) — was 60 s / 5 min, and the plan's T5 still says the old numbers
+  because plans are historical intent. Every event is a counter delta that
+  sums server-side, so batching harder loses NOTHING; every flush is one
+  request through API Gateway + Lambda + DSQL, which is the whole bill. What it
+  does cost is stated where it happens: a KILLED session's duration is only
+  known to its last heartbeat, so the tail of that histogram coarsens from
+  5 min to 10. **THREE NUMBERS ARE DERIVED FROM THESE AND MUST MOVE WITH
+  THEM**: `liveSessions.ts BUCKET_MS` (= the heartbeat, or Live now halves),
+  the "sessions in the last 10 min" tile note, and the sandbox smoke's
+  `$telemetryDwellSec` (must exceed ONE flush tick — nothing leaves the machine
+  except on one; `stopTelemetry` writes the ring, it does not POST). Changing
+  WHAT is collected is a different decision and remains owner law.
+
+## The e2e committed-fixture harness bullet, at full length (JOS-29)
+
+<!-- Moved verbatim from AGENTS.md (lines 190-201 at the 2026-08-13 collapse). -->
+
+- **THE E2E INPUT IS A COMMITTED FIXTURE, AND THE HARNESS PLAYS THE LIVE HALF**
+  (JOS-29, wave E2 — docs/plans/e2e-parallel.md). `tests/e2e/logFixture.mts`
+  stages a throwaway EQ install per launch and hands it over with
+  `EQ_INSTALL_DIR` — the product knows nothing about it. Cut fixtures with
+  `npm run fixtures:e2e` (through the shared scrub, like every extractor).
+  Because the harness OWNS the copy it can PLAY: `appendAt()` writes
+  EQ-stamped lines into the tailed file and they travel the real path
+  (chokidar → Tailer → parser → engine → IPC → render);
+  `tests/e2e/gameplay.mts` scripts a pull whose damage this repo STATES, so
+  assertions are EXACT (`outTotal === 442`). Map PACKS stay a game install
+  (junctioned in). Frozen numbers still rot for anything the fixture does not
+  fix.
+
+## The parallel e2e runner sub-bullet, at full length (wave E1)
+
+<!-- Moved verbatim from AGENTS.md (lines 249-258 at the 2026-08-13 collapse). -->
+
+  - **e2e runs PARALLEL and from a worktree** (wave E1,
+    docs/plans/e2e-parallel.md). The isolation unit is ONE LAUNCH — a
+    `mkdtempSync` userData dir per `launchApp()`, artifacts under
+    `artifacts/<runId>/<spec>/` — so the old single-flight law is retired.
+    The runner discovers `*.e2e.mts`, takes a name filter
+    (`npm run test:e2e -- leveling`), caps each spec at 5 min, writes
+    `artifacts/<runId>/summary.json`; `--serial` remains for debugging.
+    `node_modules` is resolved, not joined, so a worktree with no install
+    runs the suite. Measured runs (13/13 twice at ~150 s; serial was
+    ~28 min) + the `hoverAt` fix: docs/agents-archive.md.
+
+## Keep the tree buildable, at full length
+
+<!-- Moved verbatim from AGENTS.md (lines 284-291 at the 2026-08-13 collapse). -->
+
+- **KEEP THE TREE BUILDABLE (user rule, 2026-08-03): the dev app must not
+  stay down.** Transient seconds-long HMR breakage is fine; MINUTES is not.
+  Concretely: create any file you import (even an empty stub) BEFORE writing
+  the import — a scrape/codegen that produces a data file the code needs gets
+  a stub first and overwrites it when done (this exact miss took the app down
+  for the length of a mob-page crawl); sequence multi-file changes so
+  `npm run dev` keeps compiling between edits; if you must break main's build,
+  fix it in your very next edit, not at wave end.
+
+## The lint layers and measured thresholds, at full length
+
+<!-- Moved verbatim from AGENTS.md (lines 396-407 at the 2026-08-13 collapse). -->
+
+- **Two layers.** Correctness: typescript-eslint `strictTypeChecked` +
+  `stylisticTypeChecked`, type-aware through TS's project service (which resolves
+  every file through the same two tsconfigs `npm run typecheck` builds — lint and
+  typecheck can never see different file sets), plus react-hooks for the
+  renderer. Factoring: `complexity 12`, `max-depth 3`, `max-lines 400`,
+  `max-lines-per-function 100`, `max-params 4` (line counts skip blanks AND
+  comments — this repo comments heavily on purpose; the metric is code mass).
+- **Those five numbers were MEASURED, not guessed.** `npm run lint:measure`
+  re-runs ESLint with the rules pinned to `max: 0` and prints the
+  distribution + a threshold sweep; each threshold sits between p95 and p99
+  of the real tree. Never change one without re-running it — including
+  `max-depth 3`, which the data chose over the obvious 4.
+
+## The calm-line roster, at full length (JOS-213)
+
+<!-- Moved verbatim from AGENTS.md (lines 1111-1125 at the 2026-08-13 collapse). -->
+
+- **THE CALM LINE IS A ROSTER TOO — AND ROUTING OBEYS RULING 8 (JOS-213).**
+  Calm spells are Beneficial, so their timer landed in the player's BUFF
+  overlay — while the thing they watch is a mob-state timer. The fix is a
+  SECOND, orthogonal fact about the SPELL (`ActiveBuff.calmsTarget`,
+  `spellCalmsTarget`, derived from the three landing families and re-derived
+  by an oracle every run, exactly like `ccSpell`); `cls` does NOT change.
+  **THE CUT THAT FAILED IS THE LESSON**: routing on "the TARGET is a mob"
+  reruns the error JOS-136/JOS-140 ruling 8 outlawed
+  (`disposition: 'hostile'` means only "not you and not a pet I am currently
+  holding") — two committed goldens rejected it on the spot. Nature — and now
+  surface — comes from the spell, never from the shape of the target.
+  Fixtures `w64`/`w65` (`npm run fixtures:calm`), pinned in
+  `tests/calmLineTimers.test.mts`; a pacified mob CAN be killed and takes the
+  ordinary decrement-one death censor, never JOS-228's mez refusal. Full
+  story: docs/agents-archive.md.
+
+## The sound-pack registry bullet, as it stood before JOS-273 superseded its pre-selection rule
+
+<!-- Moved verbatim from AGENTS.md (lines 1187-1195 at the 2026-08-13 collapse). -->
+
+- Sound packs: og-packs registry (peonping.github.io/registry) —
+  browse/install ~350 packs in-app. The single shipped default
+  (`alan-rickman`, pinned tag) is GITIGNORED audio, self-provisioned via the
+  same installPack path (additive, retried with backoff). The synthesized
+  `default` chime pack is DELETED; alerts pointing at any retired pack are
+  rewritten onto the analogous alan-rickman line by a ONE-TIME,
+  version-stamped store migration (`migrateAlertSounds`), so an upgrading
+  user's alerts never go silently mute. Every picker pre-selects
+  alan-rickman (`fallbackPack`), never `packs[0]`.

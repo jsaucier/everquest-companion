@@ -180,6 +180,24 @@ test('the sum covers exactly the worn items, and says how many it could not read
   assert.ok(totals.stats.some((s) => s.label === 'Strength'), 'and it has stats on it')
 })
 
+test('the totals stay BASE-computed - the ` +N` uplift is never applied (owner, JOS-327)', () => {
+  // The owner's ruling when the Character tab was released: keep character totals initially. The
+  // arithmetic to do otherwise EXISTS now (`shared/itemUpgrade.ts scaleStatBlock`, an exact port of
+  // the wiki's own ItemLevelSlider), so this is a decision rather than a limitation and it needs a
+  // pin — a future wave that wires the scaler into this sum will change the meaning of every number
+  // the gear panel prints under a caption that says "from gear", and should do so on purpose.
+  //
+  // Asserted as an IDENTITY over the corpus rather than against today's numbers: the sum equals the
+  // sum of the UNSCALED blocks, even though eleven of the twenty-two worn items state a ` +N`.
+  const tiered = worn.filter((c) => c.item?.tier !== undefined)
+  assert.ok(tiered.length > 0, 'the dev character wears upgraded gear, or this test proves nothing')
+  const base = sumGear(worn.map((c) => dbIndex.get(itemKey(c.item?.baseName ?? ''))?.stats))
+  assert.deepEqual(totals, base)
+  // And the tier is not lost, merely un-applied: it is still on the item's own name, where the dump
+  // spelled it and where the slot grid and the carry-all ledger both print it.
+  assert.ok(tiered.every((c) => / \+\d+$/.test(c.item?.name ?? '')))
+})
+
 test('the known cross-source name gap is SURFACED, not smoothed over (law 12)', () => {
   // The client writes `Djarn's Amethyst Ring`; the wiki page is `Djarns Amethyst Ring`. A
   // matcher would close that by luck and close others by the same luck, so the sheet reports it.

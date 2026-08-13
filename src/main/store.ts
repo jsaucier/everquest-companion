@@ -37,12 +37,9 @@ import { applyTimerOverlayKnobs } from '../shared/buffTimers'
 // meaning, never by a predicate written here.
 import { normalizeXpRows } from '../shared/xpOverlay'
 import { normalizeRateBasis } from '../shared/rateBasis'
+import { normalizeZoneScope } from '../shared/zoneScope'
 import { isSliceId } from '../shared/timeslice'
 import type { ComboCorrection } from '../shared/classCombo'
-// The exaltation planner's sets. The validator is main-side and pure; it runs on the way OUT as
-// well as in (see the accessors below), so a hand-edited store cannot poison the renderer.
-import { sanitizeExaltPlans } from './planner/validate'
-import type { ExaltPlan } from '../shared/planner/types'
 import {
   ALERT_SOUND_MIGRATION_VERSION,
   DEFAULT_ALERT_PACK_ID,
@@ -172,7 +169,13 @@ export function getProgress(charId: string): ProgressState {
   return allProgress()[charId] ?? emptyProgress
 }
 
-function setProgress(charId: string, next: ProgressState): ProgressState {
+/**
+ * Write one character's whole progress record. EXPORTED since JOS-286 for exactly one reader —
+ * `storePlans.ts`, which holds the two planner documents' accessors now that this file has reached
+ * the measured 400-code-line ceiling (the roster.ts/windows.ts/perf.ts rule: SPLIT, never ratchet).
+ * It remains the only write path into `byCharacter`; the split moved code rather than widening it.
+ */
+export function setProgress(charId: string, next: ProgressState): ProgressState {
   const all = allProgress()
   all[charId] = next
   store.set('byCharacter', all)
@@ -248,34 +251,6 @@ export function clearComboCorrections(
     charId,
     getComboCorrections(charId).filter((c) => (c.endTs ?? Infinity) < startTs || c.startTs > hi)
   )
-}
-
-// ----- Exaltation planner sets (docs/plans/exaltation-planner.md D4) -----
-//
-// Per character, like every other key on ProgressState: a plan is built for one character's
-// loadout. Whole-array writes — a set list is small (tens of plans at most) and the renderer
-// edits it as one document.
-//
-// NO SCHEMA BUMP AND NO MIGRATION, DELIBERATELY. `exaltPlans` is an ADDITIVE optional key:
-// nothing that already exists changes meaning, the reader below defaults on a missing key, and
-// electron-store rewrites the whole parsed object so the key survives a round trip through an
-// older build. The store-migration law asks for a step when a persisted shape CHANGES; adding a
-// key that every reader already defaults is the case it explicitly does not cover, and
-// `tests/plannerStore.test.mts` pins that (a pre-planner store loads byte-for-byte unchanged).
-//
-// Both directions run through `sanitizeExaltPlans`, so a hand-edited file cannot hand the
-// renderer a shape it will crash on, and the renderer cannot write one either.
-
-/** This character's saved sets ([] when it has none, or when the stored value is unusable). */
-export function getExaltPlans(charId: string): ExaltPlan[] {
-  return sanitizeExaltPlans(getProgress(charId).exaltPlans)
-}
-
-/** Replace the whole set list for a character. Returns what was actually stored. */
-export function setExaltPlans(charId: string, plans: ExaltPlan[]): ExaltPlan[] {
-  const next = sanitizeExaltPlans(plans)
-  setProgress(charId, { ...getProgress(charId), exaltPlans: next })
-  return next
 }
 
 // ----- Group-roster user edits (docs/plans/group-model.md §3) -----
@@ -485,6 +460,43 @@ export function getOverlayConfig(kind: OverlayKind): OverlayConfig {
   return cfg
 }
 
+/**
+ * THE XP WINDOW'S FOUR KNOBS (JOS-195 rows + slice, JOS-288 basis, JOS-291 zone membership),
+ * REBUILT RATHER THAN TRUSTED — the same argument as the drill and the toast blob beside them: a
+ * renderer patch must not be able to widen what is persisted, and ABSENT is a real answer for all
+ * four (every row; the current zone this session; the elapsed hour; every tier of that zone).
+ *
+ * Its own function for `applyTimerOverlayKnobs`' reason, one file over: four knobs is four more
+ * branches, and `setOverlayConfig` is at the measured complexity ceiling. Every one of them is
+ * deleted on every other kind, so a malformed patch cannot grow an xp knob on a damage meter.
+ */
+function applyXpOverlayKnobs(kind: OverlayKind, next: OverlayConfig): void {
+  // `normalizeXpRows` drops unknown row ids, so a hand-edited store cannot switch on a row this
+  // build does not have.
+  const xpRows = normalizeXpRows(next.xpRows)
+  if (xpRows && kind === 'xp') next.xpRows = xpRows
+  else delete next.xpRows
+  // The rate basis is checked against its own closed union for `normalizeXpRows`' reason: a store
+  // that came back with a third denominator would put a number on screen under an hour no surface
+  // here can name. Unknown ⇒ absent ⇒ `RATE_BASIS_DEFAULT`, which is the honest degrade.
+  const xpBasis = normalizeRateBasis(next.xpBasis)
+  if (xpBasis && kind === 'xp') next.xpBasis = xpBasis
+  else delete next.xpBasis
+  // The zone membership, same rule again (JOS-291): a store naming a membership this build cannot
+  // apply would scope every rate in the window by a rule nothing here implements. Unknown ⇒ absent
+  // ⇒ `ZONE_SCOPE_DEFAULT`, which is every tier — the read this window has always given.
+  const xpZoneScope = normalizeZoneScope(next.xpZoneScope)
+  if (xpZoneScope && kind === 'xp') next.xpZoneScope = xpZoneScope
+  else delete next.xpZoneScope
+  // The slice id is checked against the closed union, never against what the log can currently
+  // define: `resolveSliceId` in the renderer already degrades a pick this record cannot answer, and
+  // a store that forgot the user's choice because they happened to relaunch mid-session would be
+  // the same bug from the other direction.
+  const xpSlice = next.xpSlice
+  if (kind === 'xp' && isSliceId(xpSlice)) next.xpSlice = xpSlice
+  else delete next.xpSlice
+}
+
 /** Merge-patch a kind's overlay config (only the provided keys change). Returns the merged value. */
 export function setOverlayConfig(kind: OverlayKind, patch: Partial<OverlayConfig>): OverlayConfig {
   const next: OverlayConfig = { ...getOverlayConfig(kind), ...patch }
@@ -511,27 +523,7 @@ export function setOverlayConfig(kind: OverlayKind, patch: Partial<OverlayConfig
   // rule lives beside `isTimerOverlayKind` in shared/buffTimers.ts, which is what "which kinds
   // carry this knob" is a fact about.
   applyTimerOverlayKnobs(kind, next)
-  // THE XP WINDOW'S THREE KNOBS (JOS-195, plus the rate basis in JOS-288), rebuilt rather than
-  // trusted — the same argument as the drill and the grouping above: a renderer patch must not be
-  // able to widen what is persisted, and ABSENT is a real answer for all three (every row; the
-  // current zone this session; the elapsed hour). `normalizeXpRows` drops unknown row ids, so a
-  // hand-edited store cannot switch on a row this build does not have.
-  const xpRows = normalizeXpRows(next.xpRows)
-  if (xpRows && kind === 'xp') next.xpRows = xpRows
-  else delete next.xpRows
-  // The rate basis is checked against its own closed union for `normalizeXpRows`' reason: a store
-  // that came back with a third denominator would put a number on screen under an hour no surface
-  // here can name. Unknown ⇒ absent ⇒ `RATE_BASIS_DEFAULT`, which is the honest degrade.
-  const xpBasis = normalizeRateBasis(next.xpBasis)
-  if (xpBasis && kind === 'xp') next.xpBasis = xpBasis
-  else delete next.xpBasis
-  // The slice id is checked against the closed union, never against what the log can currently
-  // define: `resolveSliceId` in the renderer already degrades a pick this record cannot answer, and
-  // a store that forgot the user's choice because they happened to relaunch mid-session would be
-  // the same bug from the other direction.
-  const xpSlice = next.xpSlice
-  if (kind === 'xp' && isSliceId(xpSlice)) next.xpSlice = xpSlice
-  else delete next.xpSlice
+  applyXpOverlayKnobs(kind, next)
   const all = store.get('overlays') ?? {}
   all[kind] = next
   store.set('overlays', all)

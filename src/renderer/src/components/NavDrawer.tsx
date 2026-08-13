@@ -12,18 +12,15 @@ import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh'
 import PetsIcon from '@mui/icons-material/Pets'
 import MapIcon from '@mui/icons-material/Map'
 import SpaceDashboardIcon from '@mui/icons-material/SpaceDashboard'
-import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome'
 import CheckroomIcon from '@mui/icons-material/Checkroom'
 import FeedbackIcon from '@mui/icons-material/Feedback'
 // Dev-only, and its import goes with it: MUI's icon packages declare `sideEffects: false`, so
 // an icon whose only use sits inside a `false &&` branch is tree-shaken out with the branch.
 import RuleFolderIcon from '@mui/icons-material/RuleFolder'
-// Unreleased-only, and stripped with its branch for the same reason (JOS-45).
-import AccountBoxIcon from '@mui/icons-material/AccountBox'
 import UpdateChip from './UpdateChip'
-import { OWNER_TOOLS, UNRELEASED } from '../devFlags'
+import { OWNER_TOOLS } from '../devFlags'
 import type { PrefsRouting } from '../appRouting'
-import { VIEW_LABELS, type View } from '../appViews'
+import { GEAR_AREA_VIEWS, VIEW_LABELS, loadGearTab, type View } from '../appViews'
 
 export const DRAWER_WIDTH = 220
 
@@ -34,13 +31,31 @@ interface NavRow {
   icon: JSX.Element
   /** trailing state chip, when a row has one to state */
   badge?: JSX.Element
+  /**
+   * ONE ROW, SEVERAL VIEWS (JOS-324). A row whose destination is an AREA rather than a single
+   * view lists every view drawn inside it here, and reads `selected` while ANY of them is up —
+   * so the drawer keeps agreeing with the screen when the in-area tab bar moves you sideways.
+   * Absent ⇒ the ordinary rule, and the ordinary rule is still the one nearly every row follows.
+   */
+  area?: readonly View[]
+  /**
+   * Which view the row OPENS, when that is not simply `view`. The gear row opens the area at the
+   * tab you last stood on (appViews.ts `loadGearTab`) — a function rather than a value because
+   * that answer is read from localStorage at CLICK time, not at module load.
+   */
+  opens?: () => View
 }
 
-/* State, not process: this tab is unfinished, and the chip says so. */
-const IN_DEV = (
+/* State, not process: this tab is newer than the rest, and the chip says exactly how much.
+ * "beta" replaced "in dev" for the release-hardening pass (owner directive 2026-08-13): Timers,
+ * Buffs and Exaltations graduated with no chip at all, and Gear — the youngest tab — wears the
+ * one remaining caveat. Since JOS-324 that row is the whole gear AREA, and the chip stays on it:
+ * two of the four tabs behind it are younger than the chip was, and one of them is a placeholder.
+ * A chip comes OFF by deleting the badge from its row, never by softening the word. */
+const BETA = (
   <Chip
     size="small"
-    label="in dev"
+    label="beta"
     variant="outlined"
     sx={{ height: 18, fontSize: 10, color: 'text.secondary', '& .MuiChip-label': { px: 0.75 } }}
   />
@@ -53,29 +68,43 @@ const IN_DEV = (
 // into each other constantly (a mob page's drop rows open an item, the Overview's drop rows open
 // the loot detail). Loot's old home at the bottom of the list put five unrelated tabs between
 // them.
+//
+// AND ONE ROW IS NOT ONE VIEW ANY MORE (JOS-324, owner ruling 2026-08-13). The drawer's old law —
+// exactly one row per view, no exceptions — held right up until three of the rows turned out to be
+// three faces of a single question: what should I be wearing (Gear), what am I farming for
+// (Exaltations) and what am I wearing right now (the dev-only Character sheet). Two of them sat
+// consecutively here and the third hung off the bottom behind a flag, and nothing in a vertical
+// list said any of them had anything to do with the others. They are now ONE row — Gear — over an
+// in-area tab bar (components/GearAreaTabs.tsx) that also carries the fourth face the list had no
+// room to grow, a Wish list. The row reads `selected` while any of the four is on screen, and it
+// opens the one you last used. The law that survives is the one that mattered: a row is a
+// DESTINATION, and clicking it takes you somewhere real.
 const ROWS: NavRow[] = [
   { view: 'overview', icon: <SpaceDashboardIcon /> },
   { view: 'combat', icon: <BarChartIcon /> },
   { view: 'mobs', icon: <PetsIcon /> },
   { view: 'loot', icon: <ReceiptLongIcon /> },
-  // EXALTATIONS follows Loot for the same reason Loot follows Mobs: it is the third face of one
-  // question — what drops it, what did I get, and what am I still farming for. (Its LABEL lives
-  // in `VIEW_LABELS`; JOS-42 renamed the tab there, which is also where Back reads it from.)
-  { view: 'planner', icon: <AutoAwesomeIcon />, badge: IN_DEV },
-  // GEAR (JOS-284) follows Exaltations for the same reason Exaltations follows Loot: it is the
-  // fourth face of one question — what drops it, what did I get, what am I farming for, and what
-  // should I be wearing. It reads the same committed corpus and links back into the same Loot
-  // drill-down.
-  { view: 'gear', icon: <CheckroomIcon />, badge: IN_DEV },
+  // THE GEAR AREA follows Loot for the same reason Loot follows Mobs: it is the far side of one
+  // question — what drops it, what did I get, and then what should I wear, farm for and want. It
+  // reads the same committed corpus and links back into the same Loot drill-down. The row keeps
+  // Gear's icon, Gear's testid (`nav-gear`) and Gear's beta chip; the tabs behind it are named by
+  // `VIEW_LABELS`, the one place any of this app's tabs is named.
+  {
+    view: 'gear',
+    icon: <CheckroomIcon />,
+    badge: BETA,
+    area: GEAR_AREA_VIEWS,
+    opens: loadGearTab
+  },
   { view: 'maps', icon: <MapIcon /> },
   { view: 'bosses', icon: <EmojiEventsIcon /> },
   { view: 'posky', icon: <ShieldMoonIcon /> },
   { view: 'alerts', icon: <NotificationsActiveIcon /> },
   { view: 'leveling', icon: <TrendingUpIcon /> },
-  { view: 'buffs', icon: <AutoFixHighIcon />, badge: IN_DEV },
+  { view: 'buffs', icon: <AutoFixHighIcon /> },
   // Respawn clocks (JOS-194) sit beside Buffs because both tabs are the same shape of answer —
   // a list of things counting down — and a player checking one is usually checking the other.
-  { view: 'timers', icon: <TimerIcon />, badge: IN_DEV }
+  { view: 'timers', icon: <TimerIcon /> }
 ]
 
 /** Bottom-aligned, outside ROWS — it is not a feature view and never moves. */
@@ -94,8 +123,8 @@ function NavRowButton({
   return (
     <ListItemButton
       data-testid={`nav-${row.view}`}
-      selected={view === row.view}
-      onClick={() => onSelect(row.view)}
+      selected={row.area ? row.area.includes(view) : view === row.view}
+      onClick={() => onSelect(row.opens ? row.opens() : row.view)}
     >
       <ListItemIcon>{row.icon}</ListItemIcon>
       <ListItemText primary={VIEW_LABELS[row.view]} />
@@ -105,8 +134,9 @@ function NavRowButton({
 }
 
 /**
- * The permanent left nav: one row per view, Preferences bottom-aligned with the ambient
- * update chip beneath it.
+ * The permanent left nav: one row per destination — usually a view, and since JOS-324 once an
+ * AREA of four (see `ROWS`) — with Preferences bottom-aligned and the ambient update chip beneath
+ * it.
  *
  * Frameless: the drawer is a normal in-flow child (no fixed OS bar above it), so it fills
  * the space under the title bar — `position: relative` + `height: 100%` keeps it inside
@@ -148,30 +178,14 @@ export default function NavDrawer({
         {ROWS.map((row) => (
           <NavRowButton key={row.view} row={row} view={view} onSelect={onSelect} />
         ))}
-        {/* UNRELEASED (JOS-45): the character sheet has landed on main but has not passed the
-            owner's review gate, so it is reachable in a dev build and STRIPPED from every
-            packaged build. Same mechanism and same in-branch construction as the triage row
-            below; `tests/e2e/character-sheet.e2e.mts` asserts `nav-character` is ABSENT in a
-            production-shaped build. It graduates by moving into ROWS and deleting this block. */}
-        {UNRELEASED && (
-          <NavRowButton
-            row={{
-              view: 'character',
-              icon: <AccountBoxIcon />,
-              badge: (
-                <Chip
-                  size="small"
-                  label="unreleased"
-                  variant="outlined"
-                  color="warning"
-                  sx={{ height: 18, fontSize: 10, '& .MuiChip-label': { px: 0.75 } }}
-                />
-              )
-            }}
-            view={view}
-            onSelect={onSelect}
-          />
-        )}
+        {/* UNRELEASED (JOS-45) USED TO HAVE A ROW HERE, and JOS-324 moved it INTO the gear area:
+            the character sheet is now the area's last TAB, gated by the same `UNRELEASED` flag in
+            the same way (appViews.ts drops `character` from `KNOWN_VIEWS` in a build without it,
+            and `GEAR_AREA_VIEWS` is derived from that list, so the tab is absent from the bar and
+            the view is absent from the bundle). The gate itself is untouched and still measured —
+            `tests/e2e/character-sheet.e2e.mts` now asserts the TAB is absent in a production-shaped
+            build, which is a stronger reading than the old row check because the bar it looks at is
+            demonstrably mounted at the time. JOS-327 graduates it by deleting the flag. */}
         {/* OWNER-ONLY: the feedback-triage tab. `OWNER_TOOLS` (JOS-72) is `DEV_TOOLS` AND the
             `EQ_OWNER_TOOLS=1` opt-in, so this row is absent from a fresh checkout's `npm run
             dev` as well as from every build — the tab reads the owner's AWS backlog, and a

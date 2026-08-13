@@ -19,7 +19,16 @@
 import type { Page } from 'playwright-core'
 import { check, countOf, note, settle } from './appHarness.mjs'
 
-export const NAV = '[data-testid="nav-planner"]'
+/**
+ * HOW THIS SPEC ENTERS, since JOS-324 collapsed four nav rows into one.
+ *
+ * There is no `nav-planner` row any more. Exaltations is the SECOND TAB of the gear area, which
+ * hangs off the single `nav-gear` row, so the entry is two clicks: the row, then the tab. Both
+ * handles are exported because the spec asserts things about each — the row's label and its
+ * selected state, the tab's label and the pane it mounts.
+ */
+export const NAV = '[data-testid="nav-gear"]'
+export const TAB = '[data-testid="tab-planner"]'
 export const VIEW = '[data-testid="planner-view"]'
 export const NEW_SET_EMPTY = '[data-testid="planner-new-set-empty"]'
 export const SET_CHIP = '[data-testid="planner-set-chip"]'

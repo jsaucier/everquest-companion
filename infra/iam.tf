@@ -52,11 +52,21 @@ data "aws_iam_policy_document" "lambda_inline" {
 
   # Only enough to SIGN the presigned POST. The handler never uploads anything
   # itself and can never read back what a client uploaded.
+  #
+  # TWO PREFIXES SINCE JOS-296, NOT A WILDCARD ON THE BUCKET. A presigned POST can only be
+  # signed for a key the signer itself may PUT, so this list IS the set of paths a client can be
+  # handed the right to write. `logs/*` + `inventory/*` says exactly that; `${bucket}/*` would
+  # widen a public write endpoint's reach for the sake of one line.
   statement {
-    sid       = "PresignLogUploads"
-    effect    = "Allow"
-    actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.logs.arn}/logs/*"]
+    sid    = "PresignAttachmentUploads"
+    effect = "Allow"
+
+    actions = ["s3:PutObject"]
+
+    resources = [
+      "${aws_s3_bucket.logs.arn}/logs/*",
+      "${aws_s3_bucket.logs.arn}/inventory/*",
+    ]
   }
 }
 
@@ -142,9 +152,11 @@ data "aws_iam_policy_document" "triage_inline" {
     resources = [aws_dsql_cluster.feedback.arn]
   }
 
-  # DeleteObject is what makes `forget` / `wipe` real rather than a promise.
+  # DeleteObject is what makes `forget` / `wipe` real rather than a promise — and since JOS-296
+  # a report can carry TWO objects, so both prefixes are listed here or `forget` would leave the
+  # inventory dump behind while telling the requester it was destroyed.
   statement {
-    sid    = "TriageLogObjects"
+    sid    = "TriageAttachmentObjects"
     effect = "Allow"
 
     actions = [
@@ -152,11 +164,14 @@ data "aws_iam_policy_document" "triage_inline" {
       "s3:GetObject",
     ]
 
-    resources = ["${aws_s3_bucket.logs.arn}/logs/*"]
+    resources = [
+      "${aws_s3_bucket.logs.arn}/logs/*",
+      "${aws_s3_bucket.logs.arn}/inventory/*",
+    ]
   }
 
   statement {
-    sid       = "TriageListLogPrefix"
+    sid       = "TriageListAttachmentPrefixes"
     effect    = "Allow"
     actions   = ["s3:ListBucket"]
     resources = [aws_s3_bucket.logs.arn]
@@ -164,7 +179,7 @@ data "aws_iam_policy_document" "triage_inline" {
     condition {
       test     = "StringLike"
       variable = "s3:prefix"
-      values   = ["logs/*"]
+      values   = ["logs/*", "inventory/*"]
     }
   }
 }

@@ -14,10 +14,12 @@
 // two groups would read as one undifferentiated row of knobs.
 //
 // AND SINCE JOS-268 THE RIGHT GROUP CARRIES THE DUMP'S FRESHNESS TOO, quietly and out of flow: the
-// `/outputfile inventory` line hangs off the bottom edge of that one dropdown, appears only while
-// an inventory-backed source is selected, and never moves anything (the block on `InventorySource`
-// is the whole argument). The "Reload inventory" button that used to sit beside the dropdown is
-// gone — the app follows the file by itself now.
+// `/outputfile inventory` line hangs off the bottom edge of that one dropdown and never moves
+// anything (the block on `InventorySource` is the whole argument). The "Reload inventory" button
+// that used to sit beside the dropdown is gone — the app follows the file by itself now.
+// JOS-294 gave that slot its second sentence: under `log`, with a dump already loaded, it says the
+// export is loaded and NOT being counted. The one state that used to say nothing was the one the
+// four reports were all standing in.
 //
 // The three pickers lead, in the order a player narrows: class (who am I), island (where am I),
 // boss (what am I standing in front of) — the WHERE facets sit beside the WHO facet rather than
@@ -41,13 +43,15 @@ import {
   FormControlLabel,
   MenuItem,
   Stack,
-  TextField
+  TextField,
+  Typography
 } from '@mui/material'
 import StarIcon from '@mui/icons-material/Star'
 import StarBorderIcon from '@mui/icons-material/StarBorder'
 import type { CountSource } from '@shared/types'
 import ChipMultiSelect from '../../components/ChipMultiSelect'
 import OutputKindLine from '../../components/OutputKindLine'
+import { COUNT_SOURCE_OPTIONS, countsFromInventory } from '../inventory/countSource'
 import { SORT_OPTIONS, type SortKey } from './questSort'
 import { withPicked } from './questFacets'
 import type { QuestListState } from './useQuestList'
@@ -304,24 +308,50 @@ const QuestToggles = memo(function QuestToggles({
 })
 
 /**
- * IS THE DUMP IN PLAY AT ALL — the whole gate on the freshness line (JOS-268, constraint 2).
+ * WHAT THE TAB SAYS WHEN THE DUMP IS LOADED AND THE ACTIVE SOURCE IGNORES IT (JOS-294, scope B).
  *
- * Three options, two of them inventory-backed: `inventory` counts the export plus loot since, and
- * `both` counts the export IF ANY and falls back to the log (reconcile.ts's `netCount` is where
- * that is decided). `log` reads the dump for nothing at all — under it the file could be a year
- * old or missing and not one number on screen would differ.
+ * JOS-268 gated the freshness line on `countsFromInventory` — right, then, because `log` was the
+ * DEFAULT, and a permanent bar about a file the current source does not read is the caveat the UI
+ * diet refuses. JOS-294 makes `log` an EXPLICIT choice (the default is `both` now), and that turns
+ * the same silence into the ticket's worst state: a player who ran `/outputfile inventory`, whose
+ * dump this app went and loaded by itself, looking at counts that ignore every item in it and at a
+ * screen with not one word about why. Three states, one line each, and the broken one was the third:
  *
- * So "an inventory option is up" is read as SELECTED, not as offered: every option is always
- * offered, which would make the gate a no-op, and the owner's words are "visible only when an
- * inventory option comes up", i.e. when it is the one in the box. `both` counts as up even before
- * a dump exists — that is precisely the source whose answer changes the moment one does, and
- * "not yet run · not loaded yet" is the honest state of it.
+ *   inventory-backed source  the freshness line — the file's age and when we read it (JOS-253).
+ *   `log`, no dump loaded    nothing. There is no file, so there is nothing to fail to count.
+ *   `log`, dump loaded       THIS. We have the file, we are not counting it, and the sentence says
+ *                            so and names the source that would.
+ *
+ * It is drawn in the same slot, in the same quiet grey, out of flow: a line that appeared under the
+ * dropdown by pushing the quest list down the page would be a worse answer than the silence.
  */
-const countsFromInventory = (s: CountSource): boolean => s !== 'log'
+const DumpNotCounted = memo(function DumpNotCounted(): JSX.Element {
+  return (
+    <Typography
+      variant="caption"
+      color="text.disabled"
+      data-testid="posky-inventory-ignored"
+      // A BLOCK, and the same compressed line-height the quiet freshness line uses (OutputFileLine's
+      // `QUIET`). Both halves were measured by the e2e rather than guessed: MUI's caption is an
+      // inline span at line-height 1.66, and an inline box is laid out from FONT METRICS centred in
+      // its line box — so the default rendering started 5px below the dropdown's edge and ended 4px
+      // INSIDE the counts row, which is the one thing this slot is not allowed to do. As a block at
+      // 1.2 the element's box IS the line box: flush to the edge above it, 14px tall, inside the gap.
+      sx={{ display: 'block', lineHeight: 1.2 }}
+    >
+      Inventory export loaded but not counted - switch to Both to include it.
+    </Typography>
+  )
+})
 
 /** The RIGHT group: what the tab counts you as holding, and how fresh that is. Memoized like the
- *  rest — neither the dropdown nor the line has anything to do with the search box. */
-const InventorySource = memo(function InventorySource({
+ *  rest — neither the dropdown nor the line has anything to do with the search box.
+ *
+ *  EXPORTED SINCE JOS-294 (scope C): the Ready tab draws this same group. A control that can empty
+ *  a tab has to be visible from that tab — the JOS-155 argument, which put the first-time toggle
+ *  above both of the Ready tab's states — and this one can empty it hardest of all, because under
+ *  the wrong source a player holding every item for a quest is holding nothing the app can see. */
+export const InventorySource = memo(function InventorySource({
   countSource,
   onCountSource,
   inventoryLoadedAt
@@ -338,7 +368,12 @@ const InventorySource = memo(function InventorySource({
           replaced with a shorter spelling of the same claim — the sentence described the
           JOS-128 reset semantics, which JOS-141 reverted. The one place that states what a
           source means is the `CountSource` doc in shared/types.ts; the three option labels are
-          what the user reads here. */}
+          what the user reads here.
+
+          AND TWO OF THOSE LABELS DESCRIBED THE SAME REVERTED SEMANTICS UNTIL JOS-294 — the popper
+          was deleted and the sentences under it were not. They come from `COUNT_SOURCE_OPTIONS`
+          now, one table shared with the Loot ledger's identical dropdown, which is also why the
+          two surfaces can no longer disagree about what the key they share means. */}
       <TextField
         select
         size="small"
@@ -348,9 +383,9 @@ const InventorySource = memo(function InventorySource({
         onChange={(e) => onCountSource(e.target.value as CountSource)}
         sx={{ minWidth: 190 }}
       >
-        <MenuItem value="log">Log (ever looted)</MenuItem>
-        <MenuItem value="inventory">Export, plus loot since</MenuItem>
-        <MenuItem value="both">Export if any, else log</MenuItem>
+        {COUNT_SOURCE_OPTIONS.map((o) => (
+          <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>
+        ))}
       </TextField>
       {/* THE FRESHNESS LINE, HUNG UNDER THE DROPDOWN IT BELONGS TO (JOS-268).
 
@@ -373,20 +408,29 @@ const InventorySource = memo(function InventorySource({
 
           `loadedAt` is what this tab knows and the registry cannot: the store's record of when
           main last read a dump. `null` says we have never loaded one, which is a different
-          sentence from the file not existing, and both can be true at once. */}
-      {countsFromInventory(countSource) && (
+          sentence from the file not existing, and both can be true at once.
+
+          AND THE SLOT HAS A SECOND TENANT SINCE JOS-294 (scope B): under `log`, with a dump this
+          app has already loaded, `DumpNotCounted` says so here. Same box, same quiet grey, same
+          out-of-flow geometry — so every layout promise this ticket made about the freshness line
+          is a promise about that sentence too, and neither of them can shove the tab down. */}
+      {(countsFromInventory(countSource) || inventoryLoadedAt !== null) && (
         <Box
           // FLUSH TO THE SELECT'S BOTTOM EDGE, with no margin of its own: the gap this hangs in is
           // the view's own `Stack spacing` and it is 17px, which a 12px caption row fills almost
           // exactly. Two pixels of offset here is two pixels of the row below.
           sx={{ position: 'absolute', top: '100%', right: 0, zIndex: 1, whiteSpace: 'nowrap' }}
         >
-          <OutputKindLine
-            quiet
-            kind="inventory"
-            loadedAt={inventoryLoadedAt}
-            testId="posky-inventory-fresh"
-          />
+          {countsFromInventory(countSource) ? (
+            <OutputKindLine
+              quiet
+              kind="inventory"
+              loadedAt={inventoryLoadedAt}
+              testId="posky-inventory-fresh"
+            />
+          ) : (
+            <DumpNotCounted />
+          )}
         </Box>
       )}
     </Box>

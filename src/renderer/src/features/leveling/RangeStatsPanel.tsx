@@ -245,9 +245,14 @@ const HEAD_SX = { ...CELL_SX, fontWeight: 700, whiteSpace: 'nowrap' } as const
 
 /**
  * Per-zone rows, sorted by levels/hr (the farming-efficiency question) with a secondary
- * toggle onto time. Per the fixed-height-scroll-box law the table lives in a bounded box with
- * its OWN `overflow: auto` — a range over a long session can list every zone visited and must
- * never size to its content and squeeze the charts above it.
+ * toggle onto time.
+ *
+ * VERTICALLY IT IS AS TALL AS THE ZONES (JOS-289). It used to live in a `maxHeight: 240` box with
+ * `overflow: auto` so it could not squeeze the charts above it; with the page scrolling there is
+ * nothing to squeeze, and a range that visited nine camps was reading them six at a time through
+ * a sticky-header slot. HORIZONTALLY IT STILL OWNS A SCROLLER, and that is the other half of the
+ * same law: seven columns of numbers is genuinely wide content, and wide content scrolls in its
+ * OWN container — never by pushing the page sideways. Hence `overflowX` alone, never `overflow`.
  */
 function ZoneTable({ zones, basis }: { zones: RangeStats['zones']; basis: RateBasis }): JSX.Element | null {
   const [sort, setSort] = useState<ZoneSort>('levels')
@@ -259,8 +264,12 @@ function ZoneTable({ zones, basis }: { zones: RangeStats['zones']; basis: RateBa
     </TableSortLabel>
   )
   return (
-    <Box sx={{ flexGrow: 1, minHeight: 0, maxHeight: 240, overflow: 'auto' }}>
-      <Table size="small" stickyHeader>
+    // `overflowY: hidden` is stated rather than left alone ON PURPOSE: CSS computes a `visible`
+    // axis to `auto` the moment its partner is not visible, so `overflowX: 'auto'` alone would
+    // leave this box reading as a vertical scroller to anything inspecting it (the e2e layout
+    // contract does exactly that). There is no height here to clip, so it clips nothing.
+    <Box sx={{ overflowX: 'auto', overflowY: 'hidden' }} data-testid="leveling-range-zones">
+      <Table size="small">
         <TableHead>
           <TableRow>
             <TableCell sx={{ ...HEAD_SX, width: 18, pr: 0 }} />
@@ -335,7 +344,10 @@ export function RangeStatsPanel({ stats, scope, onClear }: RangeStatsPanelProps)
   return (
     <Paper
       variant="outlined"
-      sx={{ p: 1.5, display: 'flex', flexDirection: 'column', gap: 1.25, flexGrow: 1, minHeight: 0 }}
+      // No `flexGrow`/`minHeight` since JOS-289: there is no leftover column height for this panel
+      // to be the one that absorbs, and growing into space it did not earn is what stretched the
+      // zone table's sticky-header slot in the first place.
+      sx={{ p: 1.5, display: 'flex', flexDirection: 'column', gap: 1.25 }}
       data-testid="leveling-range-stats"
       data-scope={scope}
     >

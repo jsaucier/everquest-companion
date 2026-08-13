@@ -146,6 +146,9 @@ export interface MoteRatesArgs {
   spans: WindowSpans
   /** The slice's zone restriction (a `shared/zones.zoneKey` fold), or null for every zone. */
   zoneKey?: string | null
+  /** …and its TIER restriction (a `zoneScope.zoneIdKey` fold, JOS-291), or null for every tier of
+   *  the place. Handed through to `windowItemRows` untouched, like the key above it. */
+  zoneExactKey?: string | null
 }
 
 /**

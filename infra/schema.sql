@@ -101,6 +101,13 @@ CREATE TABLE IF NOT EXISTS report (
   env_json    text   NOT NULL,
   log_json    text,
   log_key     text,
+  -- The SECOND attachment (JOS-296): the `/outputfile inventory` dump, stored exactly the way
+  -- the slice is — the client's declared metadata as TEXT holding JSON, and the S3 key computed
+  -- at insert time so triage can find (and HeadObject, and delete) the object without guessing.
+  -- Two columns rather than a widened `log_json`: the two attachments have different metadata,
+  -- different keys and independent lifetimes, and `forget` deletes them one at a time.
+  inventory_json text,
+  inventory_key  text,
   client_ts   bigint NOT NULL,
   received_at bigint NOT NULL,
   spam_score  integer NOT NULL,
@@ -319,6 +326,23 @@ ALTER TABLE feedback_config ADD COLUMN max_events_per_id_per_day integer;
 -- shape). On a cluster created from today's file the CREATE TABLE already has the
 -- column and this reports `exists` (42701 duplicate_column).
 ALTER TABLE analytics_install ADD COLUMN cohort text;
+
+-- The inventory attachment's two columns on a LIVE cluster (JOS-296). Same shape of migration as
+-- the three above, and the same reasoning: DSQL's ALTER TABLE grammar can ADD a column and has no
+-- DROP, so these are forever and both are NULLABLE — which is also what makes them additive. A
+-- report written before this ran has NULL in both, and every reader spells that "no dump", which
+-- is exactly what it was.
+--
+-- THESE MUST LAND BEFORE THE HANDLER THAT NAMES THEM. `REPORT_SQL` in infra/lambda/submit.ts
+-- lists `inventory_json, inventory_key` unconditionally, and naming a column that does not exist
+-- 42703s EVERY SUBMIT — the same trap the retired `title`/`contact` columns document above. So
+-- the order is: `migrate` first, `terraform apply` (the new bundle) second, client release third.
+-- infra/README.md carries the runbook.
+-- On a cluster created from today's file the CREATE TABLE already has them and these report
+-- `exists` (42701 duplicate_column).
+ALTER TABLE report ADD COLUMN inventory_json text;
+
+ALTER TABLE report ADD COLUMN inventory_key text;
 
 -- ---- indexes ----------------------------------------------------------------
 --

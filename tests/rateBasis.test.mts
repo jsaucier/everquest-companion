@@ -40,6 +40,8 @@ import {
 } from '../src/shared/rateBasis'
 import { dataBounds } from '../src/renderer/src/features/leveling/zoneBands'
 import {
+  BASIS_BUTTON_TITLE,
+  BASIS_TITLE,
   NONE,
   aaRateText,
   aaRateTitle,
@@ -202,6 +204,33 @@ test('the rate card defaults to the elapsed hour and names the one it used', () 
   assert.equal(flipped.value, '2.13 lvl/hr', 'the toggle is one argument and the other honest answer')
   assert.equal(flipped.sub, 'over 2h 0m active')
   assert.match(flipped.title ?? '', /Active time = /)
+})
+
+/**
+ * THE BUTTON THAT PICKS THE HOUR SAYS WHAT PICKING IT DOES (JOS-304, owner feedback 2026-08-13:
+ * the toggle is *hard to understand*).
+ *
+ * One word on a button cannot say which denominator it is, and the caption beside it only reads the
+ * pick back. So `BASIS_BUTTON_TITLE` leads with the effect on the numbers and then hands over to the
+ * definition — and the thing pinned here is that the second half is the SAME STRING the caption
+ * hovers, by lookup rather than by copy. A hand-typed paraphrase on the button would be a second
+ * spelling of the definition this whole file exists to keep singular: the button would eventually
+ * describe an hour the line under it does not divide by, and no other test in the suite would see
+ * it. Built over `RATE_BASES`, so a third denominator cannot arrive with a missing sentence.
+ */
+test('each denominator button hovers the effect, then the very definition the caption carries', () => {
+  for (const basis of RATE_BASES) {
+    const words = BASIS_BUTTON_TITLE[basis]
+    assert.equal(words, `Divides every rate by ${basis} time. ${BASIS_TITLE[basis]}`)
+    // The lead clause is about the numbers on screen; the tail is the canonical definition, intact.
+    assert.match(words, /^Divides every rate by (elapsed|active) time\. /)
+    assert.ok(words.endsWith(BASIS_TITLE[basis]), `${basis}: the definition is appended, not reworded`)
+  }
+  // The two sides of the one difference, so either button teaches the pair.
+  assert.match(BASIS_BUTTON_TITLE.elapsed, /Elapsed time = /)
+  assert.match(BASIS_BUTTON_TITLE.elapsed, /medding, banking and travelling stay/)
+  assert.match(BASIS_BUTTON_TITLE.active, /Active time = /)
+  assert.match(BASIS_BUTTON_TITLE.active, /not an AFK check, and not out-of-combat time/)
 })
 
 /** A three-hour range with a two-hour logout in it divides by ONE hour — `wallMs`, not the clock. */

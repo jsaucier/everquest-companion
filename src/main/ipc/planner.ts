@@ -20,10 +20,12 @@ import { buildPlannerIndex, searchPlannerItems, type PlannerIndex } from '../pla
 import { buildGearIndex } from '../planner/gearIndex'
 import type { GearIndexPayload } from '../../shared/planner/gear'
 import { NO_OWNERSHIP, ownershipPayload, type OwnershipPayload } from '../../shared/planner/ownership'
-import { sanitizeExaltPlans } from '../planner/validate'
+import { sanitizeExaltPlans, sanitizeGearSets } from '../planner/validate'
 import { loadInventoryDump, outputStatus } from '../outputs'
 import { activeCharId, getActiveCharacter } from '../session'
-import { getExaltPlans, setExaltPlans } from '../store'
+// The two planner documents' store accessors live in their own module since JOS-286 — store.ts
+// was at its 400-code-line ceiling, and this repo splits rather than ratchets.
+import { getExaltPlans, getGearSets, setExaltPlans, setGearSets } from '../storePlans'
 import { itemKey, type ItemDbFile } from '../itemsDb'
 // The COMMITTED wiki item database — the same module itemLookup.ts imports, so the JSON is
 // inlined into the main bundle exactly once.
@@ -120,6 +122,14 @@ export function registerPlannerIpc(): void {
       // (itemsDb.ts, law 2) and shared/planner/inventorySlots.ts must stay dependency-free.
       hosts: equippedHosts(loaded.dump).map((h) => ({ ...h, key: itemKey(h.name) }))
     }
+  })
+
+  // The active character's GEAR SETS (JOS-286). Same shape of promise as the exaltation sets
+  // below, over a different document and its own additive store key: validated at the handler and
+  // again in the store, which is also the read path's normalizer.
+  ipcMain.handle(IPC.gearGetSets, () => getGearSets(activeCharId()))
+  ipcMain.handle(IPC.gearSetSets, (_e, sets: unknown) => {
+    setGearSets(activeCharId(), sanitizeGearSets(sets))
   })
 
   // The active character's sets. Both directions run through the same validator (see store.ts).

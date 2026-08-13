@@ -6,6 +6,8 @@
 //   useLogSlice         build/rebuild the scrubbed slice for the chosen window, plus the
 //                       "Save a copy…" escape hatch. Only ever active for a bug report with
 //                       the attachment ticked — a feature request never reads the log.
+//   useInventoryDump    package the CURRENT `/outputfile inventory` dump for preview (JOS-296).
+//                       Same gate as the slice, and same rule: a feature request never reads it.
 //   useFeedback         the composed dialog state: draft + validation gate + submit outcome.
 //
 // The VALIDATION GATE is the point of `draftProblem`: it runs the SAME `validateDraft` the
@@ -39,6 +41,7 @@ import { track, trackFeature } from '../../lib/telemetry'
 type Bridge = Window['eq']
 export type FeedbackContext = Awaited<ReturnType<Bridge['getFeedbackContext']>>
 export type FeedbackSlicePreview = NonNullable<Awaited<ReturnType<Bridge['buildFeedbackSlice']>>>
+export type FeedbackInventoryPreview = Awaited<ReturnType<Bridge['buildFeedbackInventory']>>
 export type SubmitResult = Awaited<ReturnType<Bridge['submitFeedback']>>
 
 /** What the dialog is doing right now. `done` renders an outcome instead of the form. */
@@ -151,15 +154,85 @@ export function useLogSlice(active: boolean, windowMinutes: number): LogSliceSta
   return { slice, loading, saving, savedPath, saveCopy }
 }
 
+/**
+ * Package the current inventory dump whenever the attachment is active (JOS-296).
+ *
+ * NO CACHE AND NO KEY, unlike `useLogSlice`: main re-reads the file on every call on purpose
+ * (see `currentInventory`'s header), because the player may re-run `/outputfile inventory` while
+ * the dialog is open and the whole point of the attachment is that it is the CURRENT export.
+ * `refresh` is what a "re-read it" affordance calls; the reply always carries either a dump or
+ * the named reason there is none, so there is no third "unknown" state to render.
+ */
+export interface InventoryDumpState {
+  dump: FeedbackInventoryPreview | null
+  loading: boolean
+  refresh: () => void
+}
+
+export function useInventoryDump(active: boolean): InventoryDumpState {
+  const [dump, setDump] = useState<FeedbackInventoryPreview | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [nonce, setNonce] = useState(0)
+
+  useEffect(() => {
+    if (!active) return
+    let alive = true
+    setLoading(true)
+    void window.eq
+      .buildFeedbackInventory()
+      .then((d) => {
+        if (alive) setDump(d)
+      })
+      .finally(() => {
+        if (alive) setLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [active, nonce])
+
+  const refresh = useCallback((): void => {
+    setNonce((n) => n + 1)
+  }, [])
+
+  return { dump, loading, refresh }
+}
+
+/** The sentence for each way of having no dump. Pure, so the wording is testable and so the
+ *  `/outputfile inventory` command appears in exactly one place in the renderer. */
+export function inventoryProblem(reason: FeedbackInventoryPreview['unavailable']): string {
+  switch (reason) {
+    case 'no-dump':
+      return 'No inventory export on this machine yet - type /outputfile inventory in game, then re-open this dialog.'
+    case 'unreadable':
+      return 'Your inventory export could not be read - nothing would be attached.'
+    case 'empty':
+      return 'Your inventory export is empty - nothing would be attached.'
+    case 'too-large':
+      return 'Your inventory export is too large to send. It is not trimmed, because half an inventory reads as a wrong one.'
+    default:
+      return ''
+  }
+}
+
+/** What the attachment lines say once a Send has landed. Pure, and the one place the two
+ *  booleans are turned into English, so a report with both cannot claim only one. */
+export function sentMessage(logUploaded: boolean, inventoryUploaded: boolean): string {
+  if (logUploaded && inventoryUploaded) {
+    return 'Thanks - your report, its log slice and your inventory export are in.'
+  }
+  if (logUploaded) return 'Thanks - your report and its log slice are in.'
+  if (inventoryUploaded) return 'Thanks - your report and your inventory export are in.'
+  return 'Thanks - your report is in.'
+}
+
 /** Map the typed submit result onto the outcome the dialog renders. Never throws. */
 export function toOutcome(res: SubmitResult): FeedbackOutcome {
   if (res.ok) {
     return {
       kind: 'sent',
       reportId: res.reportId,
-      message: res.logUploaded
-        ? 'Thanks - your report and its log slice are in.'
-        : 'Thanks - your report is in.'
+      message: sentMessage(res.logUploaded, res.inventoryUploaded)
     }
   }
   if (res.queued) {
@@ -276,6 +349,8 @@ export interface FeedbackState {
   setAttachLog: (v: boolean) => void
   windowMinutes: number
   setWindowMinutes: (m: number) => void
+  attachInventory: boolean
+  setAttachInventory: (v: boolean) => void
   draft: FeedbackDraft
   problem: string | null
   phase: FeedbackPhase
@@ -291,6 +366,7 @@ export function useFeedback(open: boolean, prefill?: FeedbackPrefill): FeedbackS
   const [fields, setFields] = useState<DraftFields>(EMPTY)
   const [attachLog, setAttachLog] = useState(false)
   const [windowMinutes, setWindowMinutes] = useState<number>(DEFAULT_LOG_WINDOW)
+  const [attachInventory, setAttachInventory] = useState(false)
   const [phase, setPhase] = useState<FeedbackPhase>('compose')
   const [outcome, setOutcome] = useState<FeedbackOutcome | null>(null)
 
@@ -305,6 +381,11 @@ export function useFeedback(open: boolean, prefill?: FeedbackPrefill): FeedbackS
     // Bug reports attach the log BY DEFAULT — it is the whole point of a bug report.
     setAttachLog(type === 'bug')
     setWindowMinutes(DEFAULT_LOG_WINDOW)
+    // …and the inventory export too, by explicit owner ruling (JOS-296). The export-dependent
+    // bugs — Sky quest recognition, ownership, held counts — are un-answerable without it, and
+    // a default-off box on a diagnostic attachment is a box nobody ticks. It is DEFAULT, not
+    // silent: the checkbox is visible, states what it sends, and is one click to clear.
+    setAttachInventory(type === 'bug')
     setPhase('compose')
     setOutcome(null)
   }, [open, prefill])
@@ -321,6 +402,7 @@ export function useFeedback(open: boolean, prefill?: FeedbackPrefill): FeedbackS
   const setType = useCallback((t: FeedbackType): void => {
     setFields((f) => ({ ...f, type: t }))
     setAttachLog(t === 'bug')
+    setAttachInventory(t === 'bug')
   }, [])
 
   const draft = toDraft(fields)
@@ -332,8 +414,13 @@ export function useFeedback(open: boolean, prefill?: FeedbackPrefill): FeedbackS
     // never comes back is a drop-off in the funnel instead of an event nobody emitted.
     track({ t: 'funnelStep', funnel: 'feedback', step: 'sendPressed' })
     const attach = fields.type === 'bug' && attachLog
+    const attachInv = fields.type === 'bug' && attachInventory
     void window.eq
-      .submitFeedback(toDraft(fields), { attachLog: attach, windowMinutes })
+      .submitFeedback(toDraft(fields), {
+        attachLog: attach,
+        windowMinutes,
+        attachInventory: attachInv
+      })
       .then((res) => {
         const ending = toOutcome(res)
         setOutcome(ending)
@@ -347,7 +434,7 @@ export function useFeedback(open: boolean, prefill?: FeedbackPrefill): FeedbackS
         setOutcome({ kind: 'error', message: String(err) })
         setPhase('done')
       })
-  }, [fields, attachLog, windowMinutes])
+  }, [fields, attachLog, windowMinutes, attachInventory])
 
   return {
     fields,
@@ -357,6 +444,8 @@ export function useFeedback(open: boolean, prefill?: FeedbackPrefill): FeedbackS
     setAttachLog,
     windowMinutes,
     setWindowMinutes,
+    attachInventory,
+    setAttachInventory,
     draft,
     problem,
     phase,

@@ -17,7 +17,7 @@
 // discriminated-union narrowing would have to carry — an enormous blast radius for a derived
 // fact that changes under them.
 
-import type { ComboInterval } from './classCombo'
+import type { ClassAbbr, ComboInterval } from './classCombo'
 
 /**
  * THE CONFIDENCE GATE (JOS-239): may this interval's loadout be read as FACT, or has the model
@@ -45,6 +45,25 @@ import type { ComboInterval } from './classCombo'
 export function loadoutUncertain(interval: ComboInterval): boolean {
   if (interval.slots.some((s) => s.provenance !== 'inferred')) return false
   return interval.startAlso?.includes('overDetermined') === true || interval.levelRegressed === true
+}
+
+/**
+ * COULD THIS LOADOUT STILL BE RUNNING `abbr`? (JOS-305.)
+ *
+ * The question is deliberately asked in the PERMISSIVE direction, and the asymmetry is the whole
+ * point. A slot is a SET of candidates (classCombo.ts `ComboSlot`): resolved when it holds one,
+ * ambiguous when it holds several, and UNKNOWN when it holds all sixteen. So "the combo contains
+ * ROG" is a claim this model frequently cannot make, while "no slot of this loadout can possibly
+ * be ROG" is one it can — every slot has to have RULED ROG OUT for that to come back false.
+ *
+ * Written this way because the one caller acts on the NEGATIVE (the combat engine strips a
+ * rogue's blade coats when the answer is no, JOS-305/coatClass.ts), and a caller that acts on
+ * "not known to be ROG" would strip a live rogue's poisons the moment the model went quiet. An
+ * unknown slot carries all sixteen candidates, so silence answers YES here and nothing happens —
+ * which is the correct behaviour for an inference that is allowed to destroy state.
+ */
+export function comboMayInclude(interval: ComboInterval, abbr: ClassAbbr): boolean {
+  return interval.slots.some((s) => s.candidates.includes(abbr))
 }
 
 /**

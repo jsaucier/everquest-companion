@@ -41,14 +41,14 @@ import { registerUiScaleIpc } from './uiScale'
 import { registerToastIpc } from '../toast'
 import { registerWindowIpc } from './windowControls'
 import { registerWorldIpc } from './world'
-import { UNRELEASED } from '../unreleased'
 
 export function registerIpc(): void {
   registerCharacterIpc()
-  // GATED (JOS-45): the character sheet has not passed the owner's review gate, so its channel
-  // exists only in a dev build (or under an explicit EQ_UNRELEASED=1). The renderer surface is
-  // stripped from production bytes independently; this is the second lock. See ../unreleased.ts.
-  if (UNRELEASED) registerCharacterSheetIpc()
+  // UNGATED SINCE JOS-327. This line read `if (UNRELEASED) …` from JOS-45 until the owner released
+  // the Character tab as the gear area's last face; the channel is an ordinary one now. The flag
+  // itself survives, tenantless, for whatever surface lands on main before its review next
+  // (../unreleased.ts explains what it is for and how to adopt it).
+  registerCharacterSheetIpc()
   registerOutputsIpc()
   registerWorldIpc()
   registerComboIpc()

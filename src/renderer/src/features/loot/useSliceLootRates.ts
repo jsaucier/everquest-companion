@@ -39,13 +39,21 @@ export function useSliceLootRates(
     if (history.length === 0) return null
     // ONE query, over the slice's OWN range and zone — the denominators are then the same spans
     // every other number about this slice divides by, on this tab and on the Leveling one.
-    const spans = rangeStats({ snap: prog, range: slice.range, zoneKey: slice.zoneKey })
+    const spans = rangeStats({
+      snap: prog,
+      range: slice.range,
+      // BOTH halves of the zone membership (JOS-130 / JOS-291), so the denominator below is the
+      // time spent in exactly the visits the rows are counted from.
+      zoneKey: slice.zoneKey,
+      zoneExactKey: slice.zoneExactKey
+    })
     return windowLootRates({
       events: history,
       t0: slice.range.t0,
       t1: slice.range.t1,
       spans,
-      zoneKey: slice.zoneKey
+      zoneKey: slice.zoneKey,
+      zoneExactKey: slice.zoneExactKey
     })
   }, [history, slice, prog])
 }

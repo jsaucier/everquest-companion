@@ -247,9 +247,17 @@ test('the overlay-kind list is the SAME set the app uses (the duplication cannot
   assert.deepEqual([...TELEMETRY_OVERLAY_KINDS].sort(), [...OVERLAY_KINDS].sort())
 })
 
-/** The views `appViews.ts` gates behind `UNRELEASED` — read out of its `KNOWN_VIEWS` spread. */
-function unreleasedViews(src: string): string[] {
-  const spread = /UNRELEASED \? \(\[([^\]]*)\]/.exec(src)?.[1] ?? ''
+/**
+ * The views `appViews.ts` gates behind `UNRELEASED` — read out of its `KNOWN_VIEWS` spread.
+ *
+ * `null` means THE SPREAD IS NOT THERE, which since JOS-327 is the ordinary state of the file: the
+ * character sheet was the flag's only tenant and its release deleted the splice. That is reported
+ * separately from "the spread is there and holds nothing", because the two look identical to a
+ * regex and only one of them would also be what a BROKEN regex looks like — see the caller.
+ */
+function unreleasedViews(src: string): string[] | null {
+  const spread = /UNRELEASED \? \(\[([^\]]*)\]/.exec(src)?.[1]
+  if (spread === undefined) return null
   return [...spread.matchAll(/'([a-z]+)'/g)].map((m) => m[1])
 }
 
@@ -269,8 +277,24 @@ test('the view list is the SAME set the app can render', () => {
   // out of the schema until it graduates. The tripwire is UNWEAKENED — this list is read from
   // the source, not hand-maintained here, so an ordinary new view still fails until the schema
   // (and therefore TELEMETRY.md) learns about it.
-  const unreleased = unreleasedViews(src)
-  assert.ok(unreleased.length > 0, 'failed to read the UNRELEASED spread out of appViews.ts')
+  //
+  // THERE ARE NONE TODAY (JOS-327 released the flag's only tenant), and the absence is CHECKED
+  // rather than assumed: a missing spread and a spread this regex stopped understanding look the
+  // same to a `null`, and only one of those is a passing state. The tell is the IMPORT — a splice
+  // has to READ the flag, and the only way to read it is to import it from `./devFlags`, so a file
+  // that does not is a file with no gate whatever its comments say about the one it used to have.
+  // With no gated views the assertion below becomes `declared === TELEMETRY_VIEWS`, which is
+  // strictly stronger than what it was: every view the app can render must be in the schema.
+  const gated = unreleasedViews(src)
+  if (gated === null) {
+    assert.ok(
+      !/import\s*\{[^}]*\bUNRELEASED\b[^}]*\}\s*from\s*'\.\/devFlags'/.test(src),
+      'appViews.ts imports UNRELEASED but its gated-view spread did not parse'
+    )
+  } else {
+    assert.ok(gated.length > 0, 'the UNRELEASED spread is there and empty — delete it or fill it')
+  }
+  const unreleased = gated ?? []
   const reportable = declared.filter((v) => !unreleased.includes(v))
   assert.deepEqual(reportable.sort(), [...TELEMETRY_VIEWS].sort())
 

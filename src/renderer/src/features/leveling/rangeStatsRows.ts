@@ -38,6 +38,7 @@ import { IDLE_GAP_MS } from '../../../../shared/progressionStats'
 // WHICH HOUR THESE RATES ARE PER (JOS-288). The vocabulary, the default and the just-arrived gate
 // all live in `shared/rateBasis.ts`; this file only chooses the words, as it always has.
 import {
+  RATE_BASES,
   RATE_BASIS_DEFAULT,
   RATE_TOO_SHORT_TITLE,
   basisRead,
@@ -355,6 +356,25 @@ export const BASIS_TITLE: Record<RateBasis, string> = {
   active: ACTIVE_TIME_TITLE,
   elapsed: ELAPSED_TIME_TITLE
 }
+
+/**
+ * WHAT PICKING A BASIS DOES TO THE NUMBERS, on the button that picks it (JOS-304).
+ *
+ * Owner feedback 2026-08-13: *the elapsed/active toggle is hard to understand*. One word on a
+ * button cannot say which denominator it is, and the caption under the row only reads the pick
+ * back ("rates per hour of active time") — true, and no help to somebody who does not yet know
+ * what active time is. So the button hover leads with the EFFECT and then hands over to the
+ * definition proper.
+ *
+ * DERIVED FROM `BASIS_TITLE`, NEVER RE-WORDED. The definition half is the same string the caption
+ * hovers, looked up rather than copied, so the button and the line under it cannot come to disagree
+ * about what the hour is — which is the whole reason `BASIS_TITLE` is a lookup and not two
+ * literals. Built over `RATE_BASES` for the same reason: a third denominator would arrive with its
+ * sentence already written instead of with a missing key.
+ */
+export const BASIS_BUTTON_TITLE: Record<RateBasis, string> = Object.fromEntries(
+  RATE_BASES.map((id) => [id, `Divides every rate by ${id} time. ${BASIS_TITLE[id]}`])
+) as Record<RateBasis, string>
 
 /** `title` with the definition appended — the ONE way a surface that already had a hover sentence
  *  gains this one, so the two can never be separated by a copy-paste. */

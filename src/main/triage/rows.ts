@@ -238,6 +238,66 @@ export function rescrubNotes(re: SliceRescrub): string[] {
   return notes
 }
 
+// ---- the inventory dump (JOS-296) ----------------------------------------------------
+
+/**
+ * THE DUMP'S THIRD LEG — the twin of `rescrubSlice`, minus the scrubber, and the missing half is
+ * the point.
+ *
+ * `scrubLines` exists to drop OTHER PEOPLE'S WORDS out of a log window. An inventory export has
+ * none: it is a tab-separated table of slot names, item names, item ids and counts, swept row by
+ * row before this was written (the finding, with what the sweep looked for and did not find, is
+ * in the header of `src/main/feedback/inventory.ts`). Running a chat-line drop list over it could
+ * only ever remove a row whose ITEM NAME tripped a pattern, which would corrupt the evidence to
+ * protect nobody. So the scrub is deliberately absent and this comment is why.
+ *
+ * WHAT DOES STILL APPLY is the other half of the slice's argument: the presign policy pins an
+ * upload's key, size and content-type and CANNOT pin its content, and this file is one an
+ * operator will eventually `cat`. So every line goes through the SAME shared text sanitizer — an
+ * ESC in a "row" of a forged dump is an escape sequence in the owner's shell. `cleaned` is
+ * therefore "lines that carried something no real dump has ever contained", and for an honest
+ * upload it is ZERO.
+ */
+export function sanitizeInventory(raw: string): { text: string; cleaned: number } {
+  let cleaned = 0
+  const out = raw.split(/\r?\n/).map((line) => {
+    const s = sanitizeAndFlag(line)
+    if (s.changed) cleaned++
+    return s.text
+  })
+  return { text: out.join('\n'), cleaned }
+}
+
+/** What the owner-side read of a dump found, as `store.ts downloadInventory` reports it. */
+export interface InventoryDownload {
+  /** Where the (sanitized) copy lives on this machine. */
+  path: string
+  /** Lines that carried control characters or ANSI escapes and were cleaned. */
+  cleaned: number
+  /** True when this is a CACHED copy whose count was never recorded. */
+  fromLegacyCache: boolean
+}
+
+/**
+ * The dump's verdict as PROSE, for the CLI to print. Empty when there is nothing to say — which
+ * is the honest-client case, and the case that must stay silent so the other one is loud.
+ */
+export function inventoryNotes(dl: InventoryDownload): string[] {
+  if (dl.fromLegacyCache) {
+    return [
+      '[inventory: this copy was cached before the sanitize-on-read counter existed, so what it ' +
+        `cleaned was never measured. Delete ${dl.path} and re-run for a real answer.]`
+    ]
+  }
+  if (dl.cleaned === 0) return []
+  return [
+    `WARNING: ${String(dl.cleaned)} row(s) of this inventory export carried control characters ` +
+      'or ANSI escapes and were sanitized before being written to disk. A real dump contains ' +
+      'none - this one did not come from the game. The S3 object is untouched (it is the ' +
+      'evidence); only the local copy was cleaned.'
+  ]
+}
+
 /** Default kill-switch prose for a cluster whose seed row is missing entirely. */
 const NO_CONFIG_MESSAGE = 'Feedback is not open yet. Please try again later.'
 

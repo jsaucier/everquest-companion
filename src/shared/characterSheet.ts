@@ -54,6 +54,7 @@
 //     so percent-valued stats are reported as the individual values the items state, joined,
 //     and never added together (law 6: say what the sources cannot say).
 
+import type { CarryAll } from './carryAll'
 import type { ItemStat, ItemStatBlock } from './itemStats'
 import { statLabel } from './itemStats'
 import {
@@ -250,6 +251,17 @@ export interface CharacterSheet {
   /** equipped rows the grid has no cell for — empty for every dump seen so far */
   unplaced: SheetCellView[]
   totals: GearTotals
+  /**
+   * EVERYTHING YOU CARRY (JOS-327) — the same dump, flattened: every non-empty row of every
+   * table, with its location path and count. See shared/carryAll.ts.
+   *
+   * IT RIDES THIS ANSWER RATHER THAN A CHANNEL OF ITS OWN, on purpose. Main already has the
+   * parsed dump in hand at exactly this moment, the whole ledger is 123 small rows on the
+   * owner's real 295-line file, and the sheet and the ledger must never describe two different
+   * reads of a file the player rewrites mid-session — one invoke makes that impossible rather
+   * than merely unlikely. It needs no item-DB join, so nothing about it costs what the cells cost.
+   */
+  carry: CarryAll
 }
 
 // ---- the gear sum --------------------------------------------------------------------

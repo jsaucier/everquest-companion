@@ -232,6 +232,14 @@ registry.attach(bus)
 // already consumed the event the engine is about to. A pull rather than a copy, because a user
 // edit made between two log lines must be visible to the very next one.
 combat.setRoster(rosterModule)
+// THE CLASS-COMBO SEAM (JOS-305), installed on the same principle and in the same place: the
+// combo module is FIRST in the registration order above, so by the time the engine folds a line
+// the combo model has already consumed it. Its one consumer is the blade-coat clear — a character
+// who stopped being a rogue keeps no poison on their blades, and the log prints nothing when that
+// happens. A pull, so a `/who` row typed between two log lines reaches the very next one; the
+// engine gates HOW OFTEN it pulls (combat/coatClass.ts), because unlike the roster this answer
+// costs a rebuild.
+combat.setCombo(comboModule)
 bus.subscribe((ev, live) => combat.ingestEvent(ev, live))
 // Item-knowledge prefetch (Task #53): when a LIVE loot event arrives, warm the
 // "what's this for" cache in the background (throttled by itemLookup's serialized queue

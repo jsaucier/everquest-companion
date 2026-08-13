@@ -20,6 +20,7 @@ import type { EquipSlot, PlannerDonor, SocketType } from '@shared/planner/types'
 import {
   CURRENT_ERA,
   ERA_LABEL,
+  eraBadgeOverrides,
   eraFromTag,
   eraRank,
   layeredVerdict,
@@ -215,11 +216,18 @@ export function donorEra(subject: EraSubject): DonorEra {
   const zones = eraZones(subject)
   const fromZone = latestZoneEra(zones)
   const fromTag = subject.eraTag === undefined ? null : eraFromTag(subject.eraTag)
-  const era = fromZone ?? fromTag
+  // THE CHIP MUST NAME THE WITNESS THE VERDICT USED (JOS-298). When the page's own `Out of Era`
+  // badge overruled the zones, the zone is no longer the reason for anything, and reporting it
+  // would put "Classic" on a chip whose verdict is out-of-era — the loudest possible version of
+  // the bug this wave fixed. So the tag is both the era and the witness in that case, and the era
+  // is frequently `null` there on purpose: `FearHateRevamp` names no expansion, and the chip's
+  // honest reading of that is "out of era", not a guessed one.
+  const overruled = eraBadgeOverrides(subject.eraTag, CURRENT_ERA)
+  const era = overruled ? fromTag : (fromZone ?? fromTag)
   const value: DonorEra = {
     verdict: layeredVerdict(zones, subject.eraTag),
     era,
-    by: fromZone !== null ? 'zone' : era === null ? null : 'tag'
+    by: overruled ? 'tag' : fromZone !== null ? 'zone' : era === null ? null : 'tag'
   }
   ERA_CACHE.set(id, value)
   return value
@@ -261,8 +269,13 @@ export function eraChip(subject: EraSubject): EraChipInfo | null {
   return {
     label,
     unknown: false,
+    // The banner tooltip quotes the token VERBATIM rather than the label: half the out-of-era
+    // banners ("FearHateRevamp", "EpicQuests") name no expansion, so the label there is the
+    // generic "out of era" and repeating it would explain nothing.
     tooltip:
-      by === 'tag' ? `Its wiki page is banner-tagged ${label}.` : `This donor's sources are in ${label}.`
+      by === 'tag'
+        ? `Its wiki page is banner-tagged ${subject.eraTag ?? label}, which the wiki marks out of era.`
+        : `This donor's sources are in ${label}.`
   }
 }
 

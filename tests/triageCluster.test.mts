@@ -49,6 +49,7 @@ function report(over: Partial<TriageReport> = {}): TriageReport {
     spamScore: 0,
     receivedAt: NOW,
     hasLog: false,
+    hasInventory: false,
     ...over,
   }
 }
@@ -152,6 +153,22 @@ test('clusters are ordered by weight and count their attached logs', () => {
   assert.equal(clusters[1].reportIds.length, 2)
 })
 
+// JOS-296. `withInventory` is counted SEPARATELY from `withLogs` and the two do not imply each
+// other — a report can carry either, both or neither, because the two upload legs are
+// independent. A cluster block that reported one number for "attachments" would hide exactly the
+// case the inventory attachment exists for: an export-shaped bug reported with a log and no dump.
+test('a cluster counts its inventory exports apart from its logs', () => {
+  const sig = errorLine('renderer:ErrorBoundary', 'Gear.tsx', 42)
+  const clusters = clusterReports([
+    report({ description: sig, hasLog: true, hasInventory: true }),
+    report({ description: sig, hasLog: true, hasInventory: false }),
+    report({ description: sig, hasLog: false, hasInventory: true }),
+  ])
+  assert.equal(clusters[0].reportIds.length, 3)
+  assert.equal(clusters[0].withLogs, 2)
+  assert.equal(clusters[0].withInventory, 2)
+})
+
 test('tokenize drops stopwords, digits and short words; jaccard is symmetric', () => {
   const t = tokenize('The overlay meter goes blank after 0.2.1 when I zone')
   assert.ok(t.has('overlay') && t.has('meter') && t.has('blank') && t.has('zone'))
@@ -218,6 +235,29 @@ test('digestLine stays under 200 chars and carries no PII field', () => {
   assert.ok(line.includes('log ✔'))
   assert.ok(line.includes('spam 55'))
   assert.ok(line.endsWith('spam 55'))
+})
+
+/**
+ * JOS-296: the `inv ✔` marker. Three properties, and the third is the one that matters:
+ *   * it appears when a dump was attached, beside `log ✔` and never instead of it;
+ *   * it is ABSENT when there is none — a marker printed for every report marks nothing;
+ *   * the line still fits the 200-char budget with both markers and a spam score on it.
+ */
+test('digestLine marks an attached inventory export beside the log, and only when there is one', () => {
+  const both = digestLine(
+    report({ description: 'x'.repeat(500), hasLog: true, hasInventory: true, spamScore: 55 }),
+  )
+  assert.ok(both.includes('log ✔'), both)
+  assert.ok(both.includes('inv ✔'), both)
+  assert.ok(both.indexOf('log ✔') < both.indexOf('inv ✔'), 'log first, then inv')
+  assert.ok(both.length <= 200, `digest line was ${both.length} chars`)
+
+  const invOnly = digestLine(report({ description: 'gear counts are wrong', hasInventory: true }))
+  assert.ok(invOnly.includes('inv ✔'), invOnly)
+  assert.ok(!invOnly.includes('log ✔'), 'a dump-only report must not claim a log')
+
+  const neither = digestLine(report({ description: 'add a keybind' }))
+  assert.ok(!neither.includes('inv ✔'), neither)
 })
 
 test('renderDigest reports counts, clusters, and the unclustered remainder', () => {

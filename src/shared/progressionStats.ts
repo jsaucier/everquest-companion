@@ -44,10 +44,11 @@
 // file importing the barrel it is part of would be a needless cycle.
 import type { ProgressionSnap } from './progressionTypes'
 import type { RangeStats, RangeStatsArgs, ZoneRangeRow } from './progressionStatsTypes'
-// The MEMBERSHIP fold for the optional zone filter (JOS-130) — instance noise stripped, leading
-// article folded, separators normalized. It is NOT the row-grouping fold; see `RangeStatsArgs.
-// zoneKey` for why this file deliberately carries both.
-import { zoneKey } from './zones'
+// THE MEMBERSHIP TEST for the optional zone filter (JOS-130), and since JOS-291 the CHOICE of
+// which of this app's two zone folds it runs on. `zoneAdmits` is the one predicate every surface
+// asks; `zoneIdKey` is the row fold, which lives beside it now and is re-exported below so every
+// existing importer of `progressionStats.zoneIdKey` is untouched.
+import { zoneAdmits, zoneIdKey } from './zoneScope'
 
 /**
  * No exp / credited-kill / loot event for LONGER than this ⇒ idle.
@@ -95,6 +96,16 @@ export type {
   ZoneRangeRow
 } from './progressionStatsTypes'
 
+/**
+ * The zone restriction, as the segment walk reads it: the PLACE key every admitted visit must fold
+ * to, and — under `exactTier` (JOS-291) — the ROW key it must ALSO match. One object because the
+ * two travel together or they drift apart, and because `max-params` is 4.
+ */
+interface ZoneFilter {
+  key: string | null
+  exact: string | null
+}
+
 /** One clipped zone visit inside the range. Contiguous and gapless by construction. */
 interface ZoneSeg {
   key: string
@@ -109,22 +120,15 @@ interface Span {
 }
 
 /**
- * Case-insensitive zone key. Mirrors main/log/parseCommon.ts `idKey` for zone names (trim +
- * lowercase); src/shared cannot import from src/main, and idKey's extra 'you'/'yourself'
- * folding is about entity names and can never apply to a zone.
+ * The ROW fold — case-insensitive, instance noise KEPT. `ZoneRangeRow` rows are grouped by it and
+ * `lootRates.ts` joins drops onto them by it.
  *
- * EXPORTED because `ZoneRangeRow` rows are grouped by it and a second reader has to JOIN onto
- * them: `lootRates.ts` matches this character's loot events to the zone row whose ACTIVE TIME is
- * their rate's denominator, and a second "same zone?" answer there would silently orphan every
- * drop whose spelling the two folds disagreed about (world-model law 12's drift, in miniature).
- * Deliberately NOT `zones.zoneKey`, which additionally strips instance noise: these rows are keyed
- * with THIS fold, so the join must use THIS fold. That other fold is not absent from this file —
- * since JOS-130 it decides MEMBERSHIP for the optional zone filter, which is a different question
- * asked at a different moment (`RangeStatsArgs.zoneKey` states the whole argument).
+ * It MOVED to `shared/zoneScope.ts` (JOS-291), which is where the full argument for this app's two
+ * zone folds now lives: the day membership became a choice BETWEEN them, one file had to own both.
+ * Re-exported here rather than relocated in every caller, so `@shared/progressionStats`'s importers
+ * are untouched and there is still exactly one name for the fold.
  */
-export function zoneIdKey(name: string): string {
-  return name.trim().toLowerCase()
-}
+export { zoneIdKey } from './zoneScope'
 
 /** First index i with arr[i] >= v (arr ascending). */
 function lowerBound(arr: readonly number[], v: number): number {
@@ -168,13 +172,14 @@ function nextFrom(arr: readonly number[], t: number): number | null {
  * (you never left it) — together those two rules are what make `Σ zones[].spanMs ==
  * durationMs` an identity rather than an approximation.
  */
-function zoneSegments(snap: ProgressionSnap, t0: number, t1: number, only?: string | null): ZoneSeg[] {
+function zoneSegments(snap: ProgressionSnap, t0: number, t1: number, only?: ZoneFilter): ZoneSeg[] {
   const segs: ZoneSeg[] = []
   const n = snap.zoneName.length
   const headEnd = Math.min(n > 0 ? snap.zoneStart[0] : t1, t1)
+  const admits = (name: string): boolean => zoneAdmits(name, only?.key, only?.exact)
   // The pre-first-zone remainder is a NAMED row (`unknown`) and a zone filter judges it like any
   // other: asking for one zone never quietly re-admits the stretch the log could not place.
-  if (headEnd > t0 && (only == null || only === zoneKey(UNKNOWN_ZONE))) {
+  if (headEnd > t0 && admits(UNKNOWN_ZONE)) {
     segs.push({ key: UNKNOWN_ZONE, name: UNKNOWN_ZONE, start: t0, end: headEnd })
   }
   // The last interval starting at/before t0 is the one we are inside when the range opens.
@@ -182,8 +187,8 @@ function zoneSegments(snap: ProgressionSnap, t0: number, t1: number, only?: stri
     const start = Math.max(snap.zoneStart[i], t0)
     const end = Math.min(snap.zoneEnd[i] === 0 ? t1 : snap.zoneEnd[i], t1)
     const name = snap.zoneName[i]
-    // Grouped by the ROW fold, admitted by the MEMBERSHIP fold — see `RangeStatsArgs.zoneKey`.
-    if (end > start && (only == null || only === zoneKey(name))) {
+    // Grouped by the ROW fold, admitted by the MEMBERSHIP test — see `RangeStatsArgs.zoneKey`.
+    if (end > start && admits(name)) {
       segs.push({ key: zoneIdKey(name), name, start, end })
     }
   }
@@ -524,8 +529,11 @@ export function rangeStats(args: RangeStatsArgs): RangeStats {
   const { snap, range, combo, zoneKey } = args
   const t0 = range.t0
   const t1 = Math.max(range.t0, range.t1)
-  const filtered = zoneKey != null
-  const segs = zoneSegments(snap, t0, t1, zoneKey)
+  // THE EXACT KEY NARROWS; IT NEVER STANDS ALONE (JOS-291). Absent ⇒ this query is byte-identical
+  // to the one this file has answered since JOS-130 — which is what the golden windows pin.
+  const zoneExactKey = args.zoneExactKey ?? null
+  const filtered = zoneKey != null || zoneExactKey != null
+  const segs = zoneSegments(snap, t0, t1, { key: zoneKey ?? null, exact: zoneExactKey })
   // WHAT THE RANGE IS WORTH IN TIME. Unfiltered the segments tile `[t0,t1)` exactly, so this is
   // the wall clock it has always been; under a zone filter it is Σ of the visits, which is the
   // only denominator a per-zone rate may divide by.

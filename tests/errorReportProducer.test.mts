@@ -227,7 +227,11 @@ test('THE BRIGHT LINE: a thrown LOG LINE reaches the wire with no gameplay in it
 
 test('a view the enum does not carry is `unknown`, never a guess', () => {
   fresh()
-  noteCurrentView('character') // UNRELEASED — deliberately not in the dwell enum
+  // A well-formed view id the schema has never heard of. It used to be `character`, which was a
+  // REAL one held out of the enum while the tab was UNRELEASED (JOS-45) — JOS-327 released it, both
+  // halves at once, so the case now needs a name no build can produce. The claim is unchanged and
+  // the reason it matters is unchanged: the next surface to land behind a gate will look like this.
+  noteCurrentView('nosuchview')
   noteError('renderer:onerror', thrown('boom'))
   assert.equal(takeErrorReports()[0].view, 'unknown')
 

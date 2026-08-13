@@ -37,10 +37,12 @@ import {
 import BugReportIcon from '@mui/icons-material/BugReport'
 import LightbulbIcon from '@mui/icons-material/Lightbulb'
 import { LOG_WINDOW_CHOICES, MAX_DESCRIPTION, type FeedbackType } from '@shared/feedback'
+import InventoryPreview from './InventoryPreview'
 import LogPreview from './LogPreview'
 import {
   useFeedback,
   useFeedbackContext,
+  useInventoryDump,
   useLogSlice,
   type FeedbackContext,
   type FeedbackOutcome,
@@ -56,6 +58,17 @@ const DISCLOSURE =
   'Your log slice is included. Chat, tells, group and /who lines are removed. Your character’s ' +
   'name, zones, spells and combat lines stay - that’s what makes a bug reproducible. Read the ' +
   'whole thing below before you send it.'
+
+/**
+ * The dump's disclosure (JOS-296), written to the same rule as the slice's: STATE, never
+ * process. It says what the file IS, because the honest answer to "what am I sending" here is
+ * short — the export is a table of item names, ids and counts, and the format sweep in
+ * `src/main/feedback/inventory.ts` is what lets this sentence be that flat.
+ */
+const INVENTORY_DISCLOSURE =
+  'Your inventory export is included - the file /outputfile inventory writes. It lists your ' +
+  'items, where each one sits, and how many. It has no chat in it, so nothing is removed. Read ' +
+  'the whole thing below before you send it.'
 
 /** Feature request | Bug report. The entry point picks the default; this is the override. */
 function TypeToggle({
@@ -191,6 +204,71 @@ function AttachLogSection({ state }: { state: FeedbackState }): JSX.Element | nu
   )
 }
 
+/**
+ * The inventory attachment (JOS-296) — bug reports only, ticked BY DEFAULT (owner ruling), and
+ * shown EXPANDED for exactly the reason the slice is: an attachment you have to go looking for
+ * is not one you have read.
+ *
+ * THE NO-DUMP STATE DISABLES, IT DOES NOT HIDE. A machine that has never run
+ * `/outputfile inventory` gets the checkbox greyed with the command as its hint, so the user
+ * learns the option exists and what it would take. Hiding the row would leave them with a bug
+ * report we cannot answer and no idea why.
+ *
+ * `ctx` is null while the header context is still in flight; the control is not disabled on a
+ * question we have not had answered yet, so an unknown context reads as available and the
+ * preview's own named states take over a moment later.
+ */
+function AttachInventorySection({
+  state,
+  ctx
+}: {
+  state: FeedbackState
+  ctx: FeedbackContext | null
+}): JSX.Element | null {
+  const { fields, attachInventory, setAttachInventory } = state
+  const noDump = ctx !== null && !ctx.inventoryAvailable
+  const active = fields.type === 'bug' && attachInventory && !noDump
+  const inv = useInventoryDump(active)
+  if (fields.type !== 'bug') return null
+  return (
+    <Stack spacing={1}>
+      <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap">
+        <FormControlLabel
+          sx={{ mr: 0 }}
+          disabled={noDump}
+          control={
+            <Checkbox
+              size="small"
+              checked={attachInventory && !noDump}
+              data-testid="feedback-attach-inventory"
+              onChange={(e) => setAttachInventory(e.target.checked)}
+            />
+          }
+          label={<Typography variant="body2">Attach my inventory export</Typography>}
+        />
+        {noDump && (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            data-testid="feedback-inventory-hint"
+          >
+            Type /outputfile inventory in game to make one.
+          </Typography>
+        )}
+      </Stack>
+
+      {active && (
+        <>
+          <Typography variant="caption" color="text.secondary">
+            {INVENTORY_DISCLOSURE}
+          </Typography>
+          <InventoryPreview dump={inv.dump} loading={inv.loading} onRefresh={inv.refresh} />
+        </>
+      )}
+    </Stack>
+  )
+}
+
 /** Version · channel · queued — the header context, stated, not explained. */
 function ContextLine({ ctx }: { ctx: FeedbackContext | null }): JSX.Element | null {
   if (!ctx) return null
@@ -258,6 +336,7 @@ export default function FeedbackDialog({ open, onClose, prefill }: FeedbackDialo
             <TypeToggle value={state.fields.type} onChange={state.setType} />
             <DraftFieldsBlock state={state} />
             <AttachLogSection state={state} />
+            <AttachInventorySection state={state} ctx={ctx} />
             <ContextLine ctx={ctx} />
           </Stack>
         )}

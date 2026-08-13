@@ -11,19 +11,30 @@
 // row is drawn AND labeled, never silently shown and never silently dropped; the label's tooltip
 // is the disputing sentence itself, copied out of classes.json.
 //
-// FIXED HEIGHT + WINDOWED, per the standing list law: the rows are uniform, a class trio can
-// unlock a couple of dozen at one level, and the panel sits above two charts that must keep their
-// space. `useWindowedRows` is the app's own hook (lib/useWindowedRows.ts).
+// NEITHER FIXED-HEIGHT NOR WINDOWED ANY MORE (JOS-289 — this is the surface the owner NAMED as
+// cramped). It was a 120px box with its own `overflow: auto` and `useWindowedRows` behind it: four
+// and a half rows of a list that routinely has a dozen, read through a slot, in front of a panel
+// whose whole job is "what did this level give me". Both halves are gone, and the second half is
+// MEASURED rather than asserted: over all 560 three-class loadouts × 65 levels the longest list
+// this join can produce is 41 rows (skills, BRD/MNK/SHD at 1; spells peak at 39, CLR/DRU/WIZ at
+// 29), with p95 = 12 spells / 3 skills. That is not the row count `useWindowedRows` exists for —
+// the loot ledger's thousands are — so the hook came off rather than being pointed at a container
+// with no height to window against. `ROW_H` stays: uniform rows are what make the list scannable.
+//
+// THE SPELL NAME CARRIES THE FULL CARD (JOS-293, integrated here by JOS-289). This file used to
+// draw its own five-field hover out of the four `UnlockSpell` fields the unlock join happens to
+// carry. `SpellTooltip` (lib/SpellCard) asks MAIN for the whole record on open — the effect list
+// in the wiki's own words, the derived rosters, the rank, the sentences the game prints — so the
+// readout answers "should I memorize this" instead of restating the row.
 
-import { type JSX, useRef } from 'react'
+import { type JSX } from 'react'
 import { Box, Chip, Stack, Typography } from '@mui/material'
 import type { ClassAbbr } from '@shared/classCombo'
 import type { UnlockRow } from '@shared/levelUnlocks'
 import { Tooltip } from '../../lib/Tooltip'
-import { useWindowedRows } from '../../lib/useWindowedRows'
-import { fmtDuration } from './levelChartGeometry'
+import { SpellTooltip } from '../../lib/SpellCard'
 
-/** Row height in px — fixed, which is what makes the window arithmetic exact. */
+/** Row height in px — fixed, which is what keeps a scanned list on a rhythm. */
 const ROW_H = 26
 
 const KIND_LABEL: Record<UnlockRow['kind'], string> = {
@@ -38,47 +49,6 @@ const KIND_COLOR: Record<UnlockRow['kind'], string> = {
   skill: '#5fbf72',
   disc: '#b07fd0',
   innate: '#d9b25f'
-}
-
-/**
- * The spell card the name hovers into: the DB's fields, verbatim, in the game window's order.
- *
- * Nothing here computes or ranks a stat, and a field the wiki omits is simply absent — a spell
- * whose page states none of them says so rather than printing five dashes.
- */
-function spellCardLines(row: UnlockRow): string[] {
-  const s = row.spell
-  if (!s) return []
-  const lines: string[] = []
-  if (s.spellType) lines.push(s.spellType)
-  if (s.targetType) lines.push(`Target: ${s.targetType}`)
-  lines.push(s.castTimeMs === undefined ? 'Cast time: -' : `Cast: ${(s.castTimeMs / 1000).toFixed(1)}s`)
-  if (s.mana !== undefined) lines.push(`Mana: ${String(s.mana)}`)
-  if (s.durationMs !== undefined && s.durationMs > 0) lines.push(`Duration: ${fmtDuration(s.durationMs)}`)
-  return lines
-}
-
-/** The hover card's body. Plain text lines — the item-window idiom, without the item. */
-function SpellCard({ row }: { row: UnlockRow }): JSX.Element {
-  const lines = spellCardLines(row)
-  return (
-    <Box>
-      <Typography variant="caption" sx={{ fontWeight: 700, display: 'block' }}>
-        {row.name}
-      </Typography>
-      {lines.length === 0 ? (
-        <Typography variant="caption" color="text.secondary">
-          the spell DB states no details for this one
-        </Typography>
-      ) : (
-        lines.map((l) => (
-          <Typography key={l} variant="caption" display="block" color="text.secondary">
-            {l}
-          </Typography>
-        ))
-      )}
-    </Box>
-  )
 }
 
 /** The class chips: FILLED for a class we know is in the loadout, outlined for a candidate. */
@@ -103,11 +73,11 @@ function ClassChips({ classes, resolved }: { classes: ClassAbbr[]; resolved: Rea
 function Row({ row, resolved }: { row: UnlockRow; resolved: ReadonlySet<string> }): JSX.Element {
   const name =
     row.kind === 'spell' ? (
-      <Tooltip title={<SpellCard row={row} />} placement="right">
-        <Typography variant="caption" sx={{ fontWeight: 600 }} noWrap>
+      <SpellTooltip name={row.name}>
+        <Typography variant="caption" data-testid="unlock-spell-name" sx={{ fontWeight: 600 }} noWrap>
           {row.name}
         </Typography>
-      </Tooltip>
+      </SpellTooltip>
     ) : (
       <Typography variant="caption" sx={{ fontWeight: 600 }} noWrap>
         {row.name}
@@ -155,8 +125,8 @@ function Row({ row, resolved }: { row: UnlockRow; resolved: ReadonlySet<string> 
 }
 
 /**
- * One titled, fixed-height, windowed list. `empty` is the sentence to print when there is
- * nothing — for BER/MNK/WAR the spells list is legitimately empty at EVERY level (they have no
+ * One titled list, AS TALL AS ITS ROWS. `empty` is the sentence to print when there is nothing —
+ * for BER/MNK/WAR the spells list is legitimately empty at EVERY level (they have no
  * Template:Spellpage spells at all), so an empty list is a stated fact here, never an error.
  */
 export function UnlockList({
@@ -170,26 +140,18 @@ export function UnlockList({
   resolved: ReadonlySet<string>
   empty: string
 }): JSX.Element {
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const win = useWindowedRows({ count: rows.length, rowHeight: ROW_H, scrollRef })
   return (
-    <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+    <Box sx={{ flex: 1, minWidth: 0 }} data-testid="unlock-list">
       <Typography variant="caption" color="text.secondary" sx={{ mb: 0.25 }}>
         {title} ({rows.length})
       </Typography>
-      <Box ref={scrollRef} sx={{ height: 120, overflow: 'auto', pr: 0.75 }}>
+      <Box>
         {rows.length === 0 ? (
           <Typography variant="caption" color="text.disabled">
             {empty}
           </Typography>
         ) : (
-          <>
-            <Box sx={{ height: win.topPad }} />
-            {rows.slice(win.start, win.end).map((r) => (
-              <Row key={`${r.kind}:${r.name}`} row={r} resolved={resolved} />
-            ))}
-            <Box sx={{ height: win.bottomPad }} />
-          </>
+          rows.map((r) => <Row key={`${r.kind}:${r.name}`} row={r} resolved={resolved} />)
         )}
       </Box>
     </Box>

@@ -16,6 +16,10 @@
  * WHAT IT ASSERTS, against whatever the real log holds right now:
  *   1. the nav row mounts the view (or the no-logs empty state honestly explains why not);
  *   2. a chart is drawn, and the ZONE-BAND STRIP is mounted inside it with real bands;
+ *   2b. (JOS-292) the level chart draws the FRACTIONAL CURVE - denser than the ding series it is
+ *      anchored on, inside its own plot, with an uncertainty band over every stretch the log did
+ *      not state, no vertex inside one, and a readout that says so rather than naming a bar
+ *      position there. Step 2b lives in `curveSteps.mts`;
  *   3. the range-stats panel is mounted with the view and scoped to the TIMESCALE'S WINDOW
  *      (JOS-75 — it used to exist only while a drag did);
  *   4. a real pointer DRAG across the chart narrows that scope to the selection, and the panel
@@ -33,11 +37,16 @@
  *      (a window inside another can never count more), and come back BYTE-IDENTICAL at `All`;
  *   6. the "New at this level" panel is mounted with its stepper — and, once the combo module
  *      has resolved a loadout, draws real unlock rows for it (floors, never today's counts);
- *   7. the tab never scrolls the page, and there are no renderer console errors;
- *   7b. (JOS-151) and at the narrowest window the app allows, the two columns STACK instead of
- *      sharing one height: no panel draws over another, the stack absorbs the overflow rather
- *      than the page, and both the timeslice control and the unlock stepper are still the thing
- *      at their own centre. Steps 7/7b live in `levelingLayoutSteps.mts`;
+ *   7. (JOS-289) THE WHOLE PAGE SCROLLS AND NO PANEL DOES: the window itself never scrolls, no
+ *      panel on the tab shows an internal vertical scrollbar except the drops list whose row count
+ *      earns one, and the deepest panel is reached by scrolling the PAGE. No renderer console
+ *      errors either;
+ *   7b. and at the narrowest window the app allows, the two columns STACK instead of sharing one
+ *      height (JOS-151's collision, which JOS-289 removed the cause of): no panel draws over
+ *      another, the stack is not a scroller, and both the timeslice control and the unlock stepper
+ *      are still the thing at their own centre;
+ *   7c. and a spell name in the per-level readout opens the full spell card. Steps 7/7b/7c live in
+ *      `levelingLayoutSteps.mts`;
  *   8. (JOS-78) the IN-WINDOW DROPS panel is mounted with the tab, states its empty window rather
  *      than drawing a blank box, and fills from loot the harness plays into the tailed file —
  *      ordered by observed drops, each row stating a count and a rate over a STATED span that
@@ -81,9 +90,16 @@ import { launchOnFixture, type FixtureLog } from './logFixture.mjs'
 // because this spec sits AT the repo max-lines budget; see that file's header.
 import { stepDrops } from './dropSteps.mjs'
 import { stepZoneSlice } from './sliceSteps.mjs'
-// The layout contract and the narrow window (JOS-151) — next door for the same reason, and see
-// that file's header for what the reporter's 1073x937 actually did to this tab.
-import { stepNarrowLayout, stepOverflow } from './levelingLayoutSteps.mjs'
+// The layout contract, the spell card in the per-level readout and the narrow window (JOS-289,
+// which inverted JOS-151's claim here) — next door for the same reason, and see that file's header
+// for what the reporter's 1073x937 did to this tab and what the owner overturned afterwards.
+import { dismissFirstRunNotice, stepNarrowLayout, stepPageScroll, stepSpellCard } from './levelingLayoutSteps.mjs'
+// WHAT A POINTERMOVE COSTS (JOS-290) — the drag-responsiveness pin, next door because this file
+// is at the repo's line budget. It measures inside the same gesture it asserts about.
+import { stepDragCost } from './dragPerfSteps.mjs'
+// THE FRACTIONAL CURVE (JOS-292) — the vertices, the uncertainty bands, and the readout standing
+// on one. Next door for the same line-budget reason; see that file's header.
+import { stepLevelCurve } from './curveSteps.mjs'
 
 const NAV = '[data-testid="nav-leveling"]'
 const VIEW = '[data-testid="leveling-view"]'
@@ -668,10 +684,17 @@ async function main(): Promise<void> {
     page.on('pageerror', (e) => consoleErrors.push(String(e)))
 
     if (await stepMount(page)) {
+      // FIRST, because it is a fixed overlay across the bottom of the window and every hover and
+      // hit test below asks `elementFromPoint` (see the helper — since JOS-289 the page scrolls
+      // and a plot can legitimately park underneath it).
+      await dismissFirstRunNotice(page)
       await waitReplayed(page)
       const chart = await stepChart(page)
       if (chart) {
         await stepBands(page)
+        // The curve itself (JOS-292), read before any gesture has been made: its vertices, its
+        // refusals, and the readout standing on one. It leaves no selection and no tooltip.
+        await stepLevelCurve(page, LEVEL_CHART)
         // BEFORE the selection step: that one leaves a range-stats panel mounted in the charts
         // column, and the ledger assertions want the tab in the state a user first sees.
         await stepAaLedger(page)
@@ -687,6 +710,11 @@ async function main(): Promise<void> {
         // columns the idle classifier walks — so every byte-identical reading above must already
         // be behind us. See dropSteps.mts.
         await stepDrops(page, log)
+        // LAST of all: it PROFILES, so anything that runs after it would be measuring this step's
+        // leftovers, and it wants the tab in the fullest state the spec ever puts it in (the
+        // drops panel is populated by the step above) — which is the state a move used to have
+        // to re-render. It commits its own selection and leaves it; nothing below reads one.
+        await stepDragCost(page, LEVEL_CHART)
       } else {
         // The empty-state half of the headline assertion still holds, and is the honest thing
         // to assert on a log with no chart: there is no domain, so there is no scope, so there
@@ -696,7 +724,11 @@ async function main(): Promise<void> {
       // Deliberately OUTSIDE the chart branch: the unlock panel is computed from the committed
       // DBs, so it must be there whether or not this log has enough dings to draw a chart.
       await stepNewAtLevel(page, log)
-      await stepOverflow(page)
+      // Straight after it, on the level that step walked to: the readout's spell names now carry
+      // the full card (JOS-293's `SpellTooltip`), which is only usable because the list stopped
+      // being a 120px porthole — the two halves of JOS-289 proving each other.
+      await stepSpellCard(page)
+      await stepPageScroll(page)
       // LAST, because it moves the window: it puts the size and the minimum back before it
       // returns, but nothing after it should have to trust that.
       await stepNarrowLayout(app, page)

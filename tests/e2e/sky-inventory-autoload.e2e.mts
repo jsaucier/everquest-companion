@@ -1,6 +1,25 @@
 /**
  * Headless Electron integration test for THE SKY TAB LOADING THE INVENTORY DUMP BY ITSELF (JOS-253),
- * and for the QUIET line it says so on (JOS-268).
+ * for the QUIET line it says so on (JOS-268), and for it actually COUNTING the thing it loaded
+ * (JOS-294).
+ *
+ * READ THE THIRD RULING FIRST, because it moves the default this spec used to open on. JOS-253 made
+ * the app load the dump; JOS-268 made it say how fresh that dump was; neither touched the count
+ * SOURCE, which defaulted to `log` — and `log` reads the export for nothing at all
+ * (features/inventory/reconcile.ts). So the fixed surface still answered 0/2 to a player whose file
+ * held both items, and four reports across three releases (GitHub #27, in-app
+ * 01KZWDKMXYRERD96CF8AYQFA7P, Reddit, and this spec's own JOS-253 report — whose header already
+ * named the cause) are all that one gap. JOS-294 closes it in three places this spec now pins:
+ *   THE DEFAULT IS `both`. A fresh install counts whichever witness holds more of each item, so the
+ *   freshness line is up from the first render rather than after a trip through the dropdown. The
+ *   flip is a provable no-op for anyone without a dump (tests/countSourceDefault.test.mts reduces
+ *   the two sources to byte-identical `ReconcileResult`s), which is what lets it be a default change.
+ *   `log` SAYS WHAT IT IS DOING. Chosen on purpose with a dump loaded, it now states that the export
+ *   is loaded and not counted, and names the source that would count it. That was the one state of
+ *   three with nothing on screen, and it is where every reporter was standing.
+ *   THE READY TAB CARRIES THE CONTROL. It used to render neither the dropdown nor the caption
+ *   (`QuestFilterBar` lives on the Quests branch alone), so the tab the count source can EMPTY was
+ *   the one tab with no way to see or change it.
  *
  * THE REPORT (feedback 01KZV7C6F9GB93XCZCJSGJJKWA, v0.23.0): the inventory reload button in the
  * Plane of Sky section stays disabled even after running `/outputfile` in game. There was no log
@@ -23,7 +42,10 @@
  *   THE LINE IS QUIET. Caption-sized, in the same disabled grey the stamps were already in, with
  *   no card around it.
  *   IT ONLY COMES UP WHEN THE DUMP IS COUNTED. `log` reads the file for nothing, and a freshness
- *   line about a file no number on screen depends on is the caveat the UI diet refuses.
+ *   line about a file no number on screen depends on is the caveat the UI diet refuses. (JOS-294
+ *   keeps that rule and adds the missing sentence beside it: under `log` WITH A DUMP LOADED the slot
+ *   says the export is not being counted, which is a fact about the counts rather than about the
+ *   file's age. With no dump loaded it is still silent — there is nothing to fail to count.)
  *   AND IT MOVES NOTHING. It hangs off the bottom edge of the "Count items from" select, out of
  *   flow, so picking a source cannot shove the counts and the quest list down the page.
  *
@@ -99,6 +121,13 @@ const HOW = '[data-testid="posky-inventory-fresh-steps-toggle"]'
 const STEPS = '[data-testid="posky-inventory-fresh-steps"]'
 /** THE CONTROL THAT NO LONGER EXISTS (JOS-268). Named here only so its absence can be asserted. */
 const RELOAD = '[data-testid="posky-reload-inventory"]'
+/** THE SECOND TENANT OF THAT SLOT (JOS-294): what `log` says when a dump IS loaded. */
+const IGNORED = '[data-testid="posky-inventory-ignored"]'
+/** …in the exact words a player reads, because "there is a line" is not the fix. */
+const IGNORED_TEXT = 'Inventory export loaded but not counted - switch to Both to include it.'
+/** The Ready tab, which since JOS-294 carries the source control and its caption of its own. */
+const TAB_READY = '[data-testid="posky-tab-ready"]'
+const READY = '[data-testid="posky-ready"]'
 /** The dropdown the line now belongs to, and whose value decides whether it is drawn at all. */
 const COUNT_SOURCE = '[data-testid="posky-count-source"]'
 const COUNT_SOURCE_VALUE = `${COUNT_SOURCE} [role="combobox"]`
@@ -149,7 +178,11 @@ interface Layout {
 // NO HELPER FUNCTION INSIDE THE `evaluate` BODY: the runner loads these specs through tsx, whose
 // esbuild transform names inner functions with a `__name` shim that does not exist in the page.
 // Three straight-line reads instead, which is also the whole point — they are one frame.
-function layout(page: Page): Promise<Layout> {
+//
+// `lineSel` is a parameter since JOS-294 because the slot has two tenants — the freshness line and
+// the "loaded but not counted" sentence — and every layout promise the ticket above made has to be
+// true of BOTH. Measuring the second one with the first one's helper is what keeps that honest.
+function layout(page: Page, lineSel: string = FRESH): Promise<Layout> {
   return page.evaluate(
     (s) => {
       const counts = document.querySelector(s.counts)
@@ -162,7 +195,7 @@ function layout(page: Page): Promise<Layout> {
         lineBottom: line ? Math.round(line.getBoundingClientRect().bottom) : null
       }
     },
-    { counts: COUNTS, select: COUNT_SOURCE, line: FRESH }
+    { counts: COUNTS, select: COUNT_SOURCE, line: lineSel }
   )
 }
 
@@ -200,24 +233,56 @@ async function setCountSource(page: Page, value: string): Promise<boolean> {
 }
 
 /**
- * THE DEFAULT STATE, pinned before anything moves: the source the reporter never touched, no
- * freshness line, and no Reload button anywhere on the tab.
+ * THE DEFAULT STATE, pinned before anything moves — AND IT IS A DIFFERENT DEFAULT SINCE JOS-294.
  *
- * `Log (ever looted)` is the option label `loadCountSource`'s `'log'` renders (QuestFilterBar's
- * `InventorySource`). Under it the dump is read for nothing at all, which is the owner's whole
- * argument for the line not being there.
+ * This step used to assert `Log (ever looted)`, no freshness line, and no Reload button, and the
+ * first two of those were the JOS-253 defect wearing the JOS-268 presentation: `log` reads the dump
+ * for NOTHING (reconcile.ts), so a fresh install loaded the player's export, dated it, and counted
+ * not one item out of it — with no line about the file because no inventory source was up. Four
+ * reports across three releases end there.
  *
- * Returns the layout to measure everything else against.
+ * So the default is `both` now, which is the source that counts whichever witness can vouch for
+ * more, and the freshness line comes up WITH IT on a machine that has never run the command
+ * ("not yet run · not loaded yet" — the honest state, and the one that teaches the command).
+ *
+ * THE STORED KEY IS READ AS WELL AS THE CONTROL, because "the default" is the whole claim: an
+ * absent `eq.countSource` is what this asserts about, and a value in storage would mean the spec
+ * was reading somebody's pick instead (features/inventory/countSource.ts — an explicit choice is
+ * returned verbatim, and this launch has never made one).
  */
-async function stepDefaultSaysNothing(page: Page): Promise<Layout> {
+async function stepDefaultCountsTheDump(page: Page): Promise<void> {
+  const stored = await page.evaluate((k) => localStorage.getItem(k), COUNT_SOURCE_KEY)
+  check('nothing has ever chosen a count source on this install', stored === null, String(stored))
   const source = await page.evaluate(
     (s) => (document.querySelector(s) as HTMLElement | null)?.innerText.trim() ?? '',
     COUNT_SOURCE_VALUE
   )
-  check('the count source starts at its stored default', source === 'Log (ever looted)', source)
-  check('…and the log source draws no freshness line at all', (await countOf(page, FRESH)) === 0)
+  check(
+    'a fresh install counts the inventory export by default',
+    source === 'Both (higher of the two)',
+    source
+  )
+  check('…so the freshness line is up without anyone touching the dropdown', (await countOf(page, FRESH)) === 1)
   // CONSTRAINT 4, as one number. The control is not disabled, not hidden: it does not exist.
   check('…and the Reload inventory button is gone from the tab', (await countOf(page, RELOAD)) === 0)
+}
+
+/**
+ * THE LOG SOURCE, CHOSEN ON PURPOSE, ON A MACHINE WITH NO DUMP: still says nothing, and that is
+ * still right — there is no file, so there is nothing to fail to count.
+ *
+ * This is JOS-268's constraint 2 in the only state where it survives JOS-294 intact, and it is also
+ * how the rest of this spec gets its baseline: the no-reflow comparisons need a layout with the
+ * slot EMPTY, and after this ticket the default no longer provides one.
+ */
+async function stepLogSaysNothingWithNoDump(page: Page): Promise<Layout> {
+  if (!(await setCountSource(page, 'log'))) return layout(page)
+  const gone = await settle(() => countOf(page, FRESH), (n) => n === 0, { timeoutMs: 10_000 })
+  check('picking the log source takes the freshness line away', gone === 0, `lines=${String(gone)}`)
+  check(
+    '…and with no dump on the machine it says nothing at all — there is nothing to ignore',
+    (await countOf(page, IGNORED)) === 0
+  )
   return layout(page)
 }
 
@@ -395,6 +460,125 @@ async function stepItLeavesWithoutMoving(page: Page, before: Layout): Promise<vo
 }
 
 /**
+ * AND NOW THE STATE THE WHOLE OF JOS-294 IS ABOUT: `log` is selected, a dump HAS been loaded, and
+ * the tab has to say so.
+ *
+ * This runs immediately after `stepItLeavesWithoutMoving`, which is what makes it the reporter's
+ * exact situation rather than a contrived one: the app picked the file up by itself moments ago
+ * (`stepAutoLoads`), the source ignores every item in it, and before this ticket the surface said
+ * NOTHING — the one state of three with no line, which is why four reports read as four different
+ * bugs. The sentence names the source that would count it, because "your export is being ignored"
+ * without a way out is a caveat rather than an answer.
+ *
+ * The geometry is asserted again rather than assumed: this is a second tenant of the same overlay
+ * slot, so it owes the same no-reflow promise, and a block element here would push the quest list
+ * down exactly the way JOS-268 refused.
+ */
+async function stepLogSaysTheDumpIsIgnored(page: Page, before: Layout): Promise<void> {
+  const up = await settle(() => countOf(page, IGNORED), (n) => n === 1, { timeoutMs: 10_000 })
+  if (!check('with a dump loaded, the log source finally says it is not counting it', up === 1, `lines=${String(up)}`)) {
+    return
+  }
+  const text = await page.evaluate(
+    (s) => (document.querySelector(s) as HTMLElement | null)?.innerText.trim() ?? '',
+    IGNORED
+  )
+  check('…in words that name the way out, not just the problem', text === IGNORED_TEXT, text)
+  const after = await layout(page, IGNORED)
+  check(
+    '…and it moved nothing either (the slot has one geometry, whichever line is in it)',
+    after.counts !== null && after.counts === before.counts,
+    `counts top was ${String(before.counts)}, now ${String(after.counts)}`
+  )
+  check(
+    '…hanging below the dropdown and fitting above the row under it',
+    after.line !== null &&
+    after.select !== null &&
+    after.lineBottom !== null &&
+    after.counts !== null &&
+    after.line >= after.select &&
+    after.lineBottom <= after.counts,
+    `select bottom=${String(after.select)} line=${String(after.line)}-${String(after.lineBottom)} counts top=${String(after.counts)}`
+  )
+}
+
+/** What the Ready tab looks like around its count-source control, read in one frame. */
+interface ReadyLayout {
+  /** the control's own bottom edge */
+  select: number | null
+  /** the caption hanging off it, top and bottom */
+  line: number | null
+  lineBottom: number | null
+  /** the top of whatever the tab draws under that row — the thing a caption must not land on */
+  next: number | null
+}
+
+function readyLayout(page: Page, lineSel: string): Promise<ReadyLayout> {
+  return page.evaluate(
+    (s) => {
+      const container = document.querySelector(s.ready)
+      const select = document.querySelector(s.select)
+      const line = document.querySelector(s.line)
+      const next = container?.children[1] ?? null
+      return {
+        select: select ? Math.round(select.getBoundingClientRect().bottom) : null,
+        line: line ? Math.round(line.getBoundingClientRect().top) : null,
+        lineBottom: line ? Math.round(line.getBoundingClientRect().bottom) : null,
+        next: next ? Math.round(next.getBoundingClientRect().top) : null
+      }
+    },
+    { ready: READY, select: COUNT_SOURCE, line: lineSel }
+  )
+}
+
+/**
+ * THE READY TAB CARRIES THE CONTROL AND ITS CAPTION (JOS-294, scope C).
+ *
+ * The in-app reporter (01KZWDKMXYRERD96CF8AYQFA7P) had a deleted log and a full dump, so their
+ * Ready tab was empty of quests they were in fact holding every item for — and `QuestFilterBar`,
+ * the only place the count source could be changed, renders ONLY on the Quests branch
+ * (PoskyView.tsx). A control that can empty a tab has to be reachable from it: that is the JOS-155
+ * argument, made for a checkbox, and this dropdown empties this tab far harder than the checkbox
+ * ever did.
+ *
+ * Four claims, in the order a stranded player would need them: the control is HERE, it carries the
+ * pick made on the other tab (one stored key, not a second opinion), the caption under it says the
+ * dump is being ignored, and the control WORKS from here — picking Both swaps the caption for the
+ * freshness line without leaving the tab.
+ */
+async function stepReadyTabCarriesTheSource(page: Page): Promise<void> {
+  await page.click(TAB_READY, { timeout: 15_000 })
+  if (!check('the Ready tab opens', await appears(page, READY, 20_000))) return
+  check('…carrying the count-source control itself, not only a caption', (await countOf(page, COUNT_SOURCE)) === 1)
+  const source = await page.evaluate(
+    (s) => (document.querySelector(s) as HTMLElement | null)?.innerText.trim() ?? '',
+    COUNT_SOURCE_VALUE
+  )
+  check('…showing the pick made on the Quests tab (one stored source, two surfaces)', source === 'Log only (ever looted)', source)
+
+  const shown = await settle(() => countOf(page, IGNORED), (n) => n === 1, { timeoutMs: 10_000 })
+  if (check('…and saying, HERE, that the loaded dump is not being counted', shown === 1, `lines=${String(shown)}`)) {
+    const box = await readyLayout(page, IGNORED)
+    check(
+      '…as a caption under the control that fits above the tab body',
+      box.line !== null &&
+      box.select !== null &&
+      box.lineBottom !== null &&
+      box.next !== null &&
+      box.line >= box.select &&
+      box.lineBottom <= box.next,
+      `select bottom=${String(box.select)} line=${String(box.line)}-${String(box.lineBottom)} next=${String(box.next)}`
+    )
+  }
+
+  // THE WAY OUT, taken from the tab it was needed on.
+  if (!(await setCountSource(page, 'both'))) return
+  const fresh = await settle(() => countOf(page, FRESH), (n) => n === 1, { timeoutMs: 10_000 })
+  check('picking Both from the Ready tab counts the dump without leaving the tab', fresh === 1, `lines=${String(fresh)}`)
+  check('…and the not-counted sentence goes with it', (await countOf(page, IGNORED)) === 0)
+}
+
+/**
  * THE OTHER HALF: a dump rewritten while the app was DOWN.
  *
  * The watcher is armed `ignoreInitial: true` and cannot see this write, so the load instant can
@@ -461,13 +645,18 @@ async function main(): Promise<void> {
     console.log('launch 1: never-run machine, then write the dump underneath it…')
     await launch(log, userData, 'sky-inventory-autoload-1', async (page) => {
       if (!(await openSky(page))) return
-      const base = await stepDefaultSaysNothing(page)
+      await stepDefaultCountsTheDump(page)
+      // The baseline for every no-reflow comparison below is the slot EMPTY, which since JOS-294 is
+      // the log source on a machine with no dump rather than the default.
+      const base = await stepLogSaysNothingWithNoDump(page)
       await stepInventorySourceRevealsIt(page, base)
       await stepItIsUnderstated(page)
       await stepAskingHowMovesNothing(page, base)
       await stepNeverRun(page)
       readAt = await stepAutoLoads(page, log.installDir)
       await stepItLeavesWithoutMoving(page, base)
+      await stepLogSaysTheDumpIsIgnored(page, base)
+      await stepReadyTabCarriesTheSource(page)
     })
 
     const before = readAt
@@ -479,9 +668,11 @@ async function main(): Promise<void> {
       console.log('launch 2: same userData, a dump rewritten while nothing was running…')
       await launch(log, userData, 'sky-inventory-autoload-2', async (page) => {
         if (!(await openSky(page))) return
-        // The line is drawn only under an inventory-backed source, and launch 1 signed off on the
-        // log one — so the source is picked again here. It is the same act a returning player
-        // performs, and the freshness it then shows is the startup read this act is about.
+        // The line is drawn only under an inventory-backed source. Picking one explicitly here —
+        // rather than riding launch 1's stored `both` — keeps this act independent of whatever the
+        // default happens to be, which is a thing this spec has now watched change once. It is the
+        // same act a returning player performs, and the freshness it then shows is the startup read
+        // this act is about.
         if (!(await setCountSource(page, 'inventory'))) return
         if (!check('the line comes back with the source', await appears(page, FRESH, 20_000))) return
         await stepStartupRead(page, before)

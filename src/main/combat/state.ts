@@ -29,6 +29,7 @@ import { RecentCasts } from './procDetect'
 import { PetNudgeState } from './petNudge'
 import { EMPTY_ROSTER, EMPTY_ROSTER_VIEW, type RosterSnap, type RosterView } from '../../shared/roster'
 import type { ClassifiedLine, CoatSlot } from '../../shared/combat'
+import type { ComboInterval } from '../../shared/classCombo'
 
 export class EngineState {
   /** Canonical name keys of your LIVE PETS — charmed AND summoned alike. Kept in
@@ -181,11 +182,32 @@ export class EngineState {
    * `coatCombat` holds up to `MAX_COMBAT_COATS` (3) combat venoms, one per mutually-exclusive
    * VENOM LINE — venoms on different lines stack, the two members of a line replace each other
    * (shared/poisons.ts carries the wiki wording). Session-scoped exactly like the stance pair:
-   * a coat survives zoning, is cleared by your own death (ingest.ts's playerDeath case) and by
-   * reset().
+   * a coat survives zoning, and is stripped only by `reset()` or by one of the three boundaries
+   * `procRouting.clearCoats` owns — your own death, a character rebirth, and the loadout ceasing
+   * to contain ROG (JOS-305, combat/coatClass.ts). Never assign these two fields anywhere but
+   * `routeCoat` / `routeDry` / `clearCoats`: a clear that moved the slots without ending the
+   * spans is the exact defect JOS-305 was filed for, one case at a time.
    */
   coatUtility?: CoatSlot
   coatCombat: CoatSlot[] = []
+  /**
+   * WHICH THREE CLASSES IS THIS CHARACTER RUNNING? — pulled live from the combo module
+   * (JOS-305). Installed by pipeline.ts as `() => comboModule.currentInterval()`; the default
+   * returns null, so every test and every replay without the module behaves exactly as it did
+   * before this seam existed.
+   *
+   * A PULL, and the SAME pull the roster seam is, for the same two reasons: the combo module is
+   * registered FIRST on the bus (pipeline.ts), so by the time the engine folds a line the combo
+   * state has already advanced for that same line; and a `/who` row typed between two log lines
+   * has to reach the very next one. Unlike the roster this is NOT free to call — a rebuild walks
+   * every retained observation (~5 ms at 30k, measured) — so coatClass.ts owns the gate that
+   * decides when it may be asked, and nothing else in the engine reads it.
+   */
+  comboProvider: () => ComboInterval | null = () => null
+  /** Log-clock ts of the last combo consultation (0 = never). The THROTTLE half of the
+   *  class-swap coat clear; see combat/coatClass.ts for the period and why it is what it is.
+   *  Driven entirely by event timestamps, so a replay consults at identical instants. */
+  coatClassCheckedTs = 0
   /**
    * ROLLING TIME-TO-SLOW samples (Task #64), newest last, capped at SLOW_SAMPLE_CAP. One
    * entry per FINALIZED pull that opened with a slow-capable coat on: the ms to the first
@@ -287,6 +309,7 @@ export class EngineState {
     this.invocation = undefined
     this.coatUtility = undefined
     this.coatCombat = []
+    this.coatClassCheckedTs = 0
     this.slowSamples = []
     this.stateTimeline.reset()
     this.recentCasts.clear()

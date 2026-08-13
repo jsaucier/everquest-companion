@@ -14,6 +14,7 @@ import { itemCountKey, normalizeItemName } from '../../lib/itemName'
 import { computeHeldCounts, computeLastLootedAt } from './heldCounts'
 import { useModule } from '../../lib/useModule'
 import { reconcile, type InventoryRow } from '../inventory/reconcile'
+import { COUNT_SOURCE_KEY, resolveCountSource } from '../inventory/countSource'
 import { questKey } from './keys'
 import { ambiguousQuestNames, computeSharedItems, type SharedItemsMap } from './sharedItems'
 import { skyDroppersFor, type DropperMob } from './poskyDroppers'
@@ -45,13 +46,18 @@ const ambiguousNames = ambiguousQuestNames(posky.quests)
 // celebration to resolve a matched key back to its quest for the callback (Task #46).
 const questByKey = new Map<string, PoskyQuest>(posky.quests.map((q) => [questKey(q), q]))
 
-const COUNT_SOURCE_KEY = 'eq.countSource'
-
 export { questKey }
 
+/**
+ * The stored pick, or the default for somebody who has never made one (JOS-294).
+ *
+ * BOTH HALVES LIVE IN `countSource.ts` NOW, and the default there is `both` rather than `log`. The
+ * argument, the reports behind it and the proof that it changes nothing for an install with no dump
+ * are all in that file's header; this is the one line of storage it needs. An explicit stored choice
+ * is returned verbatim — the flip reaches only an absent key.
+ */
 function loadCountSource(): CountSource {
-  const v = localStorage.getItem(COUNT_SOURCE_KEY)
-  return v === 'inventory' || v === 'both' || v === 'log' ? v : 'log'
+  return resolveCountSource(localStorage.getItem(COUNT_SOURCE_KEY))
 }
 
 /**

@@ -345,6 +345,70 @@ async function stepRateBasis(overlay: Page): Promise<void> {
   check('…so the window degrades to the default rather than to a blank', restored.includes('elapsed'), restored)
 }
 
+/** The footer's membership toggle, as the DOM carries it. '' when it is not mounted at all. */
+function tierButton(page: Page): Promise<string> {
+  return page.evaluate(() => document.querySelector('[data-testid="xp-tier"]')?.getAttribute('data-scope') ?? '')
+}
+
+/**
+ * THIS TIER, OR EVERY TIER OF THE ZONE, END TO END (JOS-291).
+ *
+ * `tests/timeslice.test.mts` pins the two folds and `tests/progressionWindows.test.mts` pins them
+ * over the real `The Plane of Hate - Solo 1 (Awakened)` / `- Solo 2 (Adaptive)` pair. What only the
+ * real app can show is the fourth persisted knob wired end to end: that the control is absent while
+ * the slice names no zone, that it appears with the default when one does, that the SPAN LINE names
+ * the membership in force (the honesty rule — a caption reading `Nagafen's Lair` over numbers that
+ * counted `Nagafen's Lair - Solo 3 (Fused)` is the defect this option was filed for), that flipping
+ * it re-measures, and that main's rebuild-not-trust normalizer refuses a membership this build
+ * cannot apply.
+ *
+ * e2e-leveling.log is the right fixture by accident of the owner's own play: it names five
+ * spellings of ONE camp (plain `Nagafen's Lair` plus four `- Solo N (…)` tiers), so the two
+ * memberships have genuinely different answers here.
+ */
+async function stepZoneScope(overlay: Page): Promise<void> {
+  check('a slice that names no zone offers no membership toggle', (await tierButton(overlay)) === '')
+
+  await setConfig(overlay, { xpSlice: 'zone' })
+  const zoned = await settle(() => span(overlay), (t) => t.includes('tier'), { timeoutMs: 15_000 })
+  check('picking Zone brings the membership toggle out, on the default', (await tierButton(overlay)) === 'allTiers')
+  check(
+    '…and the span line NAMES what that membership admitted, rather than only the current tier',
+    /, every tier/.test(zoned),
+    zoned
+  )
+  check(
+    '…while the checklist prefix still selects rows only',
+    (await countOf(overlay, '[data-testid^="xp-toggle-"]')) === 3,
+    'the tier toggle is `xp-tier`, deliberately outside the row prefix'
+  )
+
+  await setConfig(overlay, { xpZoneScope: 'exactTier' })
+  const exact = await settle(() => span(overlay), (t) => t.includes('this tier only'), { timeoutMs: 15_000 })
+  check('flipping to this tier re-words the caption', exact.includes('this tier only'), `${zoned} → ${exact}`)
+  check('…and the footer button follows it', (await tierButton(overlay)) === 'exactTier')
+  check(
+    '…and the span itself is re-measured, because the other tiers of the camp are now out',
+    exact !== zoned,
+    `${zoned} → ${exact}`
+  )
+  const stored = await settle(() => getConfig(overlay), (c) => c.xpZoneScope === 'exactTier', { timeoutMs: 10_000 })
+  check('…written to this window’s own persisted config', stored.xpZoneScope === 'exactTier', JSON.stringify(stored.xpZoneScope))
+
+  // A store cannot name a membership this build cannot apply — the closed union, through the real
+  // IPC and the real normalizer in main (the `xpRows` / `xpBasis` rule, applied to the fourth knob).
+  await setConfig(overlay, { xpZoneScope: 'everyTier' })
+  const rejected = await settle(() => getConfig(overlay), (c) => c.xpZoneScope === undefined, { timeoutMs: 10_000 })
+  check('an unknown membership is dropped by main rather than stored', rejected.xpZoneScope === undefined)
+  const restored = await settle(() => span(overlay), (t) => t === zoned, { timeoutMs: 15_000 })
+  check('…so the window degrades to every tier — the read it has always given', restored === zoned, restored)
+
+  // Back to the whole log for the steps below, and the toggle goes away with the zone it was about.
+  await setConfig(overlay, { xpSlice: 'all' })
+  const back = await settle(() => tierButton(overlay), (s) => s === '', { timeoutMs: 15_000 })
+  check('…and it leaves again with the zone half it was about', back === '')
+}
+
 /** Close it the way a user would — its own ✕ — and prove main recorded it. */
 async function stepClose(page: Page, app: ElectronApplication, overlay: Page | null): Promise<void> {
   if (overlay) {
@@ -352,7 +416,7 @@ async function stepClose(page: Page, app: ElectronApplication, overlay: Page | n
     // context; whether the close happened is the settle below's answer to give, not this call's.
     await overlay
       .evaluate(() => {
-        ;(document.querySelector('button[aria-label="Close overlay"]') as HTMLElement | null)?.click()
+        ; (document.querySelector('button[aria-label="Close overlay"]') as HTMLElement | null)?.click()
       })
       .catch(() => undefined)
   } else {
@@ -383,6 +447,7 @@ async function main(): Promise<void> {
       await stepHydratesFromTheFold(overlay)
       await stepSlice(overlay)
       await stepRateBasis(overlay)
+      await stepZoneScope(overlay)
       await stepLiveMote(overlay, log)
       await stepRowChecklist(overlay)
     } else {

@@ -332,7 +332,8 @@ function moteRows(
     // carries a zone, so counting every zone's drops against it would put a rate under a
     // denominator it was never measured over.
     spans: stats,
-    zoneKey: slice.zoneKey
+    zoneKey: slice.zoneKey,
+    zoneExactKey: slice.zoneExactKey
   })
   if (rows.length === 0) {
     return [
@@ -387,7 +388,14 @@ export interface XpRowsArgs {
  */
 export function xpOverlayView(args: XpRowsArgs): XpOverlayView {
   const { snap, loot, slice, visible, level } = args
-  const stats = rangeStats({ snap, range: slice.range, zoneKey: slice.zoneKey })
+  // BOTH halves of the zone membership travel (JOS-130 / JOS-291) — the tier key is null unless
+  // the window is on `this tier`, so the default is the read this window has always given.
+  const stats = rangeStats({
+    snap,
+    range: slice.range,
+    zoneKey: slice.zoneKey,
+    zoneExactKey: slice.zoneExactKey
+  })
   const capped = atCap(stats)
   // ONE BASIS READ FOR THE WHOLE WINDOW, resolved beside the one `rangeStats` call and handed to
   // every row: the span line under the rows states the denominator, and a row measured over a

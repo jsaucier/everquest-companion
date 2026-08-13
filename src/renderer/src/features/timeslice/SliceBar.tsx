@@ -17,6 +17,13 @@
 // A SHORT HISTORY LOSES THE BUTTONS, NOT THE CAPTION. When the record can offer only one slice
 // there is no choice to draw, and the caption still states which stretch the numbers cover — the
 // same honest degradation `TimescaleBar` shipped with.
+//
+// THE TWO HALVES ARE SEPARATELY MOUNTABLE (JOS-301). `SliceControls` is the buttons and
+// `SliceCaption` is the sentence under them; `SliceBar` is the pair on ONE line, which is what the
+// loot ledger mounts and has always looked like. `ScopeBar` takes them apart instead — its row
+// carries three sets of controls and ONE caption line beneath all of them, so the slice's words
+// have to be able to travel without the buttons they belong to. Neither half is a copy of the
+// other's text: the words live here, in `SliceCaption`, wherever they are drawn.
 
 import { type JSX } from 'react'
 import { Stack, TextField, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material'
@@ -94,7 +101,8 @@ export interface SliceBarProps {
   testId: string
 }
 
-export function SliceBar({ available, slice, onPick, onCustom, testId }: SliceBarProps): JSX.Element {
+/** THE BUTTONS ALONE — the half that is a control, mountable beside other controls (JOS-301). */
+export function SliceControls({ available, slice, onPick, onCustom, testId }: SliceBarProps): JSX.Element {
   return (
     <Stack
       direction="row"
@@ -128,19 +136,61 @@ export function SliceBar({ available, slice, onPick, onCustom, testId }: SliceBa
         </ToggleButtonGroup>
       )}
       {slice.id === 'custom' && <CustomRange range={slice.range} onChange={onCustom} testId={testId} />}
-      {/* The control never shrinks; the caption does (the compact-bar contract). It states the
-          slice's ends and, when the slice is restricted to one zone, which zone — the two halves
-          of a slice, in the one place that is allowed to describe it. */}
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        noWrap
-        sx={{ minWidth: 0 }}
-        data-testid={`${testId}-window`}
-      >
-        {edge(slice.range.t0)} → {edge(slice.range.t1)}
-        {slice.zoneName ? ` · ${slice.zoneName}` : ''}
-      </Typography>
+    </Stack>
+  )
+}
+
+/**
+ * THE SENTENCE ALONE — the half that describes, wherever it ends up being drawn (JOS-301).
+ *
+ * It states the slice's ends and, when the slice is restricted to one zone, which zone AND WHICH OF
+ * ITS TIERS (`Timeslice.zoneCaption`, JOS-291) — the halves of a slice, in the one place that is
+ * allowed to describe it. The membership clause is printed even under the default, because the
+ * default admits visits whose names this line does not print, and a caption that named only the
+ * current tier while measuring every one of them is the defect JOS-291 was filed for (JOS-288's
+ * honesty rule: the span line IS the denominator).
+ *
+ * It renders as a `span` because it is a CLAUSE: on the loot ledger it is the second item of a
+ * one-line bar, and on `ScopeBar` it is the first clause of a caption line it shares with the
+ * basis. `noWrap` is the CALLER's call for the same reason — it belongs to whoever owns the line
+ * (the compact-bar contract: the control never shrinks, the caption does).
+ */
+export function SliceCaption({
+  slice,
+  testId,
+  noWrap = false
+}: {
+  slice: Timeslice
+  testId: string
+  noWrap?: boolean
+}): JSX.Element {
+  return (
+    <Typography
+      component="span"
+      variant="caption"
+      color="text.secondary"
+      noWrap={noWrap}
+      sx={{ minWidth: 0 }}
+      data-testid={`${testId}-window`}
+    >
+      {edge(slice.range.t0)} → {edge(slice.range.t1)}
+      {slice.zoneCaption ? ` · ${slice.zoneCaption}` : ''}
+    </Typography>
+  )
+}
+
+/** BOTH HALVES ON ONE LINE — the loot ledger's bar, unchanged since JOS-130. */
+export function SliceBar(props: SliceBarProps): JSX.Element {
+  return (
+    <Stack
+      direction="row"
+      spacing={1.5}
+      alignItems="center"
+      sx={{ flexWrap: 'wrap', rowGap: 1, minWidth: 0 }}
+      useFlexGap
+    >
+      <SliceControls {...props} />
+      <SliceCaption slice={props.slice} testId={props.testId} noWrap />
     </Stack>
   )
 }

@@ -13,8 +13,9 @@
  * in `localStorage`, both inside `userData`, so a dir left behind by an earlier run would make
  * that assertion vacuous (and would land the pane in whichever mode the last run left open).
  *
- * WHAT IT ASSERTS, against the REAL committed item DB: the nav row mounts the pane on its empty
- * state; creating a set from the UI produces a set chip and a toolbar; the effect browser lists
+ * WHAT IT ASSERTS, against the REAL committed item DB: the Gear nav row plus the Exaltations tab
+ * mounts the pane on its empty state (JOS-324 collapsed four nav rows into one area — the door
+ * changed, nothing behind it did); creating a set from the UI produces a set chip and a toolbar; the effect browser lists
  * at least one effect row and expands it into at least one donor (the corpus is committed data,
  * so this is deterministic — but it is asserted as a FLOOR, never as today's count); adding that
  * donor to the set writes a socket that BOTH other modes can see — the Board draws it in a cell
@@ -98,6 +99,7 @@ import {
   SOCKET_BROWSE,
   SOCKET_LINE,
   STATE_CHIP,
+  TAB,
   VIEW,
   boxOf,
   checkReportedPairs,
@@ -120,12 +122,19 @@ const LOOT_DB_SOURCES = '[data-testid="loot-db-sources"]'
 const LOOT_BACK = '[data-testid="loot-back"]'
 
 /**
- * 1. THE NAV ROW MOUNTS THE PANE. False on the no-logs machine, where no feature view mounts.
+ * 1. THE GEAR ROW, THEN THE EXALTATIONS TAB, MOUNTS THE PANE. False on the no-logs machine, where
+ *    no feature view mounts.
  *
- * The row's testid is `nav-planner` and always will be — the view id, the route and the store keys
- * are internal (JOS-42 renamed the LABEL, not the feature). So the label is asserted as TEXT: that
- * is the only place the rename is visible, and a spec that only clicked the testid would have let
- * it silently revert.
+ * TWO CLICKS SINCE JOS-324, and the change is only to the door. Exaltations used to own a nav row
+ * (`nav-planner`); it is now the second TAB of the gear area, which hangs off the one `nav-gear`
+ * row. The view id, the route, the store keys and every `planner-*` testid are what they always
+ * were — JOS-42 renamed the LABEL and JOS-324 moved the DOOR, and neither was a refactor.
+ *
+ * The label is still asserted as TEXT, and now in the place it actually appears: on the TAB. That
+ * is the only surface the JOS-42 rename is visible on, and a spec that only clicked the testid
+ * would have let it silently revert. The nav row's own label is asserted too — it says Gear, the
+ * name of the area rather than of this tab, and that distinction is the whole shape of the
+ * collapse.
  */
 
 async function stepMount(page: Page): Promise<boolean> {
@@ -133,10 +142,23 @@ async function stepMount(page: Page): Promise<boolean> {
     () => true,
     () => false
   )
-  if (!check('the nav drawer has an Exaltations row', hasRow)) return false
-  const label = (await textOf(page, NAV)).replace(/\s+/g, ' ').trim()
-  check('…and it is called Exaltations, the name the game uses', label.includes('Exaltations'), `reads "${label}"`)
+  if (!check('the nav drawer has a Gear row — the one door to all four gear tabs', hasRow)) return false
+  const rowLabel = (await textOf(page, NAV)).replace(/\s+/g, ' ').trim()
+  check('…and the row is called Gear, the area rather than the tab', rowLabel.includes('Gear'), `reads "${rowLabel}"`)
   await page.click(NAV, { timeout: 15_000 })
+
+  const hasTab = await page.waitForSelector(TAB, { timeout: 30_000 }).then(
+    () => true,
+    () => false
+  )
+  if (!check('…and it opens an area whose tab bar offers Exaltations', hasTab)) return false
+  const tabLabel = (await textOf(page, TAB)).replace(/\s+/g, ' ').trim()
+  check(
+    '…called Exaltations, the name the game uses',
+    tabLabel.includes('Exaltations'),
+    `reads "${tabLabel}"`
+  )
+  await page.click(TAB, { timeout: 15_000 })
 
   // A character with no sets gets the invitation; one with sets gets the toolbar. Either is a
   // mounted pane — on a wiped userData it is always the first.
@@ -151,7 +173,7 @@ async function stepMount(page: Page): Promise<boolean> {
     return false
   }
   check(
-    'clicking the Exaltations nav row mounts the pane on its create-a-set empty state',
+    'clicking the Exaltations tab mounts the pane on its create-a-set empty state',
     (await countOf(page, NEW_SET_EMPTY)) > 0,
     `${String(await countOf(page, SET_CHIP))} sets already stored`
   )
@@ -522,9 +544,17 @@ async function stepDeepLink(page: Page): Promise<void> {
   const home = await until(async () => (await countOf(page, VIEW)) > 0, 20_000)
   check('…and pressing Back returns to the Exaltations tab you were reading', home)
   check('…with the plan still on screen, not the loot ledger', (await countOf(page, LOOT_DETAIL)) === 0)
+  // BOTH HALVES OF "WHERE AM I" SINCE JOS-324. The nav row stands for the whole gear area, so it
+  // reads selected on any of the four tabs and cannot by itself say we came back to Exaltations —
+  // the TAB is what says that. Asserting only the row would have quietly stopped testing the
+  // return leg's destination the day the rows collapsed.
   check(
     '…and the nav agreeing about where we are',
     (await countOf(page, `${NAV}.Mui-selected`)) === 1
+  )
+  check(
+    '…down to which of the area’s tabs is up',
+    (await countOf(page, `${TAB}.Mui-selected`)) === 1
   )
 }
 

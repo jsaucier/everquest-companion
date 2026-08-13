@@ -180,8 +180,15 @@ export function gearOwnershipMap(
   return out
 }
 
-/** One row's answer, or the shared nothing. */
-export function ownershipFor(map: GearOwnershipMap, row: GearRow): GearOwnership {
+/**
+ * One row's answer, or the shared nothing.
+ *
+ * It takes `{ key }` rather than a whole `GearRow` since JOS-286: a SET CELL asks the same
+ * question about an item it holds by key alone (the corpus row may be gone), and the widening
+ * keeps that question going through this file instead of tempting a second `map.get` with its own
+ * idea of what a miss means.
+ */
+export function ownershipFor(map: GearOwnershipMap, row: Pick<GearRow, 'key'>): GearOwnership {
   return map.get(row.key) ?? NOTHING
 }
 

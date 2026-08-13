@@ -22,11 +22,17 @@
 // it. `inferred` is a claim about evidence, and a surface that never says so is asking to be
 // believed.
 //
-// THE POINTER IS A TOOLTIP AND NOT A LINE, AND THAT IS MEASURED RATHER THAN TASTE. This panel is
-// the LAST child of a `height: 100%` stack whose middle child is the scroller, so every pixel it
-// takes comes out of the charts. At the app's own minimum width one caption line here pushed the
-// two-column band far enough that the timeslice control was drawn under the panel above it —
-// `tests/e2e/leveling.e2e.mts` hit-tests exactly that and went red. The budget is zero.
+// THE POINTER IS A TOOLTIP AND NOT A LINE, and it stays one for the reason it was CHOSEN rather
+// than the reason it was forced. The forcing is gone: this panel used to be the last child of a
+// `height: 100%` stack whose middle child was the scroller, so every pixel it took came out of the
+// charts — one caption line here once pushed the timeslice control under the panel above it at the
+// app's minimum width, and leveling.e2e.mts hit-tests exactly that. Since JOS-289 the page scrolls
+// and the height budget is not zero. The tooltip stays anyway: this is a chip's provenance, which
+// is what the tooltip diet is FOR.
+//
+// AND THE LISTS BELOW ARE AS TALL AS THEY NEED TO BE (JOS-289). `UnlockList` was a 120px windowed
+// porthole — the surface the owner named as cramped — and is now plain rows at their honest
+// height, with the full `SpellTooltip` card behind every spell name.
 
 import { type JSX, useEffect, useRef, useState } from 'react'
 import { Box, IconButton, Paper, Stack, Typography, Chip } from '@mui/material'

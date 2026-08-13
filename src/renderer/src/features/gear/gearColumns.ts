@@ -1,27 +1,55 @@
 // gear/gearColumns.ts — WHICH numeric columns the table draws, and how wide they are.
 //
 // THE PROBLEM THIS SOLVES. `GEAR_STAT_KEYS` is 32 keys wide and the ticket asks to sort by ANY of
-// them, regens and backstab included. Thirty-two columns is not a table anyone can read, and a
-// "pick your columns" dialog is a second surface to maintain for a question the user has already
-// answered somewhere else — because ASKING ABOUT A STAT IS ALREADY SAYING YOU WANT TO SEE IT. So
-// the column list is DERIVED: a small always-on core, plus a column for every stat currently being
-// thresholded and for whatever the table is sorted by. Filter on `HP_REGEN` and the regen column
-// appears; sort by `BACKSTAB` and the backstab column appears; clear them and the table narrows
-// back down. Nothing to configure and nothing to forget you configured.
+// them, regens and backstab included. Thirty-two columns is not a table anyone can read, so the
+// column list is DERIVED: a small always-on core, plus a column for whatever the table is sorted
+// by. Sort by `BACKSTAB` and the backstab column appears; sort by something else and it goes.
 //
-// WIDTHS ARE PERCENTAGES, AND THAT IS JOS-260's LAW, not a preference. The table is
-// `tableLayout: fixed` (a windowed table whose columns re-measure per slice moves its row heights
-// under a hook whose every index assumes they cannot — LootTables.tsx states the full argument),
-// and a fixed table whose stated widths exceed its box grows past it and hands the pane a
-// horizontal scrollbar. So the numeric columns SHARE a fixed budget: N columns each take
-// `NUMERIC_BUDGET / N`, the identity columns take a constant, and the NAME column states no width
-// at all — it takes whatever is left, which is the one column that can usefully absorb the slack.
+// THE DERIVATION USED TO HAVE A SECOND SOURCE — every stat a THRESHOLD was filtering on — and
+// JOS-302 removed it with the thresholds themselves (owner ruling 2026-08-13: sorting services that
+// need without spending toolbar real estate). What is left is the honest remainder of the same
+// sentence: a stat you are RANKING by is a stat you are looking at, so it gets a column. That is a
+// derivation of at most ONE column now, which is why there is no cap on it any more — the old
+// `MAX_DERIVED_COLUMNS` capped a list that could grow with every chip typed, and a list that can
+// never exceed core+1 caps itself.
+//
+// AND SINCE JOS-297 THE DERIVATION IS THE SEED, NOT THE ANSWER (owner feedback on the shipped
+// tab: *ALL stats should be there*). The derivation was a bet that asking about a stat is the only
+// way anyone says they want to see it, and the bet was wrong: a player comparing two breastplates
+// wants the seven attributes on screen without inventing seven thresholds to conjure them. So the
+// picker offers the WHOLE vocabulary (`PICKABLE_COLUMNS` — every `GearStatKey` plus `RATIO`) and
+// an explicit choice WINS; absent a choice the derivation still runs, which is what keeps the tab's
+// first screen what it was. The distinction the storage layer has to preserve is therefore ABSENT
+// vs EMPTY: no stored key means "derive", a stored `[]` means "the user asked for no numeric
+// columns at all", and the two must never fold together. THE PICKER IS ALSO WHERE A THRESHOLD'S
+// OTHER JOB WENT: you name the column you want and then you sort it.
+//
+// EVERY DRAWN NUMERIC COLUMN IS SORTABLE, and that has always been true of the machinery
+// (`sortGearRows` takes any `GearSortKey`) — the gap the owner hit was EXPOSURE: a key with no
+// column had no header to click. The picker closes it by construction, so there is no second list
+// of "sortable keys" here to drift from the drawn ones.
+//
+// WIDTHS: PERCENTAGES WHILE THEY FIT, PIXELS WHEN THEY DO NOT — and both halves are JOS-260's law
+// rather than a preference. The table is `tableLayout: fixed` (a windowed table whose columns
+// re-measure per slice moves its row heights under a hook whose every index assumes they cannot —
+// LootTables.tsx states the full argument). Under percentages the numeric columns SHARE a fixed
+// budget: N columns each take `NUMERIC_BUDGET / N`, the identity columns take a constant, and the
+// NAME column states no width at all so it absorbs the slack. Each share is CLAMPED both ways —
+// a CEILING (`MAX_NUMERIC_WIDTH`) because a stat cell holds at most `-12345` and handing four
+// columns 13% apiece starves the one column that actually ellipsises, the item name; and a FLOOR
+// (`MIN_NUMERIC_WIDTH`), which is what used to cap the derived count — past ten numeric
+// columns a percentage can only be bought by making every column illegible, because percentages
+// cannot make a fixed table wider than its box. So past ten the layout switches to STATED PIXELS
+// plus a `minWidth` on the table: the table becomes wider than the pane and the pane, which is
+// already `overflow: auto`, scrolls it SIDEWAYS INSIDE ITSELF. The page never scrolls sideways —
+// that is the whole point of the switch, and `tests/e2e/gearColumnSteps.mts` measures both.
 //
 // PURE AND NODE-TESTABLE (relative value imports, the house law): this file decides the shape of
-// the table, so `tests/gearFilter.test.mts` can assert that a threshold brings its column with it.
+// the table, so `tests/gearFilter.test.mts` can assert that a sort key brings its column with it
+// and `tests/gearColumnPrefs.test.mts` that a chosen set of thirty overflows on purpose.
 
-import { GEAR_PERCENT_STAT_KEYS, type GearStatKey } from '../../../../shared/planner/gear'
-import type { GearFilters, GearSort, GearSortKey } from './gearFilter'
+import { GEAR_PERCENT_STAT_KEYS, GEAR_STAT_KEYS, type GearStatKey } from '../../../../shared/planner/gear'
+import type { GearSort, GearSortKey } from './gearFilter'
 
 /**
  * The columns that are always there: armour, the two pools every class reads, and the weapon
@@ -32,16 +60,52 @@ import type { GearFilters, GearSort, GearSortKey } from './gearFilter'
 export const CORE_COLUMNS: readonly GearSortKey[] = ['AC', 'HP', 'MP', 'RATIO']
 
 /**
- * How many derived columns may join the core before the table stops being readable. Past this the
- * extra thresholds still FILTER — they just stop drawing a column of their own, which is the
- * honest trade: the rows on screen are all answers to those thresholds anyway.
+ * THE MOST THE DERIVATION CAN ADD: one column, for the stat being sorted by (and zero when that is
+ * already a core column, or the item name).
+ *
+ * IT IS A CONSTANT RATHER THAN A CAP NOW (JOS-302). It used to be `MAX_DERIVED_COLUMNS = 6`, a real
+ * ceiling on a list that grew with every stat threshold typed — past six the extra thresholds still
+ * filtered, they just stopped drawing columns. With the thresholds gone the only derived source is
+ * the sort key, so the list cannot exceed core+1 and there is nothing left to cap. The number stays
+ * exported because the width law below is stated against it, and because it is what makes
+ * `MAX_PERCENT_COLUMNS` a fact about the derivation rather than a coincidence.
  */
-export const MAX_DERIVED_COLUMNS = 6
+export const MAX_DERIVED_COLUMNS = 1
 
 /** Percent of the table the numeric columns share between them. */
 const NUMERIC_BUDGET = 52
 /** …and the floor one column may shrink to, which is what caps the derived count above. */
 const MIN_NUMERIC_WIDTH = 5
+/**
+ * …and the CEILING one column may grow to. A numeric cell holds at most `-12345` or `41%`; every
+ * point of budget a small set does not need belongs to the item name, the only column whose
+ * content actually runs out of room. The number is bounded from BELOW by the header, not the
+ * cell: a sortable header is its label plus the arrow (~60px for `Ratio`), and a label wider
+ * than its sticky cell slides under the NEXT header, which then eats the click aimed at it —
+ * measured in gear.e2e.mts at 6.5%. 8% of the narrowest pane the 900px window minimum can
+ * produce clears that with the tightened numeric padding GearTable pairs with this ceiling.
+ */
+const MAX_NUMERIC_WIDTH = 8
+
+/**
+ * The widest numeric set percentages can still serve at that floor — ten.
+ *
+ * IT USED TO BE EXACTLY THE CORE PLUS `MAX_DERIVED_COLUMNS`, and that was the point: the derived
+ * cap WAS this floor, so nothing the tab could derive could ever cross into pixel mode. JOS-302 cut
+ * the derivation to core+1 and the two numbers stopped meeting — which is a WIDENING of the same
+ * guarantee rather than a break in it: the derived set is now five at its very widest, half of what
+ * percentages can serve, so it is further inside the budget than it has ever been. Only a PICKED
+ * set can cross the line, exactly as before.
+ */
+export const MAX_PERCENT_COLUMNS = Math.floor(NUMERIC_BUDGET / MIN_NUMERIC_WIDTH)
+
+/**
+ * The pixel widths the table states once percentages cannot serve the set. Each is a legible
+ * minimum rather than a taste: a numeric cell holds at most `-12345` or `41%`, an identity cell
+ * holds a name that ellipsises. Their SUM is what makes the table wider than the pane, which is
+ * what makes the pane scroll it.
+ */
+const PX = { name: 340, slot: 120, classes: 110, numeric: 78, owned: 150 } as const
 
 export const SLOT_COLUMN_WIDTH = '13%'
 export const CLASS_COLUMN_WIDTH = '11%'
@@ -86,28 +150,115 @@ function column(key: GearSortKey): GearColumn {
 }
 
 /**
- * The numeric columns for these filters and this sort: the core, then every thresholded stat, then
- * the sort key — deduped, in that order, capped at `MAX_DERIVED_COLUMNS` derived entries.
+ * EVERY KEY THE PICKER OFFERS, in the corpus's own order with `RATIO` standing beside the two
+ * numbers it is made of. Thirty-three: the thirty-two indexed stats — the seven attributes, the
+ * pools, the regens, Attack, Haste, the ten saves, the weapon block and weight — plus the derived
+ * ratio. `name` is NOT in it: the item column is not optional, it is what a row IS.
  *
- * ORDER IS STABLE ON PURPOSE. The core never moves, so adding a threshold appends a column instead
- * of re-arranging the four the eye has already learned; and a sort key that is already a core
- * column adds nothing at all.
+ * DERIVED FROM `GEAR_STAT_KEYS`, never re-typed. A rescrape that widens the vector widens the
+ * picker in the same commit, which is the only way "all stats" can stay true.
  */
-export function visibleColumns(filters: GearFilters, sort: GearSort): GearColumn[] {
+export const PICKABLE_COLUMNS: readonly GearSortKey[] = GEAR_STAT_KEYS.flatMap<GearSortKey>((key) =>
+  key === 'DELAY' ? [key, 'RATIO'] : [key]
+)
+
+/**
+ * The numeric columns for this sort: the core, then the sort key if it is not already one of them.
+ *
+ * ORDER IS STABLE ON PURPOSE. The core never moves, so ranking by a new stat APPENDS a column
+ * instead of re-arranging the four the eye has already learned; and a sort key that is already a
+ * core column adds nothing at all, which is why `AC desc` (the default) draws exactly the core.
+ *
+ * IT TOOK `filters` UNTIL JOS-302, to read the stat thresholds. They are gone, and a parameter that
+ * would now be ignored is worse than no parameter: it would invite the next reader to believe the
+ * columns still follow the filter bar. `sortWithin` is the other half of the pairing and is
+ * unchanged — removing the sorted column moves the lit header, whatever put the column there.
+ *
+ * THIS IS THE SEED THE PICKER STARTS FROM (JOS-297), and it still runs whenever no explicit choice
+ * is stored — see `columnsFor`.
+ */
+export function visibleColumns(sort: GearSort): GearColumn[] {
   const keys: GearSortKey[] = [...CORE_COLUMNS]
-  const derived: GearSortKey[] = [...filters.thresholds.map((t) => t.key), sort.key]
-  for (const key of derived) {
-    if (key === 'name' || keys.includes(key)) continue
-    if (keys.length - CORE_COLUMNS.length >= MAX_DERIVED_COLUMNS) break
-    keys.push(key)
-  }
+  if (sort.key !== 'name' && !keys.includes(sort.key)) keys.push(sort.key)
   return keys.map(column)
+}
+
+/**
+ * THE COLUMNS ON SCREEN. `null` means nothing has been chosen, so the derivation above answers;
+ * anything else — INCLUDING an empty array — is the user's own list and wins outright.
+ *
+ * An explicit list is NOT re-seeded with the core or with the sort key. That is the whole meaning
+ * of "explicit": a player who removed AC removed AC, and an app that quietly put it back whenever
+ * something mentioned it would be arguing with a checkbox it drew itself. (`sortWithin` handles the
+ * consequence — a sort on a column the user removed falls to one that is drawn.)
+ */
+export function columnsFor(chosen: readonly GearSortKey[] | null, sort: GearSort): GearColumn[] {
+  return chosen === null ? visibleColumns(sort) : chosen.map(column)
+}
+
+/**
+ * THE SORT, CONFINED TO WHAT IS ON SCREEN. Removing the column you were sorting by must not leave
+ * the table ordered by an invisible number with no lit header to explain it — so the sort falls to
+ * the first remaining column, or to the item name when the user asked for no numeric columns.
+ *
+ * IDENTITY-PRESERVING when the sort is already on a drawn column, so the memo chain downstream
+ * re-runs when the sort MOVES and never merely because it rendered.
+ */
+export function sortWithin(sort: GearSort, columns: readonly GearColumn[]): GearSort {
+  if (sort.key === 'name' || columns.some((c) => c.key === sort.key)) return sort
+  const first = columns[0]
+  return first === undefined ? { key: 'name', dir: 'asc' } : { key: first.key, dir: 'desc' }
 }
 
 /** One numeric column's width, as the percentage string the header cell states. */
 export function numericWidth(count: number): string {
   const each = count > 0 ? NUMERIC_BUDGET / count : NUMERIC_BUDGET
-  return `${String(Math.max(MIN_NUMERIC_WIDTH, Math.round(each * 10) / 10))}%`
+  const clamped = Math.min(MAX_NUMERIC_WIDTH, Math.max(MIN_NUMERIC_WIDTH, each))
+  return `${String(Math.round(clamped * 10) / 10)}%`
+}
+
+/**
+ * WHAT EVERY COLUMN STATES AS ITS WIDTH, and whether the table has a floor of its own.
+ *
+ * `minWidth` is 0 in percentage mode — the table IS the pane, and nothing can overflow it. Past
+ * `MAX_PERCENT_COLUMNS` it is the summed pixel width, which the table states as a MINIMUM (never a
+ * width): a pane wider than the set still fills, a pane narrower than it scrolls horizontally
+ * INSIDE its own box. `tableLayout: fixed` and the fixed row height are untouched by either mode —
+ * the windowing hook's contract does not know widths exist.
+ */
+export interface GearTableLayout {
+  mode: 'percent' | 'pixel'
+  /** the table's own floor in px, or 0 when percentages are doing the work */
+  minWidth: number
+  /** `undefined` in percentage mode: the item column takes whatever the stated ones leave */
+  name: string | undefined
+  slot: string
+  classes: string
+  numeric: string
+  owned: string
+}
+
+export function gearTableLayout(count: number, hasOwned: boolean): GearTableLayout {
+  if (count <= MAX_PERCENT_COLUMNS) {
+    return {
+      mode: 'percent',
+      minWidth: 0,
+      name: undefined,
+      slot: SLOT_COLUMN_WIDTH,
+      classes: CLASS_COLUMN_WIDTH,
+      numeric: numericWidth(count),
+      owned: OWNED_COLUMN_WIDTH
+    }
+  }
+  return {
+    mode: 'pixel',
+    minWidth: PX.name + PX.slot + PX.classes + count * PX.numeric + (hasOwned ? PX.owned : 0),
+    name: `${String(PX.name)}px`,
+    slot: `${String(PX.slot)}px`,
+    classes: `${String(PX.classes)}px`,
+    numeric: `${String(PX.numeric)}px`,
+    owned: `${String(PX.owned)}px`
+  }
 }
 
 /**

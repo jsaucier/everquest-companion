@@ -20,6 +20,7 @@ import { IPC } from '../shared/ipc'
 import type { ExaltPlan, PlannerDonor, PlannerItemHit } from '../shared/planner/types'
 import type { PlannerInventory } from '../shared/planner/inventorySlots'
 import type { GearIndexPayload } from '../shared/planner/gear'
+import type { GearSet } from '../shared/planner/gearSet'
 import type { OwnershipPayload } from '../shared/planner/ownership'
 
 export const plannerApi = {
@@ -66,5 +67,16 @@ export const plannerApi = {
    *  RE-ASK ON `onInventoryReload`, exactly like `plannerInventory`: main memoizes on the file's
    *  own identity (path + mtime), so an unchanged dump costs a stat and a rewritten one is
    *  re-folded without anything having to remember to invalidate a cache. */
-  gearOwnership: (): Promise<OwnershipPayload> => ipcRenderer.invoke(IPC.gearOwnership)
+  gearOwnership: (): Promise<OwnershipPayload> => ipcRenderer.invoke(IPC.gearOwnership),
+
+  // ---- gear planner (JOS-286 phase 5) ----
+
+  /** The active character's saved GEAR SETS — `[]` when it has none. Named virtual loadouts, one
+   *  item per equipment cell, each assignment carrying its own tracked plus-state. */
+  getGearSets: (): Promise<GearSet[]> => ipcRenderer.invoke(IPC.gearGetSets),
+
+  /** Replace the whole gear-set list for the active character. Main re-validates every cell
+   *  against the closed `PLAN_SLOTS` allowlist and clamps every plus-state to one the game's item
+   *  window can actually be in, silently dropping what does not fit. */
+  setGearSets: (sets: GearSet[]): Promise<void> => ipcRenderer.invoke(IPC.gearSetSets, sets)
 }

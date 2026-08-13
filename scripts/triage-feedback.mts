@@ -49,15 +49,14 @@ import {
 } from './triageCluster.mjs'
 import {
   applySchema,
+  attachmentKeysOf,
+  attachmentReports,
   deleteReportRow,
   deleteSlice,
-  downloadSlice,
   getFeedbackConfig,
   getReport,
   listReports,
   loadStack,
-  logKeyOf,
-  logObjectExists,
   makeClients,
   reportsForInstall,
   SCHEMA_FILE,
@@ -70,7 +69,6 @@ import {
   type ListFilter,
   type Row,
 } from '../src/main/triage/store'
-import { rescrubNotes } from '../src/main/triage/rows'
 import { analyticsFailure, runAnalytics, ANALYTICS_USAGE } from './triageAnalytics.mjs'
 // The error store's own family (JOS-100), a sibling module for the same reason the analytics
 // one is: this file is at the 400-code-line ceiling and a two-verb subcommand family with a
@@ -111,6 +109,7 @@ const USAGE = `triage-feedback <command> [options]
   list    [--status S] [--channel prod|dev|all] [--type bug|feature] [--since 7d]
           [--min-score N] [--limit 100] [--json]
   show    <reportId>                  full record; downloads + gunzips the slice
+                                      AND the inventory export, into .triage/
   digest  [--since 7d] [--channel C]  the markdown brief a human/Claude reads
   cluster [--since 30d] [--write]     deterministic clusters; --write stamps them
   set     <reportId...> [--status S] [--severity p0..p3] [--cluster ID]
@@ -254,9 +253,12 @@ async function cmdList(ctx: Ctx): Promise<void> {
   for (const row of rows) {
     const r = toTriageReport(row)
     const head = r.description.replace(/\s+/g, ' ').slice(0, 60)
+    // Two fixed-width attachment markers, `log` then `inv` (JOS-296) — blank rather than absent,
+    // so the columns stay aligned and a scan down the list reads which reports can be answered.
     console.log(
       `${r.reportId}  ${shortDate(r.receivedAt)}  ${r.type.padEnd(7)} ${r.status.padEnd(9)} ` +
-        `${r.appVersion.padEnd(8)} ${r.hasLog ? 'log' : '   '} ${r.spamScore.toString().padStart(3)}  ${head}`,
+        `${r.appVersion.padEnd(8)} ${r.hasLog ? 'log' : '   '} ${r.hasInventory ? 'inv' : '   '} ` +
+        `${r.spamScore.toString().padStart(3)}  ${head}`,
     )
   }
   console.log(`\n${rows.length} report(s).`)
@@ -280,17 +282,13 @@ async function cmdShow(ctx: Ctx): Promise<void> {
   if (!row) throw new Error(`no such report: ${reportId}`)
   console.log(JSON.stringify(row, sanitizingReplacer, 2))
 
-  const key = logKeyOf(row)
-  if (!key) return
-  if (!(await logObjectExists(c, key))) {
-    console.log('\n[log slice: declared but never landed — the upload failed or expired]')
-    return
+  // BOTH attachments, downloaded and described by the store (JOS-296). The verdicts print
+  // LOUDLY and only when there are any — both note builders are empty for an honest client,
+  // which is exactly what makes the other case worth reading.
+  for (const leg of await attachmentReports(c, reportId, row)) {
+    console.log(`\n${leg.line}`)
+    for (const note of leg.warnings) console.warn(note)
   }
-  const slice = await downloadSlice(c, reportId, key)
-  console.log(`\n[log slice: ${slice.path}]`)
-  // The verdict, LOUDLY, and only when there is one — `rescrubNotes` is empty for the honest
-  // client, which is what makes the other case worth reading.
-  for (const note of rescrubNotes(slice)) console.warn(note)
 }
 
 function digestInputs(rows: Row[]): { reports: TriageReport[]; clusters: Cluster[] } {
@@ -357,9 +355,12 @@ function issueBody(row: Row, r: TriageReport): string {
   const facts = ['appVersion', 'channel', 'updateChannel', 'platform', 'osRelease', 'arch', 'electron']
     .map((k) => `- ${k}: ${text(env[k], '?')}`)
     .join('\n')
-  const log = r.hasLog
-    ? '\n\nA scrubbed log slice was attached and is available to maintainers; it is deliberately not reproduced here.'
-    : ''
+  // Both attachments are MENTIONED and neither is reproduced — THE LAW (see the file header):
+  // an attachment never reaches a public issue. An inventory export is not chat, but it is still
+  // a stranger's character laid out item by item, and this repo is public.
+  const kinds = [r.hasLog ? 'a scrubbed log slice' : '', r.hasInventory ? 'an inventory export' : '']
+  const attached = kinds.filter((s) => s.length > 0).join(' and ')
+  const log = attached === '' ? '' : `\n\n${attached[0].toUpperCase()}${attached.slice(1)} was attached and is available to maintainers; it is deliberately not reproduced here.`
   return `### Reported\n\n${r.description}\n\n### Environment\n\n${facts}\n\n_Report ${r.reportId}_${log}\n`
 }
 
@@ -392,9 +393,13 @@ async function cmdIssue(ctx: Ctx): Promise<void> {
  *
  * It used to do two things: NULL the `contact` column and delete the S3 slice object. The
  * contact half is gone with the column (retired from the wire, then dropped from the schema),
- * so what remains is the half that was always the substantive one — the log window somebody
- * attached is destroyed, and `redacted_at` records that it was. The description stays: it IS
- * the bug report. For "delete everything about me", that is `wipe --install`.
+ * so what remains is the half that was always the substantive one — the artifacts somebody
+ * attached are destroyed, and `redacted_at` records that it happened. The description stays: it
+ * IS the bug report. For "delete everything about me", that is `wipe --install`.
+ *
+ * IT DELETES EVERY ATTACHMENT, not the slice (JOS-296). `attachmentKeysOf` is the list, on
+ * purpose: a `forget` that removed the log window and left the inventory export in the bucket
+ * would be this command telling a requester something untrue.
  */
 async function cmdForget(ctx: Ctx): Promise<void> {
   const [reportId] = ctx.rest
@@ -402,13 +407,13 @@ async function cmdForget(ctx: Ctx): Promise<void> {
   const c = ctx.clients()
   const row = await getReport(c, reportId)
   if (!row) throw new Error(`no such report: ${reportId}`)
-  const key = logKeyOf(row)
-  if (key) await deleteSlice(c, key)
+  const keys = attachmentKeysOf(row)
+  for (const key of keys) await deleteSlice(c, key)
   await stampRedacted(c, reportId)
   console.log(
-    key
-      ? `forgot the log slice for ${reportId} (deleted ${key})`
-      : `${reportId} had no slice; stamped redacted anyway`,
+    keys.length > 0
+      ? `forgot ${String(keys.length)} attachment(s) for ${reportId} (deleted ${keys.join(', ')})`
+      : `${reportId} had no attachments; stamped redacted anyway`,
   )
 }
 
@@ -423,8 +428,9 @@ async function cmdWipe(ctx: Ctx): Promise<void> {
   const c = ctx.clients()
   const rows = await reportsForInstall(c, installId)
   for (const row of rows) {
-    const key = logKeyOf(row)
-    if (key) await deleteSlice(c, key)
+    // EVERY attachment, same list `forget` uses (JOS-296) — "delete everything about me" cannot
+    // mean "everything except the inventory export".
+    for (const key of attachmentKeysOf(row)) await deleteSlice(c, key)
     await deleteReportRow(c, text(row.report_id))
   }
   console.log(`wiped ${rows.length} report(s) for install ${installId}.`)

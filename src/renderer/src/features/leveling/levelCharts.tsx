@@ -8,13 +8,17 @@
 // meant two different instants on the two charts. The shared domain is the seam the band
 // strip and the drag selection hang off; nothing else about the drawing changed.
 
-import type { CSSProperties, JSX } from 'react'
+import { useSyncExternalStore, type CSSProperties, type JSX } from 'react'
 import type { LevelSegment } from './levelSeries'
 import { CHART_H, CHART_W, xOf, type AaPoint, type ChartScale } from './levelChartGeometry'
+// THE FRACTIONAL CURVE (JOS-292) and the spans it refuses to draw. This file draws what that
+// one derives and adds no arithmetic of its own — the y mapping is the only maths left here.
+import { gapRect, runArea, runPolyline, type CurveRefusal, type LevelCurve } from './levelCurve'
 import { LevelHoverLayer } from './LevelHoverLayer'
 import { formatTime } from '../../lib/formatDate'
 import { BAND_H, BAND_PAD, PAD_X, bandRects, type ZoneBand, type ZoneLegend } from './zoneBands'
 import type { ChartSelection, SelectionPointerHandlers } from './useChartSelection'
+import type { DraftStore } from './selectionDraft'
 
 const W = CHART_W
 const H = CHART_H
@@ -27,8 +31,13 @@ const H = CHART_H
 export interface ChartChrome {
   scale: ChartScale
   bands: readonly ZoneBand[]
-  /** live draft or committed selection — the SAME band is drawn on both charts. */
+  /** The COMMITTED selection — the SAME band is drawn on both charts. Since JOS-290 it is only
+   *  the committed one: the live draft arrives on `draft` instead, so a pointermove no longer
+   *  travels through the view that builds this object. */
   range: ChartSelection | null
+  /** The live draft, as a SUBSCRIPTION (JOS-290, selectionDraft.ts). `SelectionBand` is the one
+   *  subscriber in the app and it outranks `range` while it holds a value. */
+  draft: DraftStore
   /** a range drag owns the pointer: the hover tooltip must not render. */
   suppressed: boolean
   pointer: SelectionPointerHandlers
@@ -92,16 +101,25 @@ function ZoneBandStrip({ bands, scale }: { bands: readonly ZoneBand[]; scale: Ch
  *
  * `pointerEvents:'none'` throughout: the band must never steal a hover target, so the
  * tooltip stays fully live over a committed selection.
+ *
+ * THIS IS THE DRAG HANDLE, AND IT IS THE ONLY THING A POINTERMOVE RE-RENDERS (JOS-290). It
+ * subscribes to the draft store directly rather than being handed a value from the view, which
+ * is what took 284 ms of tab re-render off every single move; the precedence is unchanged —
+ * a live draft outranks the committed selection, exactly as the old `draft ?? sel` did.
  */
 function SelectionBand({
   scale,
-  range,
+  committed,
+  draft,
   color
 }: {
   scale: ChartScale
-  range: ChartSelection | null
+  committed: ChartSelection | null
+  draft: DraftStore
   color: string
 }): JSX.Element | null {
+  const live = useSyncExternalStore(draft.subscribe, draft.get, draft.get)
+  const range = live ?? committed
   if (!range) return null
   const l = (xOf(scale, range.t0) / scale.w) * 100
   const r = (xOf(scale, range.t1) / scale.w) * 100
@@ -126,10 +144,11 @@ const LEGEND_STYLE: CSSProperties = {
   flexWrap: 'wrap',
   gap: '2px 10px',
   fontSize: 11,
-  // Fixed-height law: a wrapped legend must not push the chart column around as the visible
-  // zone mix changes. Two rows are visible; anything beyond scrolls.
-  maxHeight: 40,
-  overflowY: 'auto',
+  // NO CLAMP SINCE JOS-289. It was `maxHeight: 40` + `overflowY: auto` — two rows visible, the
+  // rest scrolled — on the reasoning that a wrapped legend must not push the chart column around
+  // as the visible zone mix changes. Pushing the column around is now free (the page scrolls), and
+  // a legend is an INDEX of what was drawn: half of it hidden behind a 40px scroller made it a
+  // worse answer than the hover it exists to be independent of. It wraps as far as it needs.
   opacity: 0.85
 }
 const SWATCH: CSSProperties = { width: 9, height: 9, borderRadius: 2, flexShrink: 0 }
@@ -223,7 +242,7 @@ export function AreaChart({
           </>
         )}
       </svg>
-      <SelectionBand scale={scale} range={chrome.range} color={color} />
+      <SelectionBand scale={scale} committed={chrome.range} draft={chrome.draft} color={color} />
       <LevelHoverLayer
         scale={scale}
         height={H}
@@ -236,78 +255,90 @@ export function AreaChart({
   )
 }
 
+/** The hue this feature uses for "the log cannot see here" — the swap rule since the chart
+ *  existed, and since JOS-292 every uncertainty band too. One meaning, one colour, no new hue. */
 export const SWAP_COLOR = '#8fa3b8'
 
-/** One loadout's drawn run. */
-interface DrawnSegment {
-  line: string
-  area: string
-  startX: number
-  startY: number
-  endX: number
-  endY: number
-  /** under 2 user units wide — a single-ding run, which a polyline cannot show at all. */
-  narrow: boolean
-  afterSwap: boolean
-}
+const PAD_TOP = 14 + BAND_PAD
+const PAD_BOTTOM = 8
 
 /**
- * Build the polyline/area for each loadout run.
+ * The spans the curve refuses to draw (levelCurve.ts's four refusals), as bands over the plot.
  *
- * HONESTY FIX (was: `end = segments[i+1].points[0].ts`). A pre-swap run used to be extended
- * flat to the FIRST DING OF THE NEXT LOADOUT, which drew a solid "level 50" line straight
- * across the unlogged swap gap — a window where `levelAt()` correctly reports `swap-gap` and
- * the tooltip says the level is unknown. The picture contradicted the readout. Each run now
- * ends at its OWN last ding and the gap renders as a gap; only the FINAL run gets the
- * trailing plateau, because you are in fact still that level.
+ * A BAND, NOT A DASHED LINE. "Make the span visibly uncertain" and "never interpolate through
+ * it" are one instruction: a dashed stroke between the last stated value and the next one still
+ * puts a bar position under every pixel of itself. A band claims nothing on the value axis — it
+ * says where the evidence stops and where it resumes, which is the whole of what is known.
+ * `data-kind` carries the reason, so the readout and the e2e read the same word the geometry did.
  */
-function drawSegments(segments: readonly LevelSegment[], scale: ChartScale, y: (v: number) => number, floor: number): DrawnSegment[] {
-  return segments.map((seg, i) => {
-    const x = (t: number): number => xOf(scale, t)
-    const last = seg.points[seg.points.length - 1]
-    const end = i + 1 < segments.length ? last.ts : scale.t1
-    const pts: string[] = []
-    let py = y(seg.points[0].level)
-    for (const p of seg.points) {
-      const px = x(p.ts)
-      if (pts.length) pts.push(`${px.toFixed(1)},${py.toFixed(1)}`) // hold the old level…
-      py = y(p.level)
-      pts.push(`${px.toFixed(1)},${py.toFixed(1)}`) // …then step up at the ding
-    }
-    pts.push(`${x(end).toFixed(1)},${py.toFixed(1)}`)
-    const x0 = x(seg.points[0].ts)
-    return {
-      line: pts.join(' '),
-      area: `${x0.toFixed(1)},${floor} ${pts.join(' ')} ${x(end).toFixed(1)},${floor}`,
-      startX: x0,
-      startY: y(seg.points[0].level),
-      endX: x(end),
-      endY: py,
-      narrow: x(end) - x0 < 2,
-      afterSwap: seg.afterSwap
-    }
-  })
+function CurveGaps({ curve, scale }: { curve: LevelCurve; scale: ChartScale }): JSX.Element | null {
+  const floor = H - PAD_BOTTOM
+  const top = PAD_TOP - 6
+  const rects = curve.gaps
+    .map((g) => {
+      const r = gapRect(g, scale)
+      return r ? { kind: g.kind, t0: g.t0, x: r.x, w: r.w } : null
+    })
+    .filter((r): r is { kind: CurveRefusal; t0: number; x: number; w: number } => r !== null)
+  if (rects.length === 0) return null
+  return (
+    <g data-testid="leveling-curve-gaps">
+      {rects.map((r, i) => (
+        <g key={`${r.kind}-${r.t0}-${i}`}>
+          <rect
+            data-testid="leveling-curve-gap"
+            data-kind={r.kind}
+            x={r.x}
+            y={top}
+            width={r.w}
+            height={floor - top}
+            fill={SWAP_COLOR}
+            opacity={0.1}
+          />
+          <line
+            x1={r.x}
+            y1={floor}
+            x2={r.x + r.w}
+            y2={floor}
+            stroke={SWAP_COLOR}
+            strokeWidth={1.5}
+            strokeDasharray="3 4"
+            opacity={0.85}
+          />
+        </g>
+      ))}
+    </g>
+  )
 }
 
 /**
- * Level over time, drawn HONESTLY (see ./levelSeries.ts for the world model).
+ * Level over time — the FRACTIONAL curve, with the dings kept as markers (JOS-292).
  *
- * A level is a step function: it holds until the next ding, so the line is step-AFTER —
- * never a diagonal that implies you were level 43.6 on Thursday afternoon. A loadout swap
- * drops the reported level with NO log line, so the segments are drawn DISJOINT: each run
- * stops at its own last ding, the gap between runs is left EMPTY (nothing observed, nothing
- * drawn), a dashed rule marks the boundary, and the new run starts at its first ding.
- * Nothing is drawn descending, because nothing descending was ever observed — you did not
- * lose levels, you changed classes.
+ * What it draws and why each piece is honest (levelCurve.ts carries the full argument):
+ *   • the CURVE is `last ding + Σ stated percent since it`, drawn step-after. It moves at an
+ *     exp line and holds between them, because that is the only thing the log states — a
+ *     diagonal between two kills would claim a bar position nothing reported. At the density
+ *     the log carries (thousands of lines over 720 user units) those steps are sub-pixel, which
+ *     is why the honest shape and the readable one are the same shape.
+ *   • the DINGS are markers on it. They were the whole picture before this ticket; they are now
+ *     the anchors the curve is measured from, and they stay visible as themselves.
+ *   • an UNCERTAIN span is a band and a gap in the stroke, never a dashed interpolation.
+ *   • a LOADOUT SWAP is the discontinuity it is: no stroke crosses it, no percentage accumulates
+ *     through it, and the dashed rule + hollow marker at the new run's first ding are unchanged.
+ *     The swap has no log line at all, so nothing can date it and everything between the last
+ *     ding of one loadout and the first of the next is refused.
  * Cheap inline SVG (these surfaces are render-bound; no chart libs).
  */
 export function LevelStepChart({
   segments,
+  curve,
   color,
   aaPoints,
   chrome
 }: {
   segments: LevelSegment[]
+  /** The drawn curve — already windowed and down-sampled by the view (levelCurve.ts). */
+  curve: LevelCurve
   color: string
   /** Cumulative AA series — context only ("AA gained by then"), never drawn here. */
   aaPoints: AaPoint[]
@@ -319,60 +350,81 @@ export function LevelStepChart({
   // with a blank. Nothing at all still draws nothing.
   const all = segments.flatMap((s) => s.points)
   if (all.length === 0) return null
-  const padTop = 14 + BAND_PAD
-  const padBottom = 8
   const scale = chrome.scale
   const hi = all.reduce((m, p) => Math.max(m, p.level), all[0].level)
   const lo = all.reduce((m, p) => Math.min(m, p.level), all[0].level)
-  // Baseline one level under the lowest observed ding: the fill follows the steps rather
-  // than reaching an arbitrary zero, so a low post-swap segment doesn't look like a crater.
+  // Baseline one level under the lowest observed ding: the fill follows the curve rather than
+  // reaching an arbitrary zero, so a low post-swap segment doesn't look like a crater. The TOP
+  // is the level the current bar is filling toward — an axis bound, not a claim to have reached
+  // it — which is what gives the live bar's fraction somewhere to be drawn.
   const base = lo - 1
-  const y = (v: number): number => H - padBottom - ((v - base) / Math.max(1, hi - base)) * (H - padTop - padBottom)
-  const floor = H - padBottom
-  const drawn = drawSegments(segments, scale, y, floor)
+  const top = Math.max(hi, Math.ceil(curve.hiY))
+  const y = (v: number): number => H - PAD_BOTTOM - ((v - base) / Math.max(1, top - base)) * (H - PAD_TOP - PAD_BOTTOM)
+  const floor = H - PAD_BOTTOM
 
   return (
     <div style={WRAP_STYLE} data-testid="leveling-level-chart" {...chrome.pointer}>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none">
         <ZoneBandStrip bands={chrome.bands} scale={scale} />
-        {drawn.map((d, i) => (
-          <g key={i}>
-            <polygon points={d.area} fill={color} opacity={0.12} />
-            <polyline points={d.line} fill="none" stroke={color} strokeWidth={2} />
-            {/* A run with a single ding has zero width now that it no longer stretches to the
-                next loadout. The dot marks the one instant that WAS observed. */}
-            {d.narrow && <circle cx={d.endX} cy={d.endY} r={2.5} fill={color} />}
+        <CurveGaps curve={curve} scale={scale} />
+        <g data-testid="leveling-level-curve">
+          {curve.runs.map((run, i) => (
+            <g key={`r${i}`}>
+              <polygon points={runArea(run, scale, y, floor)} fill={color} opacity={0.12} />
+              <polyline
+                data-testid="leveling-curve-run"
+                points={runPolyline(run, scale, y)}
+                fill="none"
+                stroke={color}
+                strokeWidth={2}
+              />
+            </g>
+          ))}
+        </g>
+        {curve.dings.map((d, i) => (
+          <g key={`d${i}`}>
+            {/* A swap's first ding is NOT a level gained — it is where the bar restarted at a
+                level the log re-reported. It keeps the hollow marker and the dashed rule; a
+                filled dot beside the others would read as one more step up the same ladder. */}
+            {d.afterSwap ? (
+              <>
+                <line
+                  x1={xOf(scale, d.ts)}
+                  y1={PAD_TOP - 6}
+                  x2={xOf(scale, d.ts)}
+                  y2={floor}
+                  stroke={SWAP_COLOR}
+                  strokeWidth={1}
+                  strokeDasharray="3 4"
+                  opacity={0.9}
+                />
+                <circle
+                  data-testid="leveling-level-swap"
+                  cx={xOf(scale, d.ts)}
+                  cy={y(d.level)}
+                  r={3.5}
+                  fill="none"
+                  stroke={SWAP_COLOR}
+                  strokeWidth={1.5}
+                />
+              </>
+            ) : (
+              <circle data-testid="leveling-level-ding" cx={xOf(scale, d.ts)} cy={y(d.level)} r={2.5} fill={color} />
+            )}
           </g>
         ))}
-        {drawn.map((d, i) =>
-          d.afterSwap ? (
-            <g key={`s${i}`}>
-              <line
-                x1={d.startX}
-                y1={padTop - 6}
-                x2={d.startX}
-                y2={floor}
-                stroke={SWAP_COLOR}
-                strokeWidth={1}
-                strokeDasharray="3 4"
-                opacity={0.9}
-              />
-              <circle cx={d.startX} cy={d.startY} r={3.5} fill="none" stroke={SWAP_COLOR} strokeWidth={1.5} />
-            </g>
-          ) : null
-        )}
-        <text x={PAD_X} y={padTop} fill={color} fontSize={10} opacity={0.7}>
-          {hi}
+        <text x={PAD_X} y={PAD_TOP} fill={color} fontSize={10} opacity={0.7}>
+          {top}
         </text>
         {/* One visible level means one label: a window that contains no ding is a plateau, and
             printing the same number top and bottom would read as a range that isn't one. */}
-        {lo !== hi && (
+        {lo !== top && (
           <text x={PAD_X} y={floor - 2} fill={color} fontSize={10} opacity={0.7}>
             {lo}
           </text>
         )}
       </svg>
-      <SelectionBand scale={scale} range={chrome.range} color={color} />
+      <SelectionBand scale={scale} committed={chrome.range} draft={chrome.draft} color={color} />
       <LevelHoverLayer
         scale={scale}
         height={H}
@@ -380,6 +432,7 @@ export function LevelStepChart({
         aaPoints={aaPoints}
         bands={chrome.bands}
         segments={segments}
+        curve={curve}
         suppressed={chrome.suppressed}
       />
     </div>

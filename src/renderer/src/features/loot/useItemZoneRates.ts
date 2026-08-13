@@ -46,6 +46,12 @@ export interface ItemZoneRates {
 
 const NO_ROWS: ItemZoneRates = { rows: [], clipped: false }
 
+/** The zone half of a slice as `rangeStats` takes it — both keys or neither, so a drill-down can
+ *  never be scoped to the place by one of them and to the tier by the other. */
+function zoneOf(slice: Timeslice | undefined): { zoneKey: string | null; zoneExactKey: string | null } {
+  return { zoneKey: slice?.zoneKey ?? null, zoneExactKey: slice?.zoneExactKey ?? null }
+}
+
 /**
  * This item's zones, drops and per-hour-of-active-time rates over the character's whole record.
  *
@@ -60,7 +66,8 @@ export function useItemZoneRates(events: readonly LootEvent[], slice?: Timeslice
     const bounds = dataBounds(prog, [])
     const range = slice?.range ?? (bounds ? { t0: bounds.lo, t1: bounds.hi + TAIL_MS } : null)
     // No record at all ⇒ no zone rows, so every rate is null and every count is still true.
-    const stats = range ? rangeStats({ snap: prog, range, zoneKey: slice?.zoneKey ?? null }) : null
+    // BOTH halves of the zone membership, absent-as-null either way (JOS-130 / JOS-291).
+    const stats = range ? rangeStats({ snap: prog, range, ...zoneOf(slice) }) : null
     return { rows: itemZoneRows({ events, zones: stats?.zones ?? [] }), clipped: stats?.clipped ?? false }
   }, [events, prog, slice])
 }

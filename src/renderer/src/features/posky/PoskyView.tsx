@@ -17,7 +17,8 @@ import type { SharedItem, SharedItemsMap } from './sharedItems'
 import { QuestIgnoreButton } from '../favorites/QuestFlagButtons'
 import { QuestAccordion } from './QuestAccordion'
 import { TurnInBadge } from './TurnInControls'
-import QuestFilterBar from './QuestFilterBar'
+import QuestFilterBar, { InventorySource } from './QuestFilterBar'
+import { countSourcePhrase } from '../inventory/countSource'
 import ClassUnlockList from './ClassUnlockList'
 import { QUEST_PAGE, useQuestList, type QuestListState, type TabKey } from './useQuestList'
 import type { MobTarget } from '../mobs/mobTarget'
@@ -83,6 +84,10 @@ function IgnoredList({
 // reload — so a dump this app has never loaded still dates itself honestly, and a character who
 // has never run the command reads "not yet run" instead of nothing at all. Since JOS-268 that line
 // lives on the filter bar, under the dropdown that decides whether the dump is counted at all.
+//
+// The WORDS for each source are `countSourcePhrase` (features/inventory/countSource.ts) since
+// JOS-294: this line and the dropdown's own labels were two hand-written descriptions of one rule,
+// and both of them still described JOS-128's reset semantics that JOS-141 reverted.
 function CountsLine({
   questCount,
   totalQuests,
@@ -113,12 +118,7 @@ function CountsLine({
     // The stable handle for the filter specs: this line is where a narrowing filter becomes
     // VISIBLE, so it is what an e2e reads to prove a facet pick actually removed rows.
     <Typography variant="body2" color="text.secondary" data-testid="posky-counts">
-      {filteredCount} of {totalQuests} quests · counting from{' '}
-      {countSource === 'log'
-        ? 'looted log'
-        : countSource === 'inventory'
-          ? 'inventory export plus loot since'
-          : 'inventory export if any, else the looted log'}
+      {filteredCount} of {totalQuests} quests · counting from {countSourcePhrase(countSource)}
     </Typography>
   )
 }
@@ -294,6 +294,14 @@ function ReadyFirstTimeToggle({ list }: { list: QuestListState }): JSX.Element {
   )
 }
 
+/** What the Ready tab needs on top of a list of rows: the count source, because the tab it can
+ *  empty is this one (JOS-294, scope C). */
+interface ReadyListProps extends QuestListProps {
+  countSource: CountSource
+  onCountSource: (s: CountSource) => void
+  inventoryLoadedAt: number | null
+}
+
 /**
  * The Ready tab (JOS-147): what you can hand in RIGHT NOW, in the order you would walk it if the
  * data said where the givers stood (it does not - see questCompletion.readyQuests).
@@ -306,8 +314,22 @@ function ReadyFirstTimeToggle({ list }: { list: QuestListState }): JSX.Element {
  * reach. Since JOS-155 the tab has one control of its own, drawn above BOTH states rather than only
  * above the list: a toggle that can empty the tab has to stay reachable when it has, or the user is
  * left staring at an empty pane with no way to ask for the rest.
+ *
+ * AND SINCE JOS-294 THE COUNT SOURCE IS UP HERE TOO, on exactly that argument (scope C). It is the
+ * strongest emptier of this tab in the app: "ready" is `haveCount === needCount`, so the source
+ * decides the entire membership of the list — and the one control that could change it lived on
+ * `QuestFilterBar`, which renders ONLY on the Quests branch. An in-app reporter with a deleted log
+ * (01KZWDKMXYRERD96CF8AYQFA7P, and their friend) sat on an empty Ready tab holding a dump full of
+ * the items, with the control that would have counted them on a tab they had no reason to open and
+ * no line anywhere saying the dump was being ignored. Both come with the group: the dropdown, and
+ * the caption under it that states the freshness — or, under `log` with a dump loaded, that the
+ * dump is not being counted at all.
+ *
+ * The row leaves `mb: 2.5` below it because the caption is an OVERLAY hanging off the dropdown's
+ * bottom edge (QuestFilterBar's `InventorySource` argues why it is out of flow) — on the Quests tab
+ * it hangs in the view's own `Stack spacing`, and here that gap has to be bought explicitly.
  */
-function ReadyList(props: QuestListProps): JSX.Element {
+function ReadyList(props: ReadyListProps): JSX.Element {
   const n = props.quests.length
   const { readyFirstTimeOnly, readyRefarmCount } = props.list
   return (
@@ -315,7 +337,15 @@ function ReadyList(props: QuestListProps): JSX.Element {
       data-testid="posky-ready"
       sx={{ flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
     >
-      <ReadyFirstTimeToggle list={props.list} />
+      <Stack direction="row" spacing={2} alignItems="center" useFlexGap sx={{ mb: 2.5 }}>
+        <ReadyFirstTimeToggle list={props.list} />
+        <Box sx={{ flexGrow: 1 }} />
+        <InventorySource
+          countSource={props.countSource}
+          onCountSource={props.onCountSource}
+          inventoryLoadedAt={props.inventoryLoadedAt}
+        />
+      </Stack>
       {n === 0 ? (
         <Typography color="text.secondary">
           Nothing is ready to turn in - a quest lands here the moment you are holding every item it
@@ -486,7 +516,13 @@ export default function PoskyView({
       {list.tab === 'ignored' ? (
         <IgnoredList quests={list.ignored} onUnignore={list.questIgnored.toggle} />
       ) : list.tab === 'ready' ? (
-        <ReadyList quests={list.ready} {...rows} />
+        <ReadyList
+          quests={list.ready}
+          {...rows}
+          countSource={countSource}
+          onCountSource={setCountSource}
+          inventoryLoadedAt={inventoryInfo?.readAt ?? null}
+        />
       ) : list.tab === 'classes' ? (
         // The VISIBLE quests, like every other tab: a quest the user permanently ignored is not
         // shown here either, and a class's total shrinks with it rather than counting a quest the

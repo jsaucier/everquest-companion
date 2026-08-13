@@ -47,12 +47,21 @@ import type {
   LootDelta,
   LootEvent,
   LootSnap,
+  OverlayConfig,
   ProgressionDelta,
   ProgressionSnap
 } from '@shared/types'
-import { availableSlices, resolveSlice, resolveSliceId, sliceLabel, type SliceId } from '@shared/timeslice'
+import {
+  availableSlices,
+  resolveSlice,
+  resolveSliceId,
+  sliceLabel,
+  type SliceId,
+  type Timeslice
+} from '@shared/timeslice'
 import { toggleXpRow, XP_ROW_IDS, xpRowVisible, type XpRowId } from '@shared/xpOverlay'
 import { resolveRateBasis, toggleRateBasis, type RateBasis } from '@shared/rateBasis'
+import { ZONE_SCOPE_LABEL, resolveZoneScope, toggleZoneScope, type ZoneScope } from '@shared/zoneScope'
 import { EMPTY_PROGRESSION, applyProgressionDelta } from '../features/leveling/progressionDelta'
 import { dataBounds } from '../features/leveling/zoneBands'
 // The two definitions of the two hours, imported and never re-worded (JOS-249 / JOS-261).
@@ -228,13 +237,64 @@ function BasisToggle({
   )
 }
 
-/** Footer — interactive mode only: the bg-alpha slider, the ROW CHECKLIST, the DENOMINATOR
- *  toggle, and the text size. */
+/**
+ * THE MEMBERSHIP TOGGLE (JOS-291) — one button, two states, the membership in force printed on it.
+ *
+ * A button rather than a pair, for `BasisToggle`'s reason: two states, and this footer's whole width
+ * budget is smaller than a segmented control's. It is drawn ONLY while the slice carries a zone —
+ * `every tier` of nothing is not a state a reader can act on — and the hover carries the definition
+ * plus the promise of the other, which is the only tooltip this window has ever had.
+ */
+function TierToggle({
+  scope,
+  zoneName,
+  onClick,
+  noDrag
+}: {
+  scope: ZoneScope
+  zoneName: string
+  onClick: () => void
+  noDrag: React.CSSProperties
+}): JSX.Element {
+  const other = toggleZoneScope(scope)
+  const meaning =
+    scope === 'allTiers'
+      ? `Every tier of ${zoneName} counts - the difficulty spelled into the zone name is folded away.`
+      : `Only ${zoneName} counts - the other tiers of the same camp are out.`
+  return (
+    <button
+      type="button"
+      data-testid="xp-tier"
+      data-scope={scope}
+      title={`${meaning} Click for ${ZONE_SCOPE_LABEL[other]}.`}
+      onClick={onClick}
+      style={{
+        ...noDrag,
+        flexShrink: 0,
+        background: ACCENT_BG,
+        border: `1px solid ${ACCENT}66`,
+        borderRadius: 4,
+        color: ACCENT,
+        fontSize: 9,
+        letterSpacing: 0.4,
+        textTransform: 'uppercase',
+        padding: '1px 5px',
+        cursor: 'pointer'
+      }}
+    >
+      {ZONE_SCOPE_LABEL[scope]}
+    </button>
+  )
+}
+
+/** Footer — interactive mode only: the bg-alpha slider, the ROW CHECKLIST, the ZONE MEMBERSHIP and
+ *  DENOMINATOR toggles, and the text size. */
 function XpFooter({
   bgAlpha,
   textScale,
   visible,
   basis,
+  slice,
   patch,
   noDrag
 }: {
@@ -242,6 +302,9 @@ function XpFooter({
   textScale: number
   visible: XpRowId[] | undefined
   basis: RateBasis
+  /** The resolved slice — read for its zone half only: whether the tier toggle applies, and what
+   *  the camp is called on its hover. */
+  slice: Timeslice
   patch: OverlayChrome['patch']
   noDrag: React.CSSProperties
 }): JSX.Element {
@@ -281,6 +344,18 @@ function XpFooter({
           noDrag={noDrag}
         />
       ))}
+      {/* WHICH TIERS, beside WHICH ROWS — the same persisted per-kind config, the same one press.
+          Drawn only while the slice names a zone (the `ZoneScopeBar` rule, in a floating window). */}
+      {slice.zoneName !== null && (
+        <TierToggle
+          scope={slice.zoneScope}
+          zoneName={slice.zoneName}
+          onClick={() => {
+            patch({ xpZoneScope: toggleZoneScope(slice.zoneScope) })
+          }}
+          noDrag={noDrag}
+        />
+      )}
       {/* WHICH HOUR, beside WHICH ROWS — the same persisted per-kind config, the same one press. */}
       <BasisToggle
         basis={basis}
@@ -294,17 +369,55 @@ function XpFooter({
   )
 }
 
-/** The slice picker's rows: every slice THIS record can define, worded as the tab words them. */
-function sliceRows(snap: ProgressionSnap, ids: SliceId[], bounds: ReturnType<typeof dataBounds>): OverlaySelectRow[] {
+/**
+ * The slice picker's rows: every slice THIS record can define, worded as the tab words them.
+ *
+ * The membership in force is passed in rather than defaulted, so the two zone rows are worded with
+ * the same clause the span line under the numbers will use — a picker that read `every tier` while
+ * the window measured one would be the caption drift this whole option is about, inside the control
+ * that sets it.
+ */
+function sliceRows(
+  snap: ProgressionSnap,
+  ids: SliceId[],
+  bounds: ReturnType<typeof dataBounds>,
+  zoneScope: ZoneScope
+): OverlaySelectRow[] {
   return ids.map((id) => ({
     value: id,
     label: sliceLabel(id),
     rate: '',
     // The disambiguation line the popup already draws: the slice's own sentence-form wording, so
     // 'Zone' says which zone and 'Session' says what a session is measured from.
-    timing: resolveSlice({ snap, bounds, id }).caption,
+    timing: resolveSlice({ snap, bounds, id, zoneScope }).caption,
     live: false
   }))
+}
+
+/**
+ * WHICH STRETCH THIS WINDOW IS ON, out of its own persisted config: the slice pick degraded to what
+ * the record can define, and the zone membership applied to it.
+ *
+ * Its own hook so the component stays inside the measured complexity ceiling, and so the two knobs
+ * that describe ONE scope are read in one place — a window resolving its slice here and its
+ * membership somewhere else is how a caption ends up describing numbers it did not measure.
+ */
+function useXpSlice(
+  prog: ProgressionSnap,
+  bounds: ReturnType<typeof dataBounds>,
+  config: OverlayConfig | null
+): { id: SliceId; slice: Timeslice; zoneScope: ZoneScope } {
+  // ABSENT means `zoneSession` — and `resolveSliceId` then degrades it to `All` on a record that
+  // cannot define one, which is the same fallback the tab's control performs.
+  const id = resolveSliceId(config?.xpSlice ?? 'zoneSession', prog, bounds)
+  // ABSENT means `allTiers` (shared/zoneScope.ts owns the ruling) — every tier of the camp, which
+  // is what this window measured before the knob existed.
+  const zoneScope = resolveZoneScope(config?.xpZoneScope)
+  const slice = useMemo(
+    () => resolveSlice({ snap: prog, bounds, id, zoneScope }),
+    [prog, bounds, id, zoneScope]
+  )
+  return { id, slice, zoneScope }
 }
 
 export default function XpOverlay(): JSX.Element {
@@ -327,10 +440,9 @@ export default function XpOverlay(): JSX.Element {
 
   const bounds = useMemo(() => dataBounds(prog, NO_EXTRA), [prog])
   const available = useMemo(() => availableSlices(prog, bounds), [prog, bounds])
-  // ABSENT means `zoneSession` — and `resolveSliceId` then degrades it to `All` on a record that
-  // cannot define one, which is the same fallback the tab's control performs.
-  const id = resolveSliceId(config?.xpSlice ?? 'zoneSession', prog, bounds)
-  const slice = useMemo(() => resolveSlice({ snap: prog, bounds, id }), [prog, bounds, id])
+  // The scope both knobs describe, resolved together (see `useXpSlice`) — so the caption and every
+  // number below travel with the same slice AND the same membership by construction.
+  const { id, slice, zoneScope } = useXpSlice(prog, bounds, config)
   const visible = config?.xpRows
   // ABSENT means `elapsed` (shared/rateBasis.ts owns the ruling).
   const basis = resolveRateBasis(config?.xpBasis)
@@ -369,7 +481,7 @@ export default function XpOverlay(): JSX.Element {
         tail={view.level === null ? undefined : `lvl ${view.level}${view.levelCue ? ` ${view.levelCue}` : ''}`}
         tailTitle={view.levelTitle}
         iconAccentBg={ACCENT_BG}
-        select={{ rows: sliceRows(prog, available, bounds), value: id, onChange: (v) => patch({ xpSlice: v as SliceId }), accent: ACCENT }}
+        select={{ rows: sliceRows(prog, available, bounds, zoneScope), value: id, onChange: (v) => patch({ xpSlice: v as SliceId }), accent: ACCENT }}
         chrome={{ locked, hovering, dragRegion, noDrag, toggleLock, capture }}
       />
 
@@ -410,6 +522,7 @@ export default function XpOverlay(): JSX.Element {
           textScale={textScale}
           visible={visible}
           basis={basis}
+          slice={slice}
           patch={patch}
           noDrag={noDrag}
         />

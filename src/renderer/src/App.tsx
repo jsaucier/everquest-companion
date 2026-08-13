@@ -3,11 +3,15 @@ import { Box, CssBaseline } from '@mui/material'
 import type { AppFocus, CharacterDelta, CharacterRef, CharacterSnap } from '@shared/types'
 import TitleBar from './components/TitleBar'
 import NavDrawer from './components/NavDrawer'
+// The gear area's in-area tab bar (JOS-324) — four views behind one nav row. It sits ABOVE the
+// scrolling content box rather than inside it, so it stays put under a long table and so the
+// views' own `height: 100%` still means "the content area", not "the content area minus a bar".
+import GearAreaTabs from './components/GearAreaTabs'
 // The two app-wide celebration snackbars — they fire on ANY tab, so they live at app level. Their
 // markup moved into its own file when this one hit the factoring ceiling (see its header).
 import CelebrationToasts from './components/CelebrationToasts'
 import NoLogsEmptyState from './components/NoLogsEmptyState'
-import { VIEW_KEY, loadView, type View } from './appViews'
+import { VIEW_KEY, isGearAreaView, loadView, rememberGearTab, type View } from './appViews'
 // The app's navigation MODEL — the deep-link routers and their nonce contract. See appRouting.ts.
 import { useAppRouting, usePrefsRouting, type AppRouting, type PrefsRouting } from './appRouting'
 // The mouse's Back button (JOS-201): the app-level answer, behind whatever drill is on screen.
@@ -17,6 +21,10 @@ import LootView from './features/loot/LootView'
 import LevelingView from './features/leveling/LevelingView'
 import PlannerView from './features/planner/PlannerView'
 import GearView from './features/gear/GearView'
+// The gear area's third tab (JOS-324). A placeholder panel until JOS-326 fills it, and imported
+// plainly rather than lazily: it is a heading and two sentences, which is cheaper than the code
+// that would defer it.
+import WishlistView from './features/wishlist/WishlistView'
 import BossView from './features/bosses/BossView'
 import MobsView from './features/mobs/MobsView'
 import MapsView from './features/maps/MapsView'
@@ -33,10 +41,12 @@ import FeedbackDialog from './features/feedback/FeedbackDialog'
 // it. WHETHER TO SHOW IT is a second question and a runtime one (`OWNER_TOOLS`, JOS-72). See
 // devTriage.tsx / devFlags.ts.
 import DevTriageView from './devTriage'
-// UNRELEASED (JOS-45). Same shape, different axis: a product surface awaiting the owner's
-// review rather than operator tooling. See unreleasedCharacter.tsx / devFlags.ts.
-import UnreleasedCharacterView from './unreleasedCharacter'
-import { OWNER_TOOLS, UNRELEASED } from './devFlags'
+// The CHARACTER SHEET (JOS-45, released JOS-327). It used to come through `unreleasedCharacter.tsx`
+// — a `UNRELEASED ? lazy(() => import(…)) : null` twin of `devTriage` above, whose whole job was to
+// keep the tree out of packaged bytes. The owner released the tab, so that file is gone and this is
+// an ordinary static import like the eleven views above it.
+import CharacterView from './features/character/CharacterView'
+import { OWNER_TOOLS } from './devFlags'
 import { useFeedbackDialog, type FeedbackPrefill } from './features/feedback/useFeedback'
 // Usage analytics (docs/plans/usage-analytics.md). The notice is mounted unconditionally and
 // renders nothing once it has been answered; `useViewDwell` reports how long each tab was on
@@ -127,18 +137,22 @@ function PlainView({
           character contract and every item name links OUT to that item's Loot drill-down — which
           is where the per-item tier block is drawn. */}
       {view === 'gear' && <GearView key={viewKey} onOpenLoot={routing.openLoot} />}
+      {/* WISH LIST (JOS-324) — the gear area's third tab, and today a placeholder that says so.
+          It is keyed like the rest so JOS-326 inherits the character contract already wired: a
+          wish list is a character's, and the rebuild counter is how this app says that. */}
+      {view === 'wishlist' && <WishlistView key={viewKey} />}
       {view === 'buffs' && <BuffsView key={viewKey} />}
       {/* Respawn clocks (JOS-194). Character-scoped like the rest: the remount `key` is the
           whole contract, since the watch list lives in the store and the clocks are re-derived
           by the fold the character switch kicks off. */}
       {view === 'timers' && <TimersView key={viewKey} />}
       {view === 'alerts' && <AlertsView key={viewKey} {...{ onOpenVoicePrefs }} />}
-      {/* UNRELEASED (JOS-45). It sits HERE, below the no-characters gate, and not beside the
-          triage branch: unlike triage this tab reads the game log (name, level, loadout) and
-          the character's own inventory dump, so a machine with no EverQuest install has
-          nothing to show it. `UNRELEASED` folds to a literal in every build, so the branch and
-          the lazily-imported tree behind it are deleted from shipped bytes. */}
-      {UNRELEASED && view === 'character' && <UnreleasedCharacterView key={viewKey} />}
+      {/* CHARACTER (JOS-45, released JOS-327). It sits HERE, below the no-characters gate, and not
+          beside the triage branch: unlike triage this tab reads the game log (name, level, loadout)
+          and the character's own inventory dump, so a machine with no EverQuest install has nothing
+          to show it. Keyed like the rest — the sheet and its carry-all ledger are one character's,
+          and the remount is how this app says that. */}
+      {view === 'character' && <CharacterView key={viewKey} />}
     </>
   )
 }
@@ -348,6 +362,45 @@ function useAppCelebrations(
  * A component rather than two lines in App because App is at its factoring ceiling — and because
  * "what may appear along the bottom" is a real thing to be able to read in one place.
  */
+/**
+ * THE CONTENT COLUMN: everything to the right of the nav drawer, in the two pieces it has.
+ *
+ * `app-content` is the app's ONE scroller between a view and the window — every feature view sizes
+ * itself with `height: 100%` against it, and a long list clips inside its own box rather than
+ * growing the page (the Task-#56 law, measured by `pageOverflow` in half the e2e suite).
+ *
+ * ABOVE it, and deliberately OUTSIDE it, sits the gear area's tab bar (JOS-324): four views behind
+ * one nav row need a header, and a header inside the scroller would both slide away under a long
+ * table and silently eat the height that every `height: 100%` is measured against — turning that
+ * page-overflow assertion red across four unrelated specs. Out here it is a fixed band and the
+ * scroll box simply flexes into what is left. Its clicks go through `selectView`, the same MANUAL
+ * navigator the nav rows use, so the Back stack reads a tab switch as exactly what it is.
+ *
+ * A component rather than two nested boxes in App for the reason `BottomStrips` is one: App sits
+ * at the measured 100-code-line function ceiling, and this is a self-contained piece of shell.
+ */
+function MainColumn({
+  view,
+  onSelect,
+  children
+}: {
+  view: View
+  onSelect: (v: View) => void
+  children: JSX.Element
+}): JSX.Element {
+  return (
+    <Box
+      component="main"
+      sx={{ flexGrow: 1, minWidth: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+    >
+      {isGearAreaView(view) && <GearAreaTabs view={view} onSelect={onSelect} />}
+      <Box data-testid="app-content" sx={{ flexGrow: 1, overflow: 'auto', p: 2 }}>
+        {children}
+      </Box>
+    </Box>
+  )
+}
+
 function BottomStrips({ prefs }: { prefs: PrefsRouting }): JSX.Element {
   return (
     <>
@@ -440,24 +493,31 @@ export default function App(): JSX.Element {
 
   useAppCelebrations(setDefeatToast, setQuestToast)
 
-  // Remember the selected tab across launches (renderer-only).
+  // Remember the selected tab across launches (renderer-only) — and, when that tab is one of the
+  // gear area's four, remember it a SECOND time as the area's last-used tab (JOS-324). Two keys
+  // because they answer two questions: `eq.view` is "where was I", which relaunch restores, while
+  // `eq.gear.tab` is "which door does the Gear nav row open", which has to survive visits to every
+  // other tab in the app. Written here rather than in the tab bar's click handler so that arriving
+  // by deep link or by Back counts as using the tab, which is what a reader means by last-used.
   useEffect(() => {
     localStorage.setItem(VIEW_KEY, view)
+    rememberGearTab(view)
   }, [view])
 
   // How long each tab was on screen, reported ON SWITCH (plan §2). `View` and the schema's
-  // `viewDwell` enum are the same set apart from the UNRELEASED views, which report nothing:
-  // widening the enum before the ingest Lambda is deployed would 400 the whole batch and drop
-  // every counter with it (JOS-45; `dwellView` states the rule).
+  // `viewDwell` enum are the SAME SET as of JOS-327, which released the last view that was held out
+  // of it — `dwellView` still folds an unknown id to `null` rather than reporting it, because
+  // widening the enum before the ingest Lambda is deployed would 400 the whole batch and drop every
+  // counter with it. `tests/telemetryContract.test.mts` pins the equality in both directions.
   useViewDwell(dwellView(view))
 
   // …and the same fact, kept for the ERROR reporter (JOS-100). It is a separate mechanism on
   // purpose: `useViewDwell` reports the view you LEFT, on a switch, which is exactly the wrong
   // answer for "which tab was open when it broke". This is a plain module variable because its
   // readers — the global error handlers in main.tsx and ErrorBoundary — run at moments when the
-  // React tree is not something to rely on. An UNRELEASED view sets it too and is folded to
-  // `unknown` by main's closed-enum check, which is the right outcome: an error there is worth
-  // reporting even though the view id is not.
+  // React tree is not something to rely on. A view the schema has not learned would set it too and
+  // be folded to `unknown` by main's closed-enum check, which is the right outcome: an error there
+  // is worth reporting even though the view id is not.
   setCurrentView(view)
 
   useEffect(() => {
@@ -520,23 +580,18 @@ export default function App(): JSX.Element {
             which is not a view, so the destination travels as the router rather than as a tab. */}
         <NavDrawer view={view} onSelect={selectView} prefs={prefsRouting} onSendFeedback={() => feedback.openFeedback()} />
 
-        <Box
-          component="main"
-          sx={{ flexGrow: 1, minWidth: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
-        >
-          <Box data-testid="app-content" sx={{ flexGrow: 1, overflow: 'auto', p: 2 }}>
-            <ViewContent
-              view={view}
-              hasCharacters={characters.length > 0}
-              viewKey={viewKey}
-              routing={routing}
-              prefs={prefsRouting}
-              onOpenPreferences={() => selectView('preferences')}
-              onOpenLeveling={() => openLeveling()}
-              onSendFeedback={feedback.openFeedback}
-            />
-          </Box>
-        </Box>
+        <MainColumn view={view} onSelect={selectView}>
+          <ViewContent
+            view={view}
+            hasCharacters={characters.length > 0}
+            viewKey={viewKey}
+            routing={routing}
+            prefs={prefsRouting}
+            onOpenPreferences={() => selectView('preferences')}
+            onOpenLeveling={() => openLeveling()}
+            onSendFeedback={feedback.openFeedback}
+          />
+        </MainColumn>
       </Box>
 
       {/* Always-mounted: plays fired alert sounds regardless of the active tab. */}

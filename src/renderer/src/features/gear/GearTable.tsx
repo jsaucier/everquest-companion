@@ -20,28 +20,27 @@
 // NO MUI TOOLTIP ANYWHERE (JOS-143). These are dense rows under a toolbar full of selects and a
 // slider; an interactive popper opened from the first row lands on those controls and eats the
 // clicks aimed at them. Every explanation is a native `title`.
+//
+// AND SINCE JOS-297 THE COLUMN SET CAN BE WIDER THAN THE PANE. Nothing above changes: the table is
+// still `tableLayout: fixed`, the row is still exactly `ROW_HEIGHT` tall with one clipped line per
+// cell, and the windowing hook's contract does not know that widths exist. What changes is where
+// the widths come from — `gearTableLayout` states percentages while they fit and stated pixels plus
+// a table `minWidth` once they do not, so a thirty-column set overflows the table's OWN scroller
+// (GearView's `gear-list` box, already `overflow: auto`) and never the page. Both halves are
+// measured in `tests/e2e/gearColumnSteps.mts`, container-scroll and page-no-scroll in one step.
 
-import { type JSX, memo } from 'react'
+import { type JSX, memo, useMemo } from 'react'
 import { Stack, Table, TableBody, TableCell, TableHead, TableRow, TableSortLabel } from '@mui/material'
 import type { GearRow } from '@shared/planner/gear'
 import type { WindowedRows } from '../../lib/useWindowedRows'
-import { EraChip, DonorName, MismatchChip } from '../planner/PlannerChips'
-import {
-  CLASS_COLUMN_WIDTH,
-  OWNED_COLUMN_WIDTH,
-  SLOT_COLUMN_WIDTH,
-  numericWidth,
-  statText,
-  type GearColumn
-} from './gearColumns'
-import { classMismatch, sortValue, type GearSort, type GearSortKey } from './gearFilter'
+import { EraChip, DonorName } from '../planner/PlannerChips'
+import { gearTableLayout, statText, type GearColumn } from './gearColumns'
+import { sortValue, type GearSort, type GearSortKey } from './gearFilter'
 import { ownedCellText, ownedCellTitle, ownershipFor, type GearOwnershipMap } from './gearOwnership'
 import type { ClassAbbr } from '@shared/classCombo'
 
 /** Dense row height (px), MUI `size="small"` — the number the windowing hook is handed. */
 export const ROW_HEIGHT = 37
-
-const FIXED_TABLE = { tableLayout: 'fixed' } as const
 
 const FIXED_ROW = {
   height: ROW_HEIGHT,
@@ -55,6 +54,15 @@ const FIXED_ROW = {
   }
 } as const
 
+/**
+ * The numeric columns' halved side padding — the other half of `MAX_NUMERIC_WIDTH`'s bargain
+ * (gearColumns.ts). The ceiling only holds if a sortable header (label + arrow, ~60px for
+ * `Ratio`) fits the cell it states: a label wider than its sticky cell slides under the NEXT
+ * header, which then intercepts the click aimed at it — gear.e2e.mts measured exactly that.
+ * MUI's default 16px a side spends 32px of a ~60px cell on air; 8px keeps the header its own.
+ */
+const NUMERIC_PAD = { px: 1 } as const
+
 /** Sixteen classes is `Class: ALL`, and sixteen chips would be the widest cell in the table. */
 function classText(classes: readonly ClassAbbr[]): string {
   if (classes.length === 0) return ''
@@ -67,8 +75,6 @@ export interface GearTableProps {
   columns: readonly GearColumn[]
   win: WindowedRows
   sort: GearSort
-  /** the class filter the mismatch chip is measured against — never enforced, only pointed at */
-  classes: readonly ClassAbbr[]
   /**
    * The ownership join (JOS-285), keyed by `row.key` — `null` when this character has never
    * written a dump, which removes the column entirely rather than drawing a blank one
@@ -78,7 +84,17 @@ export interface GearTableProps {
   /** the Owned header's own explanation, including the uncounted-keyring note when there is one */
   ownedHint: string
   onSort: (key: GearSortKey) => void
-  /** deep-link an item into the Loot tab's drill-down, where the ItemWindow draws its tier block */
+  /**
+   * Deep-link an item into the Loot tab's drill-down, where the ItemWindow draws its tier block.
+   *
+   * THE ONLY PER-ROW ACTION THIS TABLE HAS, since JOS-325. There was a second — `onAssign`, the `+`
+   * that dropped a search row into the selected gear set (JOS-286) — and it went with the sets
+   * surface the owner retired: no pane, no set to add to, nothing for the button to mean. The
+   * argument it used to carry (absent beats disabled, because a button that does nothing is a worse
+   * answer than no button) survives it as a general rule, and this prop is now the whole of its
+   * application here: a host that has nowhere to send the click passes nothing, and `DonorName`
+   * draws plain text rather than a link that goes nowhere.
+   */
   onOpenLoot?: (item: string) => void
 }
 
@@ -101,36 +117,43 @@ function PadRow({ height, colSpan }: { height: number; colSpan: number }): JSX.E
 const GearLine = memo(function GearLine({
   row,
   columns,
-  classes,
   ownership,
-  onOpenLoot
+  on
 }: {
   row: GearRow
   columns: readonly GearColumn[]
-  classes: readonly ClassAbbr[]
   ownership: GearOwnershipMap | null
-  onOpenLoot?: (item: string) => void
+  on: { openLoot?: (item: string) => void }
 }): JSX.Element {
-  const mismatch = classMismatch(row.classes, classes)
   // ONE MAP LOOKUP PER RENDERED ROW, and only for the screenful the window mounted. `row.key` is
   // already the ownership key — phase 3's seam — so there is nothing to normalise here.
   const owned = ownership === null ? null : ownershipFor(ownership, row)
   return (
     <TableRow hover data-testid="gear-row" data-item-key={row.key} sx={FIXED_ROW}>
       <TableCell>
+        {/* THE `+` IS GONE FROM THIS CELL (JOS-325). It put the row into the selected gear set, and
+            the sets are retired — see `GearTableProps.onOpenLoot`. The `Stack` stays because the
+            name still shares the cell with the era chip, and the FIXED_ROW contract above is what
+            makes that one clipped line rather than two. */}
         <Stack direction="row" spacing={0.5} alignItems="center" sx={{ flexWrap: 'nowrap', minWidth: 0 }}>
-          <DonorName name={row.name} onOpen={onOpenLoot} />
-          {/* The two chips a gear row can wear, both of them POINTERS rather than verdicts: the
-              era join's (out of era / era?) and the class filter's. A mismatch is chipped, never
-              removed — the trio is a filter and never a rule (V2, plannerClasses.ts). */}
+          <DonorName name={row.name} onOpen={on.openLoot} />
+          {/* THE ONE CHIP A SEARCH ROW WEARS, and it is a POINTER rather than a verdict: the era
+              join's (out of era / era?), which explains a row you can SEE.
+
+              THE CLASS MISMATCH CHIP IS GONE FROM THIS TABLE (owner ruling 2026-08-13, JOS-302:
+              *obviously wrong, it should just be removed*). A row this character's classes cannot
+              use is no longer chipped here — it is not here at all, because `filterGearRows` now
+              removes it (gearFilter.ts `GearFilters.classes` carries the full argument, including
+              why the planner build pane's own mismatch chip stays exactly where it is). A chip that
+              can only ever appear on a row the filter already removed would be dead code pretending
+              to be a law. */}
           <EraChip subject={row} />
-          {mismatch && <MismatchChip classes={row.classes} />}
         </Stack>
       </TableCell>
       <TableCell title={row.slots.join(' ')}>{row.slots.join(' ')}</TableCell>
       <TableCell title={row.classes.join(' ')}>{classText(row.classes)}</TableCell>
       {columns.map((c) => (
-        <TableCell key={c.key} align="right" data-testid={`gear-cell-${c.key}`}>
+        <TableCell key={c.key} align="right" data-testid={`gear-cell-${c.key}`} sx={NUMERIC_PAD}>
           {statText(sortValue(row, c.key), c.key)}
         </TableCell>
       ))}
@@ -159,7 +182,7 @@ function SortHeader({
 }): JSX.Element {
   const active = sort.key === column.key
   return (
-    <TableCell align={align} sx={width === undefined ? undefined : { width }}>
+    <TableCell align={align} sx={{ ...(width === undefined ? {} : { width }), ...(align === 'right' ? NUMERIC_PAD : {}) }}>
       <TableSortLabel
         active={active}
         direction={active ? sort.dir : 'desc'}
@@ -177,30 +200,44 @@ export default function GearTable({
   columns,
   win,
   sort,
-  classes,
   ownership,
   ownedHint,
   onSort,
   onOpenLoot
 }: GearTableProps): JSX.Element {
   const span = columns.length + (ownership === null ? 3 : 4)
-  const width = numericWidth(columns.length)
+  const layout = gearTableLayout(columns.length, ownership !== null)
+  // ONE object for the row's callbacks, memoized on the callbacks themselves: `GearLine` is
+  // `memo`'d and a fresh literal per render would defeat it on every keystroke. It held two until
+  // JOS-325 retired the `+`; it stays an object because the wrapper is what the memo depends on.
+  const handlers = useMemo(() => ({ openLoot: onOpenLoot }), [onOpenLoot])
   return (
-    <Table size="small" stickyHeader sx={FIXED_TABLE}>
+    <Table
+      size="small"
+      stickyHeader
+      data-testid="gear-table"
+      data-layout={layout.mode}
+      // `minWidth`, never `width`: a pane wider than the set still fills it, a narrower one scrolls
+      // the table sideways inside its own box. 0 in percentage mode means the table IS the pane.
+      sx={{ tableLayout: 'fixed', minWidth: layout.minWidth === 0 ? undefined : layout.minWidth }}
+    >
       <TableHead>
         <TableRow>
-          {/* No width: the item NAME takes whatever the stated columns leave (LootTables.tsx). */}
-          <SortHeader column={{ key: 'name', label: 'Item' }} sort={sort} onSort={onSort} />
-          <TableCell sx={{ width: SLOT_COLUMN_WIDTH }}>Slot</TableCell>
-          <TableCell sx={{ width: CLASS_COLUMN_WIDTH }}>Classes</TableCell>
+          {/* In percentage mode the item NAME states no width and takes whatever the stated columns
+              leave (LootTables.tsx); in pixel mode every column is stated, because the SUM is what
+              makes the table wider than the pane. */}
+          <SortHeader column={{ key: 'name', label: 'Item' }} sort={sort} width={layout.name} onSort={onSort} />
+          <TableCell sx={{ width: layout.slot }}>Slot</TableCell>
+          <TableCell sx={{ width: layout.classes }}>Classes</TableCell>
           {columns.map((c) => (
-            <SortHeader key={c.key} column={c} sort={sort} width={width} align="right" onSort={onSort} />
+            <SortHeader key={c.key} column={c} sort={sort} width={layout.numeric} align="right" onSort={onSort} />
           ))}
           {/* The one column that is not a number and not sortable: it reports a live file, and the
               header carries the two things a reader has to know about it — that a `+N` is its own
-              copy, and which key rings the fold left out. */}
+              copy, and which key rings the fold left out. It stays LAST whatever the picker shows
+              (JOS-297): the numerics are what an item reads, this is what you have. */}
           {ownership !== null && (
-            <TableCell sx={{ width: OWNED_COLUMN_WIDTH }} title={ownedHint} data-testid="gear-owned-header">
+            <TableCell sx={{ width: layout.owned }} title={ownedHint} data-testid="gear-owned-header">
               Owned
             </TableCell>
           )}
@@ -209,14 +246,7 @@ export default function GearTable({
       <TableBody>
         <PadRow height={win.topPad} colSpan={span} />
         {rows.slice(win.start, win.end).map((row) => (
-          <GearLine
-            key={row.key}
-            row={row}
-            columns={columns}
-            classes={classes}
-            ownership={ownership}
-            onOpenLoot={onOpenLoot}
-          />
+          <GearLine key={row.key} row={row} columns={columns} ownership={ownership} on={handlers} />
         ))}
         <PadRow height={win.bottomPad} colSpan={span} />
       </TableBody>

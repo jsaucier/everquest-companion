@@ -6,9 +6,11 @@ import { ipcMain } from 'electron'
 import { IPC } from '../../shared/ipc'
 import { buildLevelUnlocks, isUnlocksRequest } from '../data/levelUnlocks'
 import { buildSpellCatalog } from '../data/spellDb'
+import { buildSpellDetail } from '../data/spellDetail'
 import { lookupItem } from '../itemLookup'
 import { lookupMob } from '../mobLookup'
 import { registry, spellDb } from '../pipeline'
+import type { AlertsSnap } from '../../shared/alertTypes'
 import type { BuffsSnap } from '../../shared/types'
 
 export function registerKnowledgeIpc(): void {
@@ -37,6 +39,25 @@ export function registerKnowledgeIpc(): void {
         if (stat.lastSeenMs != null) lastSeen.set(key, stat.lastSeenMs)
       }
     return buildSpellCatalog(spellDb, usage, lastSeen)
+  })
+
+  // ---- ONE spell, in full (JOS-293: the rich spell card) ----
+  // The deep read behind the hover card: every field the committed DB states for this name, the
+  // effect classes derived from its effect list, and the ranks of its line that a source names.
+  //
+  // THE RANKS COME FROM THE ALERTS MODULE, and that is the whole reason this handler is not a pure
+  // function of the DB. `AlertsSnap.spellLastCast` is the only rank-PRESERVING record in the app
+  // (the buffs model's keys are rank-folded), and the DB holds a single row for ~1,800 of its
+  // ~1,900 lines - so without it the card could never name the rank a spell replaces. Read
+  // exactly the way the catalog reads the buffs snapshot above: off the registry, never mutated,
+  // and an absent module simply means no observed ranks.
+  //
+  // The argument is a renderer string, so it is VALIDATED rather than trusted: anything that is
+  // not a string is answered with the same not-found record an unknown spell gets.
+  ipcMain.handle(IPC.spellsDetail, (_e, name: unknown) => {
+    const snap = registry.get('alerts')?.snapshot()?.state as AlertsSnap | undefined
+    const observed = Object.keys(snap?.spellLastCast ?? {})
+    return buildSpellDetail(spellDb, typeof name === 'string' ? name : '', observed)
   })
 
   // ---- item knowledge ("what's this lore/quest item for", Task #53) ----

@@ -20,11 +20,13 @@
 import { app } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { release } from 'node:os'
+import { basename } from 'node:path'
 import {
   MAX_BODY_BYTES,
   validateDraft,
   type FeedbackDraft,
   type FeedbackEnv,
+  type InventoryDumpMeta,
   type LogSliceMeta,
   type PresignedUpload,
   type SubmitErrorCode,
@@ -34,14 +36,21 @@ import { CHANNEL } from '../channel'
 import { E2E } from '../e2e'
 import { logError, logInfo } from '../errorLog'
 import { resolveActiveCharacter } from '../log/config'
+import { findOutputFile } from '../outputs/discovery'
 import { getUpdateChannel } from '../store'
 import { FEEDBACK_API_URL, allowedUploadUrl, postForm, postJson } from './net'
+import {
+  buildInventoryAttachment,
+  inventoryMeta,
+  type InventoryAttachment,
+  type InventoryResult
+} from './inventory'
 import { buildSlice, sliceMeta, type FeedbackSlice } from './slice'
 import { enqueue, installId, type QueuedReport } from './state'
 
 /** The public result of a submit attempt. Never a thrown error, never a bare boolean. */
 export type SubmitResult =
-  | { ok: true; reportId: string; logUploaded: boolean }
+  | { ok: true; reportId: string; logUploaded: boolean; inventoryUploaded: boolean }
   | {
       ok: false
       error: SubmitErrorCode
@@ -111,6 +120,42 @@ export async function cachedSlice(windowMinutes: number): Promise<FeedbackSlice 
   return slice
 }
 
+// ---- the inventory dump (JOS-296) ---------------------------------------------------------
+
+/**
+ * The active character's dump, or the reason there is none. The RESOLUTION lives here rather
+ * than in `inventory.ts` because it needs the registry (which needs `effectiveEqRoot`, which
+ * needs Electron) — the packaging half stays pure and path-parameterized, exactly like the
+ * slicer's split between `slice.ts` and this file's `activeLog`.
+ *
+ * `findOutputFile` is the ONE resolver: it prefers `<Character>_<server>-Inventory.txt` and
+ * falls back to the newest matching file, which is what a one-character machine always has. No
+ * path rule is re-derived here; if the Settings override moves the EQ root, this moves with it.
+ */
+export function activeInventoryPath(): { path: string; fileName: string } | null {
+  const c = resolveActiveCharacter()
+  const path = findOutputFile('inventory', c?.name, c?.server)
+  return path === null ? null : { path, fileName: basename(path) }
+}
+
+/**
+ * There is deliberately NO CACHE here, and that is the opposite call from `cachedSlice`.
+ *
+ * A slice is cached because the promise is "you see exactly what is sent": the bytes previewed,
+ * the bytes saved and the bytes uploaded have to be one artifact, and rebuilding at Send time
+ * would silently change the subject. A dump makes a DIFFERENT promise — it is the CURRENT export
+ * — and it is a ~10 KB file whose whole point is that the player may re-run `/outputfile
+ * inventory` mid-report to attach a fresh one (`outputs/registry.ts` states the same rule for the
+ * same reason: "a cache would answer with the state from before they typed the command"). The
+ * preview re-reads, and so does Send; the freshness stamp in the metadata is what makes the two
+ * comparable.
+ */
+export async function currentInventory(): Promise<InventoryResult> {
+  const found = activeInventoryPath()
+  if (found === null) return { ok: false, reason: 'no-dump' }
+  return await buildInventoryAttachment(found.path, found.fileName)
+}
+
 // ---- the wire ------------------------------------------------------------------------------------
 
 /** Narrow the ingest API's JSON body. Anything unexpected is treated as no body at all. */
@@ -138,7 +183,11 @@ function asUpload(raw: unknown): PresignedUpload | null {
  * moment a user's log would leave the machine. `allowedUploadUrl` pins it to our own bucket in
  * our own region, exactly (see net.ts). On null we upload NOTHING — the report still stands.
  */
-async function uploadSlice(upload: PresignedUpload, gz: Buffer): Promise<boolean> {
+async function uploadGz(
+  upload: PresignedUpload,
+  gz: Buffer,
+  what: { field: string; fileName: string }
+): Promise<boolean> {
   const url = allowedUploadUrl(upload.url)
   if (url === null) {
     logError('main:feedback', { message: `refused an upload URL outside our bucket: ${upload.url}` })
@@ -150,13 +199,29 @@ async function uploadSlice(upload: PresignedUpload, gz: Buffer): Promise<boolean
   // S3 requires the file part LAST — everything after it in the form is ignored.
   // `new Uint8Array(gz)` rather than the Buffer itself: a Node Buffer's backing store is typed
   // `ArrayBufferLike` (it may be shared), which is not a `BlobPart`. One 2 MB copy, once.
-  form.append('file', new Blob([new Uint8Array(gz)], { type: 'application/gzip' }), 'slice.log.gz')
+  form.append('file', new Blob([new Uint8Array(gz)], { type: 'application/gzip' }), what.fileName)
   const res = await postForm(url, form)
   if (res.status < 200 || res.status >= 300) {
-    logError('main:feedback', { message: `slice upload failed (${res.status})`, err: res.networkError })
+    logError('main:feedback', {
+      message: `${what.field} upload failed (${res.status})`,
+      err: res.networkError
+    })
     return false
   }
   return true
+}
+
+/** The slice leg. One presign, one POST, one boolean — the report stands either way. */
+function uploadSlice(upload: PresignedUpload, gz: Buffer): Promise<boolean> {
+  return uploadGz(upload, gz, { field: 'slice', fileName: 'slice.log.gz' })
+}
+
+/**
+ * The dump leg (JOS-296). Its own presign and its own key, so a slice that fails to land does
+ * not take the dump with it — and so the two objects can be deleted independently by `forget`.
+ */
+function uploadInventory(upload: PresignedUpload, gz: Buffer): Promise<boolean> {
+  return uploadGz(upload, gz, { field: 'inventory', fileName: 'inventory.txt.gz' })
 }
 
 /** The §8.3 response table, as data. A status we do not recognize is `internal`. */
@@ -189,12 +254,29 @@ function retryable(status: number, error: SubmitErrorCode): boolean {
 }
 
 /**
+ * The BYTES of a report's attachments — never in the JSON body, always on their own presigns.
+ * One field per attachment rather than a positional pair, so adding a third some day is a field
+ * and not a signature every caller has to re-read.
+ */
+export interface Attachments {
+  log: Buffer | null
+  inventory: Buffer | null
+}
+
+export const NO_ATTACHMENTS: Attachments = { log: null, inventory: null }
+
+/**
  * Send ONE assembled request. Shared by the interactive path and the queue drain, so an
  * offline retry goes over exactly the same wire as the first attempt.
+ *
+ * THE TWO UPLOAD LEGS ARE INDEPENDENT AND NEITHER CAN FAIL THE REPORT. The row is already
+ * written by the time a presign exists; a refused URL, a 403 or a dead socket on either leg
+ * costs that attachment and nothing else. A server that minted no `inventoryUpload` (one that
+ * predates JOS-296) simply yields `inventoryUploaded: false`, which is the truth.
  */
 export async function sendReport(
   req: SubmitRequest,
-  gz: Buffer | null
+  gz: Attachments
 ): Promise<SubmitResult & { retry?: boolean }> {
   const json = JSON.stringify(req)
   if (Buffer.byteLength(json, 'utf8') > MAX_BODY_BYTES) {
@@ -204,8 +286,11 @@ export async function sendReport(
   const body = asRecord(res.body)
   if (res.status >= 200 && res.status < 300 && body?.ok === true && typeof body.reportId === 'string') {
     const upload = asUpload(body.upload)
-    const logUploaded = upload !== null && gz !== null ? await uploadSlice(upload, gz) : false
-    return { ok: true, reportId: body.reportId, logUploaded }
+    const invUpload = asUpload(body.inventoryUpload)
+    const logUploaded = upload !== null && gz.log !== null ? await uploadSlice(upload, gz.log) : false
+    const inventoryUploaded =
+      invUpload !== null && gz.inventory !== null ? await uploadInventory(invUpload, gz.inventory) : false
+    return { ok: true, reportId: body.reportId, logUploaded, inventoryUploaded }
   }
   const mapped = errorFor(res.status, body)
   return { ...failure(mapped.error, mapped.message, mapped), retry: retryable(res.status, mapped.error) }
@@ -213,9 +298,22 @@ export async function sendReport(
 
 // ---- the public submit --------------------------------------------------------------------------
 
-/** Assemble a `SubmitRequest` for a draft + optional slice metadata. */
-function requestFor(draft: FeedbackDraft, log: LogSliceMeta | null, clientReportId: string): SubmitRequest {
-  return { v: 1, draft, env: feedbackEnv(), installId: installId(), clientReportId, clientTs: Date.now(), log }
+/** Assemble a `SubmitRequest` for a draft + whichever attachments were built. */
+function requestFor(
+  draft: FeedbackDraft,
+  meta: { log: LogSliceMeta | null; inventory: InventoryDumpMeta | null },
+  clientReportId: string
+): SubmitRequest {
+  return {
+    v: 1,
+    draft,
+    env: feedbackEnv(),
+    installId: installId(),
+    clientReportId,
+    clientTs: Date.now(),
+    log: meta.log,
+    inventory: meta.inventory
+  }
 }
 
 function queueEntry(req: SubmitRequest): QueuedReport {
@@ -225,6 +323,7 @@ function queueEntry(req: SubmitRequest): QueuedReport {
     env: req.env,
     clientTs: req.clientTs,
     log: req.log,
+    inventory: req.inventory,
     attempts: 1,
     // The first retry waits out the normal backoff; the periodic drain picks it up.
     nextAttemptAt: Date.now() + 5 * 60 * 1000,
@@ -236,7 +335,7 @@ function queueEntry(req: SubmitRequest): QueuedReport {
  *  errors, so reaching the catch means a BUG — which must still not reject an IPC call. */
 async function attemptSend(
   req: SubmitRequest,
-  gz: Buffer | null
+  gz: Attachments
 ): Promise<SubmitResult & { retry?: boolean }> {
   try {
     return await sendReport(req, gz)
@@ -250,7 +349,7 @@ async function attemptSend(
 type SubmitFailure = Extract<SubmitResult, { ok: false }>
 
 /** Spool a failed-but-retryable report, and say so in words the dialog can render as-is. */
-function queueFailure(res: SubmitFailure, req: SubmitRequest, gz: Buffer | null): SubmitResult {
+function queueFailure(res: SubmitFailure, req: SubmitRequest, gz: Attachments): SubmitResult {
   const queued = enqueue(queueEntry(req), gz)
   return {
     ...res,
@@ -258,6 +357,36 @@ function queueFailure(res: SubmitFailure, req: SubmitRequest, gz: Buffer | null)
     message: queued
       ? "Saved - we'll send it next time you're online."
       : 'There are already 10 reports waiting to send. Please try again later.'
+  }
+}
+
+/**
+ * Build whichever attachments the user ticked, and hand back BOTH halves of each: the bytes for
+ * the upload legs and the metadata for the JSON body. One function so the two can never disagree
+ * — a report whose body declares a dump but whose upload has no bytes would be a report the
+ * server presigns for nothing.
+ *
+ * A dump the user asked for but that cannot be PACKAGED (never exported, unreadable, over the
+ * cap) is NOT an error: the report goes without it, exactly as a missing log does. The dialog
+ * already said which of those it was, before Send was pressed.
+ */
+async function buildAttachments(opts: {
+  attachLog: boolean
+  windowMinutes: number
+  attachInventory: boolean
+}): Promise<{ gz: Attachments; meta: { log: LogSliceMeta | null; inventory: InventoryDumpMeta | null } }> {
+  const slice = opts.attachLog ? await cachedSlice(opts.windowMinutes) : null
+  const dump = opts.attachInventory ? await currentInventory() : null
+  const attached: InventoryAttachment | null = dump?.ok === true ? dump : null
+  return {
+    gz: {
+      log: slice === null ? null : slice.gz,
+      inventory: attached === null ? null : attached.gz
+    },
+    meta: {
+      log: slice === null ? null : sliceMeta(slice),
+      inventory: attached === null ? null : inventoryMeta(attached)
+    }
   }
 }
 
@@ -272,7 +401,7 @@ function queueFailure(res: SubmitFailure, req: SubmitRequest, gz: Buffer | null)
  */
 export async function submitFeedback(
   draft: FeedbackDraft,
-  opts: { attachLog: boolean; windowMinutes: number }
+  opts: { attachLog: boolean; windowMinutes: number; attachInventory: boolean }
 ): Promise<SubmitResult> {
   if (E2E) return failure('internal', 'disabled in e2e')
   if (FEEDBACK_API_URL === '') {
@@ -281,14 +410,22 @@ export async function submitFeedback(
   const valid = validateDraft(draft)
   if (!valid.ok) return failure('invalid_payload', valid.message, { field: valid.field })
 
-  const slice = opts.attachLog ? await cachedSlice(opts.windowMinutes) : null
-  const gz = slice === null ? null : slice.gz
-  const req = requestFor(valid.value, slice === null ? null : sliceMeta(slice), randomUUID())
+  const built = await buildAttachments(opts)
+  const req = requestFor(valid.value, built.meta, randomUUID())
 
-  const res = await attemptSend(req, gz)
+  const res = await attemptSend(req, built.gz)
   if (res.ok) {
-    logInfo(`[everquest-companion] feedback sent: ${res.reportId} (log ${res.logUploaded ? 'uploaded' : 'not uploaded'})`)
-    return { ok: true, reportId: res.reportId, logUploaded: res.logUploaded }
+    logInfo(
+      `[everquest-companion] feedback sent: ${res.reportId} ` +
+        `(log ${res.logUploaded ? 'uploaded' : 'not uploaded'}, ` +
+        `inventory ${res.inventoryUploaded ? 'uploaded' : 'not uploaded'})`
+    )
+    return {
+      ok: true,
+      reportId: res.reportId,
+      logUploaded: res.logUploaded,
+      inventoryUploaded: res.inventoryUploaded
+    }
   }
-  return res.retry === true ? queueFailure(res, req, gz) : { ...res, queued: false }
+  return res.retry === true ? queueFailure(res, req, built.gz) : { ...res, queued: false }
 }

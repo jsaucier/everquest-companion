@@ -67,6 +67,7 @@ import { searchFights } from './fightSearch'
 import { ACTIVE_MS, SLOW_SAMPLE_CAP } from './encounter'
 import type { LogEvent } from '../../shared/logEvents'
 import type { RosterSnap, RosterView } from '../../shared/roster'
+import type { ComboInterval } from '../../shared/classCombo'
 import type {
   BladeCoatState,
   CombatSnapshot,
@@ -205,6 +206,21 @@ export class CombatEngine {
   setRoster(access: { view: () => RosterView; snap: () => RosterSnap }): void {
     this.st.rosterProvider = () => access.view()
     this.st.rosterSnapProvider = () => access.snap()
+  }
+
+  /**
+   * Install the CLASS-COMBO pull (JOS-305, combat/coatClass.ts). pipeline.ts wires this to the
+   * combo module, which is registered FIRST on the bus — so within one delivery the combo state
+   * has already advanced for the line the engine is about to fold, exactly as the roster seam
+   * above relies on.
+   *
+   * Its ONE consumer is the blade-coat clear: a character who is no longer a rogue has no poison
+   * on their blades, and the log never says so. Absent — every test, and any future embedding —
+   * the engine behaves exactly as it did before the seam existed, and the coats are cleared only
+   * by a dry line, a death or a rebirth.
+   */
+  setCombo(access: { currentInterval: () => ComboInterval | null }): void {
+    this.st.comboProvider = () => access.currentInterval()
   }
 
   /**

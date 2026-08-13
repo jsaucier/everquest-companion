@@ -142,9 +142,25 @@ function bossImageUrls(): string[] {
   return urls
 }
 
+/**
+ * Icon ids an item page CLAIMS that the wiki has no file for — so `npm run fetch:images` cannot
+ * ever satisfy them and this suite must not ask it to.
+ *
+ * ONE ENTRY, AND IT WAS VERIFIED RATHER THAN ASSUMED: `Potion of Mystical Aptitude` states
+ * `|lucy_img_ID = 2850` and `Special:Redirect/file/Item_2850.png` answers 404 (checked live
+ * 2026-08-13, the run that added the page to the corpus). The app's behaviour there is already
+ * correct — the bundle misses, the runtime cache asks once, the host says no, and the refusal is
+ * remembered for the session — so the only thing wrong was a test telling the next person to
+ * re-run a script that cannot help. An id belongs here only with a 404 beside it; the list is
+ * evidence, not a mute button.
+ */
+const UPSTREAM_HAS_NO_FILE = new Set([2850])
+
 test('every item icon the app can ask for is in the bundle', { skip }, () => {
   const shipped = new Set(manifest().images.filter((i) => i.kind === 'item').map((i) => i.url))
-  const missing = [...itemIconIds()].filter((id) => !shipped.has(wikiItemIconUrl(String(id))))
+  const missing = [...itemIconIds()].filter(
+    (id) => !shipped.has(wikiItemIconUrl(String(id))) && !UPSTREAM_HAS_NO_FILE.has(id)
+  )
   assert.deepEqual(
     missing,
     [],

@@ -1,35 +1,110 @@
-// THE LEVELING TAB'S LAYOUT CONTRACT — the page never scrolls, and the panels never draw over
-// each other (JOS-151, GitHub issue 14, relayed as report 01KZKYC0RSSBJNR19MXCY9FHX7).
+// THE LEVELING TAB'S LAYOUT CONTRACT — the PAGE scrolls and the panels do not, and no two panels
+// draw over each other (JOS-289, which inverted the claim JOS-151 wrote here; GitHub issue 14).
 //
 // LIVING NEXT DOOR because leveling.e2e.mts sits AT the repo max-lines budget and the rule here is
 // to SPLIT, never ratchet — sliceSteps.mts states the precedent and dropSteps.mts, combatSteps.mts
-// and plannerSteps.mts set it. The overflow claim moved over with the new one rather than staying
-// behind: they are two halves of one subject (what this tab does with the height it is given), and
-// the narrow assertions below are only meaningful while the page itself still refuses to scroll.
+// and plannerSteps.mts set it. Both halves of "what this tab does with the height it is given"
+// live together: the scroll claim and the narrow-window collision claim are only meaningful about
+// each other.
 //
-// WHAT THE DEFECT ACTUALLY WAS, measured at the reporter's 1073x937 before the fix: below MUI's
-// `lg` the tab's two columns become two rows, and they kept their side-by-side 2:1 split of a
-// FIXED height. The second band was handed 198px for three intrinsically tall papers, so the AA
-// ledger squeezed to 89px, the progress feed to 34px, and both spilled out of a band with
-// `overflow: visible` and drew straight over "New at this level" (23px and 34px of real overlap).
-// Nothing about that is visible to a unit test: it is one flex ratio meeting one viewport.
+// WHAT THIS FILE USED TO ASSERT, AND WHY IT NO LONGER DOES. Until JOS-289 the headline check was
+// `the Leveling tab never scrolls the page (its panels scroll inside themselves)` — the standing
+// app law, honestly measured. The OWNER OVERTURNED THE LAW FOR THIS TAB (directive 2026-08-13,
+// verbatim: *the entire pane should scroll*). The panels-scroll-inside-themselves half was the
+// defect, not the design: the per-level SPELL READOUT was four and a half rows of a twelve-row
+// list read through a 120px slot, the zone legend showed two wrapped lines of however many zones
+// you had visited, the AA ledger showed seven of fifty abilities, and the whole charts column sat
+// behind a scroller of its own. So the assertion is INVERTED rather than deleted: the app content
+// area is the ONE scroller, the view owns none, and the deepest panel is reachable by scrolling
+// the page. `over.doc === 0` survives untouched — the WINDOW must still never scroll; the shell is
+// `height: 100vh; overflow: hidden` and a document scrollbar would mean the chrome had moved.
 //
-// WHY THE CHECKS ARE SHAPED THIS WAY. "Do two panels overlap" is only an honest question about
-// boxes the user can SEE, and this tab is full of legitimate scrollers whose children hang far
-// outside them — at any width, half the charts column is scrolled out of frame and its raw
-// `getBoundingClientRect()` cheerfully reports it sitting on top of the panel below. So every box
-// is intersected with EVERY clipping ancestor first (`hoverAt` in appHarness.mts had to learn the
-// same lesson), and a band that is scrolled away has zero area and cannot collide with anything.
+// AND WHERE "New at this level" LIVES NOW (JOS-300, owner directive 2026-08-13). JOS-289 left it
+// full width under both columns, which put a browsable reference panel at the page's own bottom
+// and left an enormous hole beside it: the charts column ends well short of the
+// ledger/drops/feed column. The panel moved into the BOTTOM OF THE LEFT COLUMN to fill that hole,
+// which retires a claim this file used to make. "Deepest" no longer means "last": whichever
+// column is taller owns the page's bottom, and on a log with a long AA ledger that is the RIGHT
+// one, so scrolling the content area to `scrollHeight` can legitimately leave the panel ABOVE the
+// fold. What survives — and what the owner's sentence was ever about — is that the panel is
+// reached by scrolling the PAGE rather than by finding a box to scroll inside it. That is what
+// `stepPageScroll` measures now: a scroll request routed through the content area (the only
+// scroller between this panel and the window) brings it fully into view, and the content area's
+// own scrollTop MOVED to do it. The page-really-grows half is still measured, as its own claim
+// about the page rather than about the panel.
+//
+// WHY THE NARROW CHECKS ARE SHAPED THIS WAY. "Do two panels overlap" is only an honest question
+// about boxes the user can SEE, and a page-tall view has most of itself outside the viewport at
+// any moment — a raw `getBoundingClientRect()` cheerfully reports a panel two screens down sitting
+// on top of one in frame. So every box is intersected with EVERY clipping ancestor first (`hoverAt`
+// in appHarness.mts had to learn the same lesson), and a band scrolled out of frame has zero area
+// and cannot collide with anything.
+//
+// WHAT THE ORIGINAL DEFECT WAS, measured at the reporter's 1073x937: below MUI's `lg` the tab's
+// two columns became two rows and kept their side-by-side 2:1 split of a FIXED height. The second
+// band was handed 198px for three intrinsically tall papers, the AA ledger squeezed to 89px, the
+// progress feed to 34px, and both spilled and drew over "New at this level" (23px and 34px of real
+// overlap). There is no fixed height to split any more, which is a stronger fix than the stacking
+// one — but the collision check stays, because "stronger fix" is a claim and this is a measurement.
 //
 // AND WHY 900: that is the main window's own `minWidth` (src/main/windows.ts), so it is the
 // narrowest the user can actually make it and the worst case for a height split. The reporter's
 // 1073 is the same branch of the same breakpoint — one width proves the branch.
 
 import type { ElectronApplication, Page } from 'playwright-core'
-import { check, note, pageOverflow, settle, settleStable } from './appHarness.mjs'
+import { check, countOf, hoverAt, note, pageOverflow, settle, settleCount, settleGone, settleStable } from './appHarness.mjs'
 
 /** The app's own minimum window width (src/main/windows.ts) — the narrowest a user can get. */
 const MIN_W = 900
+
+/** The app shell's scrolling content area — since JOS-289 the ONE scroller this tab sits inside. */
+const CONTENT = '[data-testid="app-content"]'
+/**
+ * The panel furthest down the LEFT column since JOS-300 — below the charts, the plots and the
+ * range read, and below the fold on any tab tall enough to scroll. Deliberately NOT called the
+ * page's bottom any more: the right column is frequently the taller of the two and owns the last
+ * pixel. This is the deep-link target ("New at this level"), which is why reaching it is a claim
+ * worth measuring at all.
+ */
+const DEEPEST = '[data-testid="new-at-level"]'
+/** A spell name in the per-level readout, and the card it opens (lib/SpellCard.tsx). */
+const SPELL_NAME = '[data-testid="unlock-spell-name"]'
+const SPELL_CARD = '[data-testid="spell-hover-card"]'
+
+/**
+ * The ONE internal vertical scroller this tab is allowed to keep, by testid.
+ *
+ * The JOS-260 rule, applied rather than waived: a list stays windowed where the ROW COUNT demands
+ * it. The in-window drops list is the only one here that qualifies — 641 distinct looted item
+ * names in the owner's log (measured 2026-08-13), all of which the `All` slice legitimately asks
+ * for — and even it is a `maxHeight` ceiling rather than a height, so a scope with a dozen drops
+ * shows all twelve and this element does not scroll at all.
+ */
+const JUSTIFIED_SCROLLERS = ['leveling-drops-list']
+
+/**
+ * ANSWER THE ANALYTICS FIRST-RUN NOTICE, which a FRESH `userData` always shows and which is a
+ * `position: fixed` Snackbar pinned 16px off the bottom of the WINDOW — over whatever the content
+ * area has scrolled under it.
+ *
+ * MEASURED, and it is JOS-289 that made it matter here. This spec hit-tests and hovers, and both
+ * ask `elementFromPoint`. While the tab was clamped to the viewport, the charts column's own
+ * scroller never parked a plot against the window's bottom edge; now that the PAGE scrolls,
+ * `scrollIntoViewIfNeeded` legitimately lands the level chart at 704..860 in an 860px window and
+ * the notice covers its middle. The curve readout step then hovered the notice and read no card —
+ * a true report about a first-run overlay, and nothing at all about the curve.
+ *
+ * "Turn it off" rather than "dismiss": a spec should not leave a second feature collecting in the
+ * background while it measures a third. perf.e2e.mts, cursor-ring-color and cursor-ring-zoom each
+ * carry their own copy of this; a fourth is a consolidation ticket, not a reason to skip it.
+ */
+export async function dismissFirstRunNotice(page: Page): Promise<void> {
+  const notice = '[data-testid="telemetry-notice"]'
+  await page.waitForSelector(notice, { timeout: 30_000 }).catch(() => undefined)
+  if ((await countOf(page, notice)) === 0) return
+  await page.click('[data-testid="telemetry-notice-off"]')
+  check('the analytics first-run notice can be answered out of the way', await settleGone(page, notice, { timeoutMs: 8_000 }))
+}
 
 /** A top-level panel of the tab, as the user SEES it: clipped by every scroller above it. */
 interface Band {
@@ -100,11 +175,11 @@ function collisionsOf(bands: Band[]): string[] {
 interface ColumnsInfo {
   /** one box per band of the tab's two-column stack, in DOM order */
   bands: { x: number; y: number; h: number; spill: number; scrolls: boolean }[]
-  /** does the stack itself scroll? (below `lg` it must — it is the region that owns the height) */
+  /** does the stack itself scroll? Since JOS-289 the answer must be NO at every width. */
   regionScrolls: boolean
 }
 
-/** The two-column stack and its bands — the one element the fix is actually about. */
+/** The two-column stack and its bands — the one element the JOS-151 fix was about. */
 function columnsInfo(page: Page): Promise<ColumnsInfo | null> {
   return page.evaluate(() => {
     const el = document.querySelector('[data-testid="leveling-columns"]')
@@ -171,25 +246,205 @@ async function resizeTo(app: ElectronApplication, page: Page, width: number, hei
   return got
 }
 
-/** 7. THE LAYOUT CONTRACT: the app's content area owns the scroll; a view never grows the page. */
-export async function stepOverflow(page: Page): Promise<void> {
-  const over = await pageOverflow(page)
-  check(
-    'the Leveling tab never scrolls the page (its panels scroll inside themselves)',
-    over.doc === 0 && over.content === 0,
-    `document +${String(over.doc)}px · content area +${String(over.content)}px`
+/** One element inside the view that scrolls vertically, named well enough to fix. */
+interface InnerScroller {
+  id: string
+  what: string
+  spill: number
+}
+
+/**
+ * Every element inside the Leveling view that is BOTH declared a vertical scroller AND actually
+ * overflowing — i.e. every place the user would see an internal scrollbar.
+ *
+ * Both halves matter. A declared-but-not-overflowing box is exactly what a generous `maxHeight`
+ * ceiling looks like on a short list, and reporting it would fail the tab for doing the right
+ * thing; an overflowing box with `overflow: visible` is not a scroller at all, it is the page
+ * doing its job. Only the intersection is the smell JOS-289 removed.
+ */
+function innerScrollers(page: Page): Promise<InnerScroller[]> {
+  return page.evaluate(() => {
+    const view = document.querySelector('[data-testid="leveling-view"]')
+    if (!view) return [] as InnerScroller[]
+    const out: InnerScroller[] = []
+    for (const el of Array.from(view.querySelectorAll('*'))) {
+      const node = el as HTMLElement
+      const ov = getComputedStyle(node).overflowY
+      if (ov !== 'auto' && ov !== 'scroll') continue
+      const spill = node.scrollHeight - node.clientHeight
+      if (spill <= 1) continue
+      out.push({
+        id: node.getAttribute('data-testid') ?? '',
+        what: `${node.tagName.toLowerCase()}.${String(node.className).slice(0, 40)}`,
+        spill
+      })
+    }
+    return out
+  })
+}
+
+/** The app content area's scroll geometry — the one scroller the tab is supposed to grow. */
+function contentScroll(page: Page): Promise<{ top: number; height: number; client: number } | null> {
+  return page.evaluate((s) => {
+    const el = document.querySelector(s) as HTMLElement | null
+    return el ? { top: el.scrollTop, height: el.scrollHeight, client: el.clientHeight } : null
+  }, CONTENT)
+}
+
+/** Scroll the content area to its very bottom and WAIT for it to land there. */
+async function scrollContentToBottom(page: Page): Promise<number> {
+  await page.evaluate((s) => {
+    const el = document.querySelector(s) as HTMLElement | null
+    if (el) el.scrollTop = el.scrollHeight
+  }, CONTENT)
+  return settle(
+    () => contentScroll(page).then((c) => (c ? Math.round(c.top) : -1)),
+    (v) => v > 0,
+    { timeoutMs: 5_000 }
   )
 }
 
-/** The four claims that only hold once the tab has stopped sharing one height between two rows. */
+/** Put the page back at the top and WAIT for it, so the next step measures a known scroll. */
+async function resetContentScroll(page: Page): Promise<void> {
+  await page.evaluate((s) => {
+    const el = document.querySelector(s) as HTMLElement | null
+    if (el) el.scrollTop = 0
+  }, CONTENT)
+  await settle(() => contentScroll(page).then((c) => (c ? Math.round(c.top) : -1)), (v) => v === 0, { timeoutMs: 5_000 })
+}
+
+/** Is `sel` fully inside the content area's visible box right now? */
+function fullyInContent(page: Page, sel: string): Promise<string> {
+  return page.evaluate(
+    (a) => {
+      const el = document.querySelector(a.sel)
+      const box = document.querySelector(a.content)
+      if (!el || !box) return 'absent'
+      const r = el.getBoundingClientRect()
+      const b = box.getBoundingClientRect()
+      if (r.height < 1) return 'collapsed to nothing'
+      if (r.bottom > b.bottom + 2) return `${String(Math.round(r.bottom - b.bottom))}px below the fold`
+      if (r.top < b.top - 2) return `${String(Math.round(b.top - r.top))}px above the fold`
+      return 'in view'
+    },
+    { sel, content: CONTENT }
+  )
+}
+
+/**
+ * 7. THE LAYOUT CONTRACT SINCE JOS-289: the app's content area owns the scroll, THE WHOLE VIEW
+ * grows into it, and no panel keeps a scroller of its own except the one whose row count earns it.
+ *
+ * Four claims. The last two are the owner's sentence stated as measurements, and JOS-300 split
+ * them apart on purpose:
+ *
+ *   - THE PAGE GROWS AND SCROLLS. Drive the content area to `scrollHeight` and it lands somewhere
+ *     past zero. That is a fact about the page, and it is no longer tied to any one panel — since
+ *     the reference panel moved into the left column, the bottom of the page belongs to whichever
+ *     column is taller, which is usually the ledger/drops/feed one.
+ *   - THE DEEP-LINK PANEL IS REACHED BY SCROLLING THE PAGE. Ask for it with
+ *     `scrollIntoViewIfNeeded` and it comes fully into the content area's visible box, AND the
+ *     content area's own scrollTop had to move to get there. The second half is what makes this a
+ *     page-scroll claim rather than a tautology: `[data-testid="app-content"]` is the only
+ *     scroller between this panel and the window, so if the panel arrived and something scrolled,
+ *     the page is what scrolled. An inner porthole doing the work would leave scrollTop at 0 —
+ *     and would also have already failed the no-internal-scrollbars claim above.
+ */
+export async function stepPageScroll(page: Page): Promise<void> {
+  const over = await pageOverflow(page)
+  check(
+    'the WINDOW itself never scrolls (the shell is 100vh; a document scrollbar means the chrome moved)',
+    over.doc === 0,
+    `document +${String(over.doc)}px`
+  )
+
+  const inner = await innerScrollers(page)
+  const unjustified = inner.filter((s) => !JUSTIFIED_SCROLLERS.includes(s.id))
+  check(
+    'no panel on the Leveling tab shows an internal vertical scrollbar (the page is the scroller)',
+    unjustified.length === 0,
+    unjustified.length
+      ? unjustified.map((s) => `${s.id || s.what} +${String(s.spill)}px`).slice(0, 4).join(' · ')
+      : `${String(inner.length)} declared scroller(s), all justified`
+  )
+
+  const before = await contentScroll(page)
+  if (!check('the app content area is measurable', before !== null) || !before) return
+  if (before.height <= before.client + 1) {
+    note(
+      `this log's Leveling tab fits the window without scrolling (${String(before.height)}px of content in ${String(before.client)}px) — there is nothing for a page scroll to reach, which is the honest state and not a clamp`
+    )
+    return
+  }
+  note(`the tab is ${String(before.height)}px tall in a ${String(before.client)}px window — it grew the page, as JOS-289 asks`)
+
+  // CLAIM 3, about the PAGE and nothing else: it can be driven to its own bottom. Deliberately
+  // not asserted against any panel since JOS-300 — the deepest pixel belongs to whichever column
+  // ran longer, and tying a panel to it would be measuring this fixture's ledger length.
+  const landed = await scrollContentToBottom(page)
+  check(
+    'the page scrolls to its own bottom (the content area is the scroller that grew)',
+    landed > 0,
+    `scrollTop ${String(landed)} of ${String(before.height - before.client)}px of travel`
+  )
+  await resetContentScroll(page)
+
+  // CLAIM 4: the deep-link panel is below the fold, and PAGE scroll is what brings it into view.
+  const beforeReach = await fullyInContent(page, DEEPEST)
+  if (beforeReach === 'in view') {
+    note('the "New at this level" panel already sits fully on the first screen of this tab — a short left column is an honest state, and there is no page-scroll reach to measure')
+    return
+  }
+  await page.locator(DEEPEST).first().scrollIntoViewIfNeeded({ timeout: 5_000 }).catch(() => undefined)
+  const reach = await settle(() => fullyInContent(page, DEEPEST), (v) => v === 'in view', { timeoutMs: 5_000 })
+  const moved = await contentScroll(page)
+  check(
+    'scrolling the PAGE reaches the "New at this level" panel at the bottom of the left column',
+    reach === 'in view' && (moved?.top ?? 0) > 0,
+    `${beforeReach} → ${reach} at scrollTop ${String(Math.round(moved?.top ?? -1))}`
+  )
+  await resetContentScroll(page)
+}
+
+/**
+ * 7c. THE SPELL CARD IN THE PER-LEVEL READOUT (JOS-293's card, integrated by JOS-289).
+ *
+ * Here rather than in leveling.e2e.mts because the two halves prove each other: the unlock list is
+ * the surface the owner named as cramped, and a hover card is the thing a 120px porthole made
+ * useless — you cannot point at a row you cannot see. The card is `lib/SpellCard`'s, which fetches
+ * the whole record from main on open, so this also proves the IPC reaches this surface.
+ */
+export async function stepSpellCard(page: Page): Promise<void> {
+  const names = await countOf(page, SPELL_NAME)
+  if (names === 0) {
+    note('the level on screen unlocks no SPELLS for this loadout (skills-only, or an unresolved combo) — there is no spell name here to hover')
+    return
+  }
+  if (!check('a spell name in the per-level readout is reachable to hover', await hoverAt(page, SPELL_NAME, 0.5, 0.5))) {
+    return
+  }
+  const cards = await settleCount(page, SPELL_CARD, 1, { timeoutMs: 8_000 })
+  check('…and hovering it opens the full spell card', cards > 0, `${String(cards)} card(s) over ${String(names)} spell rows`)
+  // CLOSE IT, AND WAIT FOR IT — MEASURED, not tidiness. A MUI popper is portalled to `document.body`
+  // and absolutely positioned, so a card still open over a panel two screens down grows the
+  // DOCUMENT's scrollHeight: the first run of this step left one behind and `stepPageScroll` read
+  // `document +62px` and correctly failed the shell's own never-scrolls claim. `leaveDelay` is
+  // 60ms (lib/SpellCard.tsx), so moving the mouse is not the same thing as the card being gone.
+  await page.mouse.move(2, 2)
+  await settleGone(page, SPELL_CARD, { timeoutMs: 5_000 })
+}
+
+/** The claims that only hold once the tab has stopped sharing one height between two rows. */
 function checkNarrow(cols: ColumnsInfo, bands: Band[]): void {
   check('narrow: the two columns STACK — one on top of the other, not side by side', cols.bands.length === 2 && cols.bands[0].x === cols.bands[1].x, cols.bands.map((b) => `x=${String(b.x)} h=${String(b.h)}`).join(' | '))
   check(
     'narrow: …and each band takes the height its panels need, so nothing is crushed out of it',
-    cols.bands.every((b) => b.spill <= 1 || b.scrolls),
+    cols.bands.every((b) => b.spill <= 1),
     cols.bands.map((b) => `spill +${String(b.spill)}px${b.scrolls ? ' (scroller)' : ''}`).join(' | ')
   )
-  check('narrow: the STACK is the scroller — the height it was given is the height it keeps', cols.regionScrolls)
+  // INVERTED BY JOS-289. The stack used to be the scroller below `lg` — that was JOS-151's fix for
+  // the collision, and it is exactly the "mini content area" the owner ruled against.
+  check('narrow: the STACK is NOT a scroller — the page carries the height, at every width', !cols.regionScrolls)
   const hits = collisionsOf(bands)
   check(
     'narrow: no two panels on the tab draw over each other',
@@ -199,20 +454,25 @@ function checkNarrow(cols: ColumnsInfo, bands: Band[]): void {
 }
 
 /**
- * 7b. THE NARROW WINDOW (JOS-151). Squeeze the app to its own minimum width, prove the tab stacks
- * instead of colliding and that its controls are still reachable, then put the window back and
- * prove the wide layout returned unchanged.
+ * 7b. THE NARROW WINDOW (JOS-151, re-read under JOS-289). Squeeze the app to its own minimum
+ * width, prove the tab stacks instead of colliding and that its controls are still reachable, then
+ * put the window back and prove the wide layout returned unchanged.
  *
  * The two controls hit-tested are the ones at the two ENDS of the stack: the app-wide timeslice
  * (JOS-130) at the top of the charts band, and the unlock stepper in the panel that the spilling
  * papers used to bury. Both are asserted at BOTH widths, because "usable narrow" is only a claim
- * if "usable wide" is measured with the same instrument.
+ * if "usable wide" is measured with the same instrument. The stepper is scrolled to first now —
+ * at 900px the tab is several screens tall and a panel below the fold is not a covered panel.
  */
 export async function stepNarrowLayout(app: ElectronApplication, page: Page): Promise<void> {
   const win = await app.browserWindow(page)
   const wide = await win.evaluate((w) => w.getBounds())
-  if ((await columnsInfo(page)) === null) {
-    note('this log draws no charts, so the tab renders its empty state and has no two-column stack to narrow')
+  // SINCE JOS-300 THE ROW IS ALWAYS IN THE DOM — the empty-state sentence and the reference panel
+  // live inside its left band now, so "is there a stack" stopped being the same question as "are
+  // there two columns to collide". A one-band row is the chart-less tab, honestly drawn.
+  const present = await columnsInfo(page)
+  if (!present || present.bands.length < 2) {
+    note('this log draws no charts, so the tab renders its empty state and there is no second column to collide with')
     return
   }
 
@@ -222,12 +482,19 @@ export async function stepNarrowLayout(app: ElectronApplication, page: Page): Pr
   if (cols) checkNarrow(cols, await visibleBands(page))
 
   const over = await pageOverflow(page)
+  check('narrow: …and the WINDOW still does not scroll (only the content area inside it does)', over.doc === 0, `document +${String(over.doc)}px`)
+  const narrowInner = (await innerScrollers(page)).filter((s) => !JUSTIFIED_SCROLLERS.includes(s.id))
   check(
-    'narrow: …and the PAGE still does not scroll (the stack absorbed it, not the app)',
-    over.doc === 0 && over.content === 0,
-    `document +${String(over.doc)}px · content area +${String(over.content)}px`
+    'narrow: no panel grows an internal scrollbar at the app minimum either',
+    narrowInner.length === 0,
+    narrowInner.map((s) => `${s.id || s.what} +${String(s.spill)}px`).slice(0, 4).join(' · ')
   )
   check('narrow: the timeslice control is still the thing at its own centre', (await hitTest(page, '[data-testid="leveling-slice-all"]')) === 'hit', await hitTest(page, '[data-testid="leveling-slice-all"]'))
+  // Scroll to it first: since JOS-289 this panel legitimately lives below the fold, and asking
+  // `elementFromPoint` about a box outside the viewport answers about whatever is at those
+  // coordinates instead. Reachability is the claim; being on the first screen never was.
+  await page.locator('[data-testid="new-at-level-next"]').first().scrollIntoViewIfNeeded({ timeout: 5_000 }).catch(() => undefined)
+  await settleStable(() => visibleBands(page).then((b) => JSON.stringify(b)), { timeoutMs: 10_000 })
   check('narrow: …and so is the unlock stepper the spilling panels used to bury', (await hitTest(page, '[data-testid="new-at-level-next"]')) === 'hit', await hitTest(page, '[data-testid="new-at-level-next"]'))
 
   // Back to where it started: the wide layout is two columns SIDE BY SIDE. The window's own
@@ -237,7 +504,7 @@ export async function stepNarrowLayout(app: ElectronApplication, page: Page): Pr
   await win.evaluate((w, min) => w.setMinimumSize(min, 600), MIN_W)
   const restored = await columnsInfo(page)
   check(
-    'restored wide: the two columns are side by side again, sharing the height as they always did',
+    'restored wide: the two columns are side by side again',
     !!restored && restored.bands.length === 2 && restored.bands[0].x !== restored.bands[1].x,
     restored ? restored.bands.map((b) => `x=${String(b.x)} h=${String(b.h)}`).join(' | ') : 'no stack'
   )

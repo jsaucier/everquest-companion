@@ -2,7 +2,7 @@
 //
 // WHAT IT IS. A searchable, sortable, filterable table over the whole candidate index — 6,766
 // equippable items, every one of them described in numbers (`GearRow`, phase 2). SEARCH IS THE
-// DEFAULT SURFACE (owner ruling): no set, no plan and no selection is needed to use it. You open
+// WHOLE SURFACE (owner ruling, JOS-325): no plan and no selection is needed to use it. You open
 // the tab and you are looking at the corpus.
 //
 // THE PIPELINE IS THREE MEMOS, IN THIS ORDER, AND THE ORDER IS THE FEATURE:
@@ -33,17 +33,68 @@
 // beside the era one. Two things are deliberately NOT restated here: the dump's age (the
 // `/outputfile` freshness line owns both instants — JOS-253/268) and the keyring exclusion (the
 // fold owns the roster; this tab only reports what the fold left out of the player's own file).
-// Sets are phase 5, and are not stubbed, because a stub is a promise this file would have to keep.
+//
+// THE SETS ARE GONE, AND SEARCH IS NOW THE WHOLE TAB (JOS-325, owner ruling 2026-08-13). JOS-286
+// hung a second document off this view — named virtual loadouts in a pane beside the table, a `+`
+// on every row to fill them, a totals block, a diff against the body. It is all removed: the pane,
+// the chip that opened it, the per-row `+` and the `onAssign` plumbing that carried it into
+// `GearTable`. ACQUISITION PLANNING IS THE WISH LIST'S JOB NOW (JOS-326), one tab over in the same
+// gear area, and this view answers exactly one question again — what is out there, and what of it
+// do I already have.
+//
+// NOTHING ABOVE THIS PARAGRAPH CHANGED FOR IT, and that is the shape of the removal rather than a
+// happy accident: the sets were additive from the day they shipped (the tab always mounted with no
+// set, no plan and no selection), so taking them out is a deletion and never a rewrite. The three
+// memos, both deferrals, the windowing, the columns picker, the controls picker, the era/owned/
+// class/slot/weapon filters and the global plus-state slider are byte-for-byte the surface JOS-302
+// and JOS-297 left. THE STORED SETS ARE UNTOUCHED TOO — `ProgressState.gearSets` is retired from
+// the UI and kept on disk (progressState.ts holds the ruling); this view simply no longer asks for
+// it.
+//
+// AND SINCE JOS-297 YOU CHOOSE WHAT IS ON SCREEN — the columns and the filter controls both, each
+// remembered in `localStorage` (`useGearPrefs`). The two choices meet the pipeline above at two
+// different points, and which point is the whole design:
+//
+//   * the CONTROLS choice meets it FIRST. `inertFilters` forces every hidden control's field to the
+//     value that does not filter, BEFORE the filter memo sees it — so a control that is not on
+//     screen cannot be holding rows back, and the empty state can never name a toggle nobody can
+//     find. The user's own value is kept in `own` and comes back untouched when the control does.
+//   * the COLUMNS choice meets it LAST, at `columnsFor`, which draws either the user's list or the
+//     derived seed. It changes what is DISPLAYED and nothing that is computed — the same rows, in
+//     the same order, at the same plus-state.
+//
+// The plus-state is the one control on both sides of that line: hiding it does not merely remove a
+// slider, it puts the corpus back at base, because a simulation nobody can see or cancel is the
+// quiet lie `useUpgradeState` refuses to persist for exactly the same reason.
+//
+// AND SINCE JOS-302 THE FIRST TOOLBAR ROW NARROWS HARDER, in three ways the pipeline above did not
+// change one line for. The CLASS picks remove rows instead of chipping them (the owner's ruling —
+// gearFilter.ts `GearFilters.classes` holds the argument, GearTable.tsx holds the deleted chip's
+// tombstone); the SLOT picker is a multi-select whose picks UNION; and a WEAPON TYPE picker joins
+// it, unioning over the nine skills the corpus states plus the three categories that span them.
+// All three are ordinary fields of `GearFilters`, so they AND with era, owned, effect, ratio and
+// the thresholds exactly as everything else does — the only thing this file had to learn is that a
+// third filter can now be the reason the table is empty (`emptyText`, and the pass that counts it).
 
 import { type JSX, useDeferredValue, useMemo, useRef, useState } from 'react'
 import { Box, Stack, Typography } from '@mui/material'
-import type { ItemUpgradeState } from '@shared/itemUpgrade'
+import { ITEM_UPGRADE_BASE, type ItemUpgradeState } from '@shared/itemUpgrade'
 import type { GearRow } from '@shared/planner/gear'
 import OutputKindLine from '../../components/OutputKindLine'
 import { useWindowedRows } from '../../lib/useWindowedRows'
 import GearFilterBar from './GearFilterBar'
+import GearPicker from './GearPickers'
 import GearTable, { ROW_HEIGHT } from './GearTable'
-import { visibleColumns, type GearColumn } from './gearColumns'
+import { useGearPrefs, type GearPrefs } from './useGearPrefs'
+import {
+  GEAR_CONTROLS,
+  GEAR_CONTROL_LABEL,
+  controlsVisible,
+  inertFilters,
+  toggleColumn,
+  toggleControl
+} from './gearPrefs'
+import { PICKABLE_COLUMNS, columnLabel, columnsFor, sortWithin, type GearColumn } from './gearColumns'
 import {
   useEraHidden,
   useGearClasses,
@@ -87,47 +138,68 @@ function nextSort(sort: GearSort, key: GearSortKey): GearSort {
 interface TableState {
   rows: GearRow[]
   columns: GearColumn[]
+  /**
+   * The sort actually in force — the requested one, unless the column it names is no longer drawn
+   * (`sortWithin`). The table reads THIS so the lit header and the row order can never disagree.
+   */
+  sort: GearSort
   /** how many rows the era filter alone is holding back — only computed when the table is EMPTY */
   hiddenByEra: number
   /** …and the same question for the Owned toggle, which can hide 6,693 of 6,766 rows in one click */
   hiddenByOwned: number
+  /** …and for the class picks, which since JOS-302 REMOVE rows instead of chipping them */
+  hiddenByClasses: number
 }
 
 /**
  * The three stages, as three memos (see the header). Split out of the component so the view stays
  * inside the function-length ceiling and so the ORDER is readable in one place.
+ *
+ * THE COLUMNS ARE RESOLVED BEFORE THE SORT IS, and never the other way round: the derived seed
+ * reads the REQUESTED sort key (asking for a ranking is asking to see the number), and the sort is
+ * then confined to what came out. Reversing them would be a cycle.
  */
 function useTableRows(
   rows: readonly GearRow[],
   state: ItemUpgradeState,
   filters: GearFilters,
-  opts: { sort: GearSort; deps: GearFilterDeps }
+  opts: { sort: GearSort; deps: GearFilterDeps; chosen: GearSortKey[] | null }
 ): TableState {
-  const { sort, deps } = opts
+  const { sort, deps, chosen } = opts
   const scaled = useMemo(() => scaleAll(rows, state), [rows, state])
   const filtered = useMemo(() => filterGearRows(scaled, filters, deps), [scaled, filters, deps])
-  const sorted = useMemo(() => sortGearRows(filtered, sort), [filtered, sort])
-  const columns = useMemo(() => visibleColumns(filters, sort), [filters, sort])
+  const columns = useMemo(() => columnsFor(chosen, sort), [chosen, sort])
+  const inForce = useMemo(() => sortWithin(sort, columns), [sort, columns])
+  const sorted = useMemo(() => sortGearRows(filtered, inForce), [filtered, inForce])
   // WHY THE LIST IS EMPTY, when it is (the JOS-67 law: a filter that can hide everything must be
-  // able to admit it). Two filters can do it on their own: the era one, which is on by DEFAULT
-  // rather than by choice, and the Owned one, which is one click and removes 99% of the corpus by
-  // design. Each costs one extra pass, and only at the moment there is nothing else to draw.
+  // able to admit it). THREE filters can do it without the user having chosen them in the moment:
+  // the era one, which is on by DEFAULT rather than by choice; the Owned one, which is one click
+  // and removes 99% of the corpus by design; and — since JOS-302 — the CLASS picks, which the view
+  // fills from DETECTION and which now remove rows rather than chipping them. The slot and weapon
+  // pickers are deliberately NOT in this list: both are empty until somebody picks, and both wear
+  // their picks as chips in the toolbar, so an empty table under them already explains itself.
+  // Each costs one extra pass, and only at the moment there is nothing else to draw.
   const hidden = useMemo(() => {
-    if (sorted.length > 0) return { hiddenByEra: 0, hiddenByOwned: 0 }
+    if (sorted.length > 0) return { hiddenByEra: 0, hiddenByOwned: 0, hiddenByClasses: 0 }
     const count = (over: Partial<GearFilters>): number => filterGearRows(scaled, { ...filters, ...over }, deps).length
     return {
       hiddenByEra: filters.eraOnly ? count({ eraOnly: false }) : 0,
-      hiddenByOwned: filters.ownedOnly ? count({ ownedOnly: false }) : 0
+      hiddenByOwned: filters.ownedOnly ? count({ ownedOnly: false }) : 0,
+      hiddenByClasses: filters.classes.length > 0 ? count({ classes: [] }) : 0
     }
   }, [sorted.length, scaled, filters, deps])
-  return { rows: sorted, columns, ...hidden }
+  return { rows: sorted, columns, sort: inForce, ...hidden }
 }
 
 /**
  * The one sentence an empty table says, naming the filter responsible when there is one.
  *
- * OWNED IS NAMED FIRST when both are holding rows back, because it is the one the user just
- * clicked — and because it is the one whose effect is total rather than partial.
+ * OWNED IS NAMED FIRST when several are holding rows back, because it is the one the user just
+ * clicked — and because it is the one whose effect is total rather than partial. THE CLASS LINE IS
+ * LAST for the opposite reason (JOS-302): the class picks are usually the app's own detection
+ * rather than a click, so naming them first would explain an empty table with something the user
+ * did not do while a toggle they DID flip sits unmentioned. Same voice as the other two: the count
+ * that would come back, and the control that is holding it.
  */
 function emptyText(ready: boolean, refused: boolean, table: TableState): string {
   if (refused) return 'This build cannot read the gear index it was served - it states a newer version.'
@@ -137,6 +209,9 @@ function emptyText(ready: boolean, refused: boolean, table: TableState): string 
   }
   if (table.hiddenByEra > 0) {
     return `No gear matches these filters - but ${String(table.hiddenByEra)} items are hidden by the Current era toggle above.`
+  }
+  if (table.hiddenByClasses > 0) {
+    return `No gear matches these filters - but ${String(table.hiddenByClasses)} items match once the Classes picker is cleared. An item whose page states no class list is never hidden by it.`
   }
   return 'No gear matches these filters.'
 }
@@ -153,6 +228,90 @@ function ownedHint(map: GearOwnershipMap | null, uncounted: string | null): stri
   return uncounted === null ? base : `${base} ${uncounted}`
 }
 
+/**
+ * THE TWO PICKERS (JOS-297), on the count line — GearPickers.tsx states why they live here rather
+ * than in the toolbar they configure.
+ *
+ * The columns picker's FALLBACK is the derived seed as it stands right now, so opening it while
+ * nothing is chosen shows exactly the columns on screen ticked, and the first click promotes that
+ * list rather than replacing it.
+ */
+function ShapePickers({ prefs, columns }: { prefs: GearPrefs; columns: readonly GearColumn[] }): JSX.Element {
+  const seed = useMemo(() => columns.map((c) => c.key), [columns])
+  return (
+    <>
+      <GearPicker
+        label="Columns"
+        testId="gear-columns"
+        hint="Which stat columns the table draws. Every one of them sorts."
+        options={PICKABLE_COLUMNS}
+        optionLabel={columnLabel}
+        chosen={prefs.columns}
+        fallback={seed}
+        resetLabel="Follow the filters and the sort"
+        toggle={toggleColumn}
+        onChange={prefs.setColumns}
+      />
+      <GearPicker
+        label="Filters"
+        testId="gear-filters"
+        hint="Which filter controls the toolbar shows. A hidden control stops filtering."
+        options={GEAR_CONTROLS}
+        optionLabel={(c) => GEAR_CONTROL_LABEL[c]}
+        chosen={prefs.controls}
+        fallback={GEAR_CONTROLS}
+        resetLabel="Show every filter"
+        toggle={toggleControl}
+        onChange={prefs.setControls}
+      />
+    </>
+  )
+}
+
+/**
+ * THE LINE UNDER THE TOOLBAR: how much of the index is on screen, when the data is from, when the
+ * dump was, and the two chips that are NOT filters — columns and controls.
+ *
+ * IT USED TO CARRY A THIRD (JOS-286's Sets toggle, with the loadout count on it), and JOS-325
+ * removed it with the surface it opened. The reason the other two belong here is unchanged: both
+ * toolbar rows are `nowrap` and full, and neither of these narrows the corpus.
+ */
+function CountLine({
+  counts,
+  scrapedAt,
+  ownership,
+  prefs,
+  columns
+}: {
+  counts: { shown: number; total: number }
+  scrapedAt: string | null
+  ownership: { readAt: number | null }
+  prefs: GearPrefs
+  columns: readonly GearColumn[]
+}): JSX.Element {
+  return (
+    <Stack direction="row" spacing={1} alignItems="baseline" sx={{ mb: 0.5, flexShrink: 0 }}>
+      <Typography variant="caption" color="text.secondary" data-testid="gear-count">
+        {counts.shown.toLocaleString()} of {counts.total.toLocaleString()} items
+      </Typography>
+      {/* WHEN the data is from, never when the index was built — the corpus's own `scrapedAt`. */}
+      {scrapedAt !== null && (
+        <Typography variant="caption" color="text.secondary">
+          · wiki data from {scrapedAt.slice(0, 10)}
+        </Typography>
+      )}
+      {/* THE DUMP'S AGE, SAID ONCE, BY THE THING THAT OWNS IT (JOS-253/268). The Owned column rests
+          on a file the player rewrites, and "when did they write it" / "when did we read it" is
+          exactly what this line answers — so nothing in this feature restates an age, and the
+          looted-not-in-dump wording points here instead of guessing. `loadedAt` is THIS window's
+          own read instant, which is the fact the prop is documented to want. */}
+      <OutputKindLine kind="inventory" quiet loadedAt={ownership.readAt} testId="gear-dump-line" />
+
+      <ShapePickers prefs={prefs} columns={columns} />
+    </Stack>
+  )
+}
+
 export interface GearViewProps {
   /**
    * Deep-link an item name into the Loot tab's drill-down (App's `openLoot`) — where the ItemWindow
@@ -167,6 +326,8 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
   const classes = useGearClasses()
   const upgrade = useUpgradeState()
   const ownership = useGearOwnership()
+  // JOS-297. A view unmounts on every tab switch, so both choices are localStorage-backed.
+  const prefs = useGearPrefs()
   const [own, setOwn] = useState<GearFilters>(DEFAULT_GEAR_FILTERS)
   const [text, setText] = useState('')
   const [sort, setSort] = useState<GearSort>(DEFAULT_GEAR_SORT)
@@ -176,20 +337,26 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
   // six thousand rows (see the header).
   const deferredText = useDeferredValue(text)
   const deferredState = useDeferredValue(stateKey(upgrade.state))
-  const state = useMemo(() => parseStateKey(deferredState), [deferredState])
+  const visible = useMemo(() => controlsVisible(prefs.controls), [prefs.controls])
+  // NO SLIDER, NO SIMULATION: the corpus reads at base when the control that moves it is hidden.
+  const state = useMemo(
+    () => (visible.has('upgrade') ? parseStateKey(deferredState) : ITEM_UPGRADE_BASE),
+    [deferredState, visible]
+  )
 
   // The class trio lives in its own hook (it FOLLOWS detection until pinned), so it is merged in
   // here rather than stored twice — one answer to "which classes", however it was arrived at.
+  // `inertFilters` is LAST, so a hidden control's field cannot survive into the filter memo.
   const filters = useMemo(
-    () => ({ ...own, text: deferredText, classes: classes.classes }),
-    [own, deferredText, classes.classes]
+    () => inertFilters({ ...own, text: deferredText, classes: classes.classes }, visible),
+    [own, deferredText, classes.classes, visible]
   )
   // The two injected verdicts the pure filter cannot answer for itself, merged into one stable
   // object so `filterGearRows`' memo re-runs when either MOVES and never merely because it rendered.
   const era = useEraHidden()
   const owned = useOwnedOrLooted(ownership.map)
   const deps = useMemo(() => ({ ...era, ...owned }), [era, owned])
-  const table = useTableRows(rows, state, filters, { sort, deps })
+  const table = useTableRows(rows, state, filters, { sort, deps, chosen: prefs.columns })
   const win = useWindowedRows({ count: table.rows.length, rowHeight: ROW_HEIGHT, scrollRef })
   const hint = useMemo(
     () => ownedHint(ownership.map, uncountedNote(ownership.payload.uncounted)),
@@ -205,40 +372,45 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
         setText={setText}
         classes={classes}
         upgrade={upgrade}
+        visible={visible}
       />
 
-      <Stack direction="row" spacing={1} alignItems="baseline" sx={{ mb: 0.5, flexShrink: 0 }}>
-        <Typography variant="caption" color="text.secondary" data-testid="gear-count">
-          {table.rows.length.toLocaleString()} of {rows.length.toLocaleString()} items
-        </Typography>
-        {/* WHEN the data is from, never when the index was built — the corpus's own `scrapedAt`. */}
-        {scrapedAt !== null && (
-          <Typography variant="caption" color="text.secondary">
-            · wiki data from {scrapedAt.slice(0, 10)}
-          </Typography>
-        )}
-        {/* THE DUMP'S AGE, SAID ONCE, BY THE THING THAT OWNS IT (JOS-253/268). The Owned column
-            rests on a file the player rewrites, and "when did they write it" / "when did we read
-            it" is exactly what this line answers — so nothing in this feature restates an age, and
-            the looted-not-in-dump wording points here instead of guessing. `loadedAt` is THIS
-            window's own read instant, which is the fact the prop is documented to want. */}
-        <OutputKindLine kind="inventory" quiet loadedAt={ownership.readAt} testId="gear-dump-line" />
-      </Stack>
+      <CountLine
+        counts={{ shown: table.rows.length, total: rows.length }}
+        scrapedAt={scrapedAt}
+        ownership={ownership}
+        prefs={prefs}
+        columns={table.columns}
+      />
 
+      {/* THE TABLE IS THE WHOLE BODY NOW. Until JOS-325 this was a `nowrap` ROW — the list on the
+          left, the sets pane as a fixed column on the right — and with the pane retired the row has
+          nothing left to lay out. What survives is the part that was never about the pane: the list
+          is its own bounded scroller, so a filter that matches 6,766 rows grows this box's scroll
+          height and never the page (the standing UI law, measured in gear.e2e.mts). */}
       <Box
         ref={scrollRef}
         data-testid="gear-list"
-        sx={{ flexGrow: 1, minHeight: 0, overflow: 'auto', border: 1, borderColor: 'divider', borderRadius: 1 }}
+        sx={{
+          flexGrow: 1,
+          minWidth: 0,
+          minHeight: 0,
+          overflow: 'auto',
+          border: 1,
+          borderColor: 'divider',
+          borderRadius: 1
+        }}
       >
         <GearTable
           rows={table.rows}
           columns={table.columns}
           win={win}
-          sort={sort}
-          classes={classes.classes}
+          sort={table.sort}
           ownership={ownership.map}
           ownedHint={hint}
-          onSort={(key) => setSort((prev) => nextSort(prev, key))}
+          // The base is the sort IN FORCE, not the requested one: after a picker removed the
+          // sorted column, clicking the header that took over must FLIP it rather than re-open it.
+          onSort={(key) => setSort(nextSort(table.sort, key))}
           onOpenLoot={onOpenLoot}
         />
         {table.rows.length === 0 && (

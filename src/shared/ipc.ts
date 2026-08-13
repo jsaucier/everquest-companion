@@ -94,6 +94,12 @@ export const IPC = {
   // suggested-alerts wizard (Task #38): a slim, searchable spell catalog derived from
   // the scraped spell DB + live per-spell usage from the buffs module's snapshot.
   spellsCatalog: 'spells:catalog',
+  // ONE spell, in full (JOS-293): every field the committed DB states for it, the derived effect
+  // classes, and the ranks of its line that a source names. The catalog above is the SLIM,
+  // whole-list shape the suggestion wizard filters; this is the deep read behind a hover card, and
+  // it is a separate channel rather than another flag because it takes an argument and answers
+  // about one row. Arg: the display name (VALIDATED at the handler). Never rejects.
+  spellsDetail: 'spells:detail',
 
   // ---- voice alerts / TTS (docs/plans/voice-alerts.md §3) ----
   // The 'system' engine tier needs NO channel at all: Chromium's own `speechSynthesis` lives in
@@ -363,16 +369,29 @@ export const IPC = {
   // new dump, and a keystroke that re-renders the table gets the cached fold.
   gearOwnership: 'gear:ownership',
 
+  // ---- gear planner (JOS-286, phase 5) ----
+  // The active character's saved GEAR SETS — named virtual loadouts, one item per equipment cell,
+  // each assignment carrying its own tracked plus-state (shared/planner/gearSet.ts). Read/write
+  // pair over `ProgressState.gearSets`, exactly the `planner:getPlans` / `planner:setPlans`
+  // arrangement: the renderer is UNTRUSTED, so a written list is re-validated cell by cell against
+  // the closed `PLAN_SLOTS` allowlist and clamped to states the game's item window can be in
+  // (src/main/planner/validate.ts sanitizeGearSets) before a byte of it reaches the store — and
+  // the same validator runs on the way out, so the round trip is a fixed point.
+  gearGetSets: 'gear:getSets',
+  gearSetSets: 'gear:setSets',
+
   // ---- character sheet (JOS-45) ----
   // renderer -> main: the armory grid + the gear sum, built from the active character's newest
   // `/outputfile inventory` dump and joined to the committed item DB in main (where the 8.6 MB
-  // corpus already lives). Returns CharacterSheet | null — null means no dump, which the tab
-  // answers with its instructions card, never an error.
+  // corpus already lives) — and, since JOS-327, the CARRY-ALL ledger off the same parse
+  // (`CharacterSheet.carry`, shared/carryAll.ts): every non-empty row of every table the dump
+  // carries, with its location path and count. Returns CharacterSheet | null — null means no dump,
+  // which the tab answers with its instructions card, never an error.
   //
-  // THIS CHANNEL IS GATED. Its handler is registered only when `UNRELEASED` (src/main/unreleased.ts)
-  // is true — dev builds, or an explicit EQ_UNRELEASED=1 — because the module has not passed the
-  // owner's review gate. In a packaged build there is no handler and the preload method rejects,
-  // which is the designed outcome: the renderer surface is stripped from those bytes entirely.
+  // IT WAS GATED UNTIL JOS-327. The handler was registered only when `UNRELEASED`
+  // (src/main/unreleased.ts) was true, because the surface had not passed the owner's review gate,
+  // and the preload method below still documents the reject that came of it. The owner released the
+  // tab, so this is an ordinary channel now: registered in every build, answering in every build.
   characterSheet: 'character:sheet',
 
   // ---- map viewer (docs/plans/map-viewer.md §4.2) ----
@@ -433,8 +452,13 @@ export const IPC = {
   // renderer -> main: save the FULL slice to disk via the OS save dialog, so a user who
   // wants to read every byte before sending can. Returns {ok, path?, canceled?}.
   feedbackSaveSlice: 'feedback:saveSlice',
-  // renderer -> main: submit. Args (draft, {attachLog, windowMinutes}). Never rejects;
-  // a network failure resolves with {ok:false, queued:true}. Returns SubmitResult.
+  // renderer -> main: package the CURRENT `/outputfile inventory` dump and return its
+  // metadata + a capped preview, or the NAMED reason there is none (JOS-296). No arguments:
+  // which dump belongs to this character is main's answer, never the renderer's. The gz bytes
+  // never cross. Returns FeedbackInventoryPreview.
+  feedbackBuildInventory: 'feedback:buildInventory',
+  // renderer -> main: submit. Args (draft, {attachLog, windowMinutes, attachInventory}). Never
+  // rejects; a network failure resolves with {ok:false, queued:true}. Returns SubmitResult.
   feedbackSubmit: 'feedback:submit',
 
   // ---- usage analytics (docs/plans/usage-analytics.md wave A1) ------------------------
