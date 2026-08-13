@@ -159,11 +159,17 @@ archive. Layout: `src/main` (Node), `src/preload`, `src/renderer`,
   carve-out STAYS: every combat fixture is already cut through it and the six
   still parse into `petSay`. Full argument: docs/agents-archive.md.
   **CARVE-OUT: the `/pet who leader` answer** (JOS-52) — `<Name> says, 'My
-  leader is <You>.'`, EXACT shape, and the only pet carve-out that is
-  SELF-GATED (`ScrubOpts.selfName`): it is the first pet-voiced line carrying
-  a PLAYER's name inside the quote, so it borrows the self-`/who` row's
-  argument (your own name is yours to publish); no `selfName` means no
-  carve-out at all, and `selfName` reaches an equality test, never a regex.
+  leader is <anyone>.'`, EXACT shape, never a `/leader/` pattern. It was
+  SELF-GATED until **JOS-270** (owner ruling 2026-08-13): it is the first
+  pet-voiced line carrying a PLAYER's name inside the quote, so it borrowed
+  the self-`/who` row's argument. THE GATE IS GONE — the line is kept whatever
+  name it carries, on the 2026-08-05 group-membership reasoning (a structural
+  fact about the fight, and both names already appear uncensored in every
+  combat line of the same slice). The gate's measured cost was that the LIVE
+  app binds a group-mate's pet off this line while no feedback slice could
+  ever CONTAIN one, which made report 01KZVYMCAD72XFC36D73D8J2E8
+  structurally un-triageable. NO COMMITTED FIXTURE MOVED (one occurrence in
+  1.4M lines, in `extract-pet-claim`'s p2 window, and it names Primitive).
   The user's OWN `/who` row (Primitive) is likewise exempt — it is the only
   line stating the class loadout. Bystanders' NAMES survive in mechanical
   lines (kill credit, fizzle/interrupt, third-person buff-landing emotes):
