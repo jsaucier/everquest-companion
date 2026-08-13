@@ -104,8 +104,17 @@ archive. Layout: `src/main` (Node), `src/preload`, `src/renderer`,
     sweep — green standalone immediately after, every time;
     multi-spec-sweep only) · documented in-file
     by the JOS-206 worker;
-    needs the same order-hardening the spec's own comment describes; fix
-    dispatched in JOS-279 (2026-08-13 wave).
+    needed the same order-hardening the spec's own comment describes ·
+    **RESOLVED 9816cd34 (JOS-279)** — order was never enough, because it is a
+    bet: `App` keys every view on `viewKey` and main bumps it through
+    `sendWorldRebuilt` at startup/switch/live-epoch, and this spec launches
+    against the machine's OWN growing log, so a rebuild remounts `PoskyView`
+    and closes the row the step just opened. `tests/e2e/viewRemount.mts` now
+    HOLDS the precondition: an attribute React does not manage, planted inside
+    the keyed subtree, read back as a settle condition — every reading taken
+    before any `check`, an attempt that lost its mount discarded and retried,
+    three losses a failure. Reusable by anchor selector (bosses-week and
+    planner argue the same fact).
   - `combat-dashboard.e2e` · narrow-window resize never lands, settleStable
     settles on stale geometry · 5 sightings (2026-08-10/11/12 full-sweep; 4th
     in the JOS-229 sweep; 5th 2026-08-12 STANDALONE on the JOS-240 merge
@@ -132,8 +141,19 @@ archive. Layout: `src/main` (Node), `src/preload`, `src/renderer`,
     prior row said 3 while listing four events, count corrected) · diagnosis sharpened by the
     JOS-229 worker: the sub-beat replay precondition holds on essentially every
     run of this machine, so the failure is the always-on stutter probe recording
-    a tick inside the window — a tick-phase coin flip, not load · chip filed
-    (fix the phase race or gate the assertion on probe phase), per this rule.
+    a tick inside the window — a tick-phase coin flip, not load ·
+    **RESOLVED 0523dd90 (JOS-279)** — the precondition never held, because it
+    was asked about the wrong window. Both always-on probes open at `appReady`
+    and close at `replayDone` (src/main/perf.ts), and `appReady` is THREE
+    phases before `tailAttached`, so the window a beat could tick in is
+    strictly longer than the fold the spec gated on (measured on this machine:
+    probe 138 ms vs replay 103 ms). The step now takes `probeWindowMs`
+    (`replayDone − appReady`); the duty ledger keeps the replay window, which
+    is what it really measures. The verdict is three-valued so the naive fix's
+    mirror flake cannot appear: below a beat the absence is the assertion,
+    within `STARTUP_STUTTER_LATE_MS` of it either answer is honest and the run
+    notes which it saw, past that a silent probe is the regression. The block
+    probe had the same wrong window and got the same fix.
 - **Fixtures are COMMITTED and SCRUBBED.** `tests/fixtures/*.log` is tracked
   (a `!tests/fixtures/*.log` negation under the blanket `*.log`), so CI's
   `npm test` runs the FULL suite. The repo is PUBLIC, so every extractor
