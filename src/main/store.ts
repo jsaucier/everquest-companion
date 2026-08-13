@@ -2,7 +2,8 @@ import Store from 'electron-store'
 import { join } from 'path'
 import { STORE_NAME, USER_DATA } from './channel'
 import { logError, logInfo } from './errorLog'
-import { CURRENT_SCHEMA_VERSION, migrateStoreFile } from './storeMigrations'
+import { CURRENT_SCHEMA_VERSION } from './storeMigrations'
+import { migrateStoreFile } from './storeFile'
 import type {
   AlertDef,
   AlertPrefs,
@@ -76,7 +77,13 @@ const emptyProgress: ProgressState = {
  * constructed, so no reader can observe a pre-migration shape. Order of the world at this
  * point: channel.ts already chose `userData` and ran its one-time `eq-tools` seed (it is
  * store.ts's own first import), so whatever file we find here is the one this build will
- * use, whichever build wrote it. Never throws; see storeMigrations.ts for the failure policy.
+ * use, whichever build wrote it. Never throws; the failure policy — including the SALVAGE that
+ * stands between a torn write and a defaults boot (JOS-272) — is in storeFile.ts's header.
+ *
+ * ITS `error` HOOK IS THE ONE FLEET INSTRUMENT FOR A SETTINGS RESET, and it fires from HERE, at
+ * module scope, minutes before `startTelemetry` exists. That is why `telemetry/errorReports.ts`
+ * keeps what it holds across the first session boundary rather than clearing it: until JOS-272 this
+ * line was recorded and then thrown away, every launch, on every install in the fleet.
  */
 const schemaMigration = migrateStoreFile(join(USER_DATA, `${STORE_NAME}.json`), {
   info: (message) => logInfo(`[everquest-companion] ${message}`),

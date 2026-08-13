@@ -37,14 +37,15 @@ import {
   MIGRATIONS,
   PRE_CHARACTER_PROGRESS_KEY,
   SCHEMA_VERSION_KEY,
-  backupPathFor,
   migrateStoreData,
-  migrateStoreFile,
-  quarantinePathFor,
   readSchemaVersion,
   type Migration,
   type StoreData
 } from '../src/main/storeMigrations'
+// The FILE half is its own module since JOS-272 (storeMigrations.ts was at the 400-code-line
+// ceiling and the salvage path had to go somewhere). Same functions, same behaviour, one import
+// line further down.
+import { backupPathFor, migrateStoreFile, quarantinePathFor } from '../src/main/storeFile'
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
 

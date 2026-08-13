@@ -22,7 +22,9 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CURRENT_SCHEMA_VERSION, migrateStoreFile } from '../src/main/storeMigrations'
+import { CURRENT_SCHEMA_VERSION } from '../src/main/storeMigrations'
+// The FILE half is its own module since JOS-272 — same function, one import line further down.
+import { migrateStoreFile } from '../src/main/storeFile'
 import { sanitizeExaltPlans } from '../src/main/planner/validate'
 import type { ExaltPlan } from '../src/shared/planner/types'
 
