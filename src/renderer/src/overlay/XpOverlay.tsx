@@ -15,13 +15,23 @@
 // the header, the checklist in the footer. A second rate math in a floating window would be the
 // drift `windowScope.ts` exists to prevent, one process further away.
 //
-// THE SLICE IS THE LEVELING TAB'S (JOS-130) AND ITS DEFAULT IS `session`. That default is the
-// ticket's: a window you glance at mid-pull is asking "how am I doing right now", which is this
-// session and not the whole record. It DEGRADES rather than sticks — a log stating no logout
-// cannot define a session, and `resolveSliceId` falls back to `All` exactly as the tab's own
-// control does. The pick is remembered per WINDOW, not shared with the app's: the two are read at
-// different moments, and a slice chosen on the Loot tab has no business re-scoping a window
-// floating over the game.
+// THE SLICE IS THE LEVELING TAB'S (JOS-130) AND ITS DEFAULT IS `Zone + Session` (owner ruling,
+// JOS-288 — it was `session` from JOS-195 until then). A window you glance at mid-pull is asking
+// "how am I doing right now", and the audit measured what the session half alone does to that
+// answer: `levelEquiv` sums straight across a loadout-swap boundary, so a session that began on a
+// level-50 leg diluted the level-11 camp that followed it, and the same instant read 7.03 lvl/hr
+// scoped to the camp against a figure ten times smaller scoped to the whole log. The camp you are
+// standing in, this session, is the stretch the number is about. It DEGRADES rather than sticks — a
+// preset this record cannot define is not offered and `resolveSliceId` falls back to `All`, exactly
+// as the tab's own control does. The pick is remembered per WINDOW, not shared with the app's: the
+// two are read at different moments, and a slice chosen on the Loot tab has no business re-scoping
+// a window floating over the game.
+//
+// AND THE RATES ARE PER ELAPSED HOUR BY DEFAULT (owner ruling 3, JOS-288), with the active reading
+// one click away in the footer. Both words are the loot ledger's (JOS-261) and both definitions are
+// imported rather than re-worded. The bonus is an honesty the window did not have: the next-level
+// ETA has ALWAYS divided by the wall rate while the pace row above it showed the active one, so
+// until now those two lines were measured over different hours.
 //
 // IT TICKS ITSELF, for the same reason the timer bars do: deltas arrive when the LOG moves, and a
 // slice that ends at the live edge keeps meaning something while the log is silent. The clock is
@@ -42,9 +52,11 @@ import type {
 } from '@shared/types'
 import { availableSlices, resolveSlice, resolveSliceId, sliceLabel, type SliceId } from '@shared/timeslice'
 import { toggleXpRow, XP_ROW_IDS, xpRowVisible, type XpRowId } from '@shared/xpOverlay'
+import { resolveRateBasis, toggleRateBasis, type RateBasis } from '@shared/rateBasis'
 import { EMPTY_PROGRESSION, applyProgressionDelta } from '../features/leveling/progressionDelta'
 import { dataBounds } from '../features/leveling/zoneBands'
-import { ACTIVE_TIME_TITLE } from '../features/leveling/rangeStatsRows'
+// The two definitions of the two hours, imported and never re-worded (JOS-249 / JOS-261).
+import { BASIS_TITLE } from '../features/leveling/rangeStatsRows'
 import { OverlayHeader } from './OverlayHeader'
 import type { OverlaySelectRow } from './OverlaySelect'
 import { FOOTER_ROW, OverlayContent } from './overlayScale'
@@ -171,17 +183,65 @@ function RowToggle({
   )
 }
 
-/** Footer — interactive mode only: the bg-alpha slider, the ROW CHECKLIST, and the text size. */
+/**
+ * THE DENOMINATOR TOGGLE (JOS-288) — one button, two states, the word in force printed on it.
+ *
+ * It is a BUTTON RATHER THAN A PAIR OF THEM because there are exactly two honest denominators and a
+ * two-option segmented control spends twice the width of this footer's whole budget to say the same
+ * thing. It reads as a statement first ("these rates are per elapsed hour") and as a control second,
+ * which is the right order for a number the reader is already looking at; the hover carries the full
+ * definition of the hour it is currently on and the promise of the other.
+ */
+function BasisToggle({
+  basis,
+  onClick,
+  noDrag
+}: {
+  basis: RateBasis
+  onClick: () => void
+  noDrag: React.CSSProperties
+}): JSX.Element {
+  const other: RateBasis = basis === 'elapsed' ? 'active' : 'elapsed'
+  return (
+    <button
+      type="button"
+      data-testid="xp-basis"
+      data-basis={basis}
+      title={`Rates are per hour of ${basis} time. Click for ${other} time. ${BASIS_TITLE[basis]}`}
+      onClick={onClick}
+      style={{
+        ...noDrag,
+        flexShrink: 0,
+        background: ACCENT_BG,
+        border: `1px solid ${ACCENT}66`,
+        borderRadius: 4,
+        color: ACCENT,
+        fontSize: 9,
+        letterSpacing: 0.4,
+        textTransform: 'uppercase',
+        padding: '1px 5px',
+        cursor: 'pointer'
+      }}
+    >
+      {basis}
+    </button>
+  )
+}
+
+/** Footer — interactive mode only: the bg-alpha slider, the ROW CHECKLIST, the DENOMINATOR
+ *  toggle, and the text size. */
 function XpFooter({
   bgAlpha,
   textScale,
   visible,
+  basis,
   patch,
   noDrag
 }: {
   bgAlpha: number
   textScale: number
   visible: XpRowId[] | undefined
+  basis: RateBasis
   patch: OverlayChrome['patch']
   noDrag: React.CSSProperties
 }): JSX.Element {
@@ -221,6 +281,14 @@ function XpFooter({
           noDrag={noDrag}
         />
       ))}
+      {/* WHICH HOUR, beside WHICH ROWS — the same persisted per-kind config, the same one press. */}
+      <BasisToggle
+        basis={basis}
+        onClick={() => {
+          patch({ xpBasis: toggleRateBasis(basis) })
+        }}
+        noDrag={noDrag}
+      />
       <TextScaleStepper textScale={textScale} patch={patch} noDrag={noDrag} />
     </div>
   )
@@ -259,14 +327,16 @@ export default function XpOverlay(): JSX.Element {
 
   const bounds = useMemo(() => dataBounds(prog, NO_EXTRA), [prog])
   const available = useMemo(() => availableSlices(prog, bounds), [prog, bounds])
-  // ABSENT means `session` — and `resolveSliceId` then degrades it to `All` on a record that
+  // ABSENT means `zoneSession` — and `resolveSliceId` then degrades it to `All` on a record that
   // cannot define one, which is the same fallback the tab's control performs.
-  const id = resolveSliceId(config?.xpSlice ?? 'session', prog, bounds)
+  const id = resolveSliceId(config?.xpSlice ?? 'zoneSession', prog, bounds)
   const slice = useMemo(() => resolveSlice({ snap: prog, bounds, id }), [prog, bounds, id])
   const visible = config?.xpRows
+  // ABSENT means `elapsed` (shared/rateBasis.ts owns the ruling).
+  const basis = resolveRateBasis(config?.xpBasis)
   const view = useMemo(
-    () => xpOverlayView({ snap: prog, loot, slice, visible, level: who.level }),
-    [prog, loot, slice, visible, who.level]
+    () => xpOverlayView({ snap: prog, loot, slice, visible, level: who.level, basis }),
+    [prog, loot, slice, visible, who.level, basis]
   )
 
   return (
@@ -314,22 +384,35 @@ export default function XpOverlay(): JSX.Element {
           view.rows.map((r) => <XpRowLine key={r.id} row={r} />)
         )}
         {/* ONE SPAN FOR THE WHOLE WINDOW, stated once rather than repeated on every row — a rate
-            that never stated its span lets one drop in five minutes read as a confident 12/hr. */}
+            that never stated its span lets one drop in five minutes read as a confident 12/hr. It
+            is also owner ruling 2 (JOS-288): the time spent in the current scope so far, which is
+            the very denominator the rates above divided by, so the two cannot disagree. */}
         {view.rows.length > 0 && (
           <div
             data-testid="xp-span"
-            // ...and what that span IS, on hover (JOS-249). A native title is the only tooltip
-            // this window has ever had.
-            title={ACTIVE_TIME_TITLE}
+            // ...and what that span IS, on hover (JOS-249) — or why it is too short to divide by
+            // (JOS-288). A native title is the only tooltip this window has ever had.
+            title={view.spanTitle}
             style={{ fontSize: 9, color: 'rgba(255,255,255,0.38)', padding: '3px 2px 0' }}
           >
             {slice.caption} · {view.span}
+            {/* JUST ARRIVED, SAID ONCE. Four em-dashes with no explanation on a window this small
+                read as a broken window; the rows carry the reason on hover and this carries it in
+                the open, exactly where the span it is about is printed. */}
+            {!view.measurable && <span data-testid="xp-too-short"> · too short to rate</span>}
           </div>
         )}
       </OverlayContent>
 
       {!locked && (
-        <XpFooter bgAlpha={bgAlpha} textScale={textScale} visible={visible} patch={patch} noDrag={noDrag} />
+        <XpFooter
+          bgAlpha={bgAlpha}
+          textScale={textScale}
+          visible={visible}
+          basis={basis}
+          patch={patch}
+          noDrag={noDrag}
+        />
       )}
     </div>
   )

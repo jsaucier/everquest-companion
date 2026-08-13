@@ -193,7 +193,10 @@ async function stepHydratesFromTheFold(overlay: Page): Promise<void> {
   const header = await overlay.evaluate(() => document.body.innerText)
   check('…and the header states the level the log last reported', /lvl \d+/.test(header), header.slice(0, 160))
   const caption = await span(overlay)
-  check('…under one span that says what every rate on it divides by', /active/.test(caption), caption)
+  // The span NAMES its hour, whichever one is in force (JOS-288 — it was `active` unconditionally
+  // before the elapsed default). What this step is about is that a wired window states a
+  // denominator at all; which one it opens on is `stepRateBasis`'s claim, below.
+  check('…under one span that says what every rate on it divides by', /elapsed|active/.test(caption), caption)
 }
 
 /**
@@ -232,8 +235,11 @@ async function stepLiveMote(overlay: Page, log: FixtureLog): Promise<void> {
  */
 async function stepRowChecklist(overlay: Page): Promise<void> {
   // One toggle per CHECKLIST ENTRY, which is not one per drawn line: 'xp' covers both paces and
-  // 'motes' covers however many tiers dropped (shared/xpOverlay.ts states the rule).
+  // 'motes' covers however many tiers dropped (shared/xpOverlay.ts states the rule). The
+  // denominator toggle beside them is `xp-basis` and deliberately does NOT share this prefix — it
+  // switches an hour, not a row, and a selector that swept it up would be counting two things.
   check('the checklist offers one toggle per entry', (await countOf(overlay, '[data-testid^="xp-toggle-"]')) === 3)
+  check('…and the denominator toggle sits beside them, outside the row prefix', (await countOf(overlay, '[data-testid="xp-basis"]')) === 1)
 
   await setConfig(overlay, { xpRows: ['xp', 'eta'] })
   const hidden = await settle(() => rows(overlay), (r) => !r.some((x) => x.row === 'motes'), { timeoutMs: 15_000 })
@@ -262,17 +268,28 @@ async function stepRowChecklist(overlay: Page): Promise<void> {
 /**
  * THE SLICE IS THE LEVELING TAB'S, AND ITS DEFAULT DEGRADES HONESTLY.
  *
- * e2e-leveling.log states no logout anywhere, so this record cannot define a session — and the
- * stored default (`session`) must therefore resolve to the whole log rather than to an invented
- * boundary. Then a duration rung proves the pick really re-scopes the numbers rather than only
- * re-labelling them.
+ * THE DEFAULT IS `Zone + Session` SINCE JOS-288 (owner ruling — it was `session` from JOS-195 until
+ * then). e2e-leveling.log states no logout anywhere, so this record can define neither half's
+ * session, and the default must therefore resolve to the whole log rather than to an invented
+ * boundary — which is the SAME observable this step has always asserted, now standing on a
+ * two-part degrade rather than a one-part one. The unit suite pins the offered/degrades pair over a
+ * record that CAN define both halves; what only the real app can show is that the shipped default
+ * travels main's own store and the renderer's own resolve and comes out honest on a first run.
+ *
+ * Then a duration rung proves the pick really re-scopes the numbers rather than only re-labelling.
  */
 async function stepSlice(overlay: Page): Promise<void> {
   const opened = await settleStable(() => span(overlay), { timeoutMs: 15_000 })
   check(
-    'a log that states no logout cannot define a session, so the window opens on the whole log',
+    'a log that states no logout can define neither half of Zone + Session, so the window opens on the whole log',
     opened.includes('the whole log'),
     opened
+  )
+  const stored = await getConfig(overlay)
+  check(
+    '…and the default is ABSENT in the store rather than written out',
+    stored.xpSlice === undefined,
+    JSON.stringify(stored.xpSlice)
   )
 
   await setConfig(overlay, { xpSlice: 'h1' })
@@ -283,6 +300,49 @@ async function stepSlice(overlay: Page): Promise<void> {
   await setConfig(overlay, { xpSlice: 'all' })
   const back = await settle(() => span(overlay), (t) => t === opened, { timeoutMs: 15_000 })
   check('…and going back to the whole log restores it exactly', back === opened, `${narrowed} → ${back}`)
+}
+
+/** The footer's denominator toggle, as the DOM carries it. */
+function basisButton(page: Page): Promise<string> {
+  return page.evaluate(
+    () => document.querySelector('[data-testid="xp-basis"]')?.getAttribute('data-basis') ?? ''
+  )
+}
+
+/**
+ * WHICH HOUR THE RATES ARE PER, END TO END (JOS-288, owner ruling 3).
+ *
+ * `tests/xpOverlay.test.mts` pins the arithmetic of both readings and `shared/rateBasis.ts` owns the
+ * default. What only the real app can show is that the third persisted knob exists at all: that the
+ * window opens on `elapsed` with NOTHING in the store, that the footer states the hour in force,
+ * that flipping it re-measures every rate AND the span line, and that main's own rebuild-not-trust
+ * normalizer refuses a denominator this build cannot name.
+ */
+async function stepRateBasis(overlay: Page): Promise<void> {
+  check('the window opens on the elapsed hour', (await basisButton(overlay)) === 'elapsed')
+  const opened = await settleStable(() => span(overlay), { timeoutMs: 15_000 })
+  check('…and the span line names that hour, once, for every row', opened.includes('elapsed'), opened)
+  const fresh = await getConfig(overlay)
+  check(
+    '…with the default ABSENT in the store, exactly like the row list and the slice',
+    fresh.xpBasis === undefined,
+    JSON.stringify(fresh.xpBasis)
+  )
+
+  await setConfig(overlay, { xpBasis: 'active' })
+  const flipped = await settle(() => span(overlay), (t) => t.includes('active'), { timeoutMs: 15_000 })
+  check('flipping to active time re-words the span', flipped.includes('active'), `${opened} → ${flipped}`)
+  check('…and the footer button follows it', (await basisButton(overlay)) === 'active')
+  const stored = await settle(() => getConfig(overlay), (c) => c.xpBasis === 'active', { timeoutMs: 10_000 })
+  check('…written to this window’s own persisted config', stored.xpBasis === 'active', JSON.stringify(stored.xpBasis))
+
+  // A store cannot name an hour this build does not have — the closed union, through the real IPC
+  // and the real normalizer in main (the `xpRows` rule, applied to the third knob).
+  await setConfig(overlay, { xpBasis: 'wall' })
+  const rejected = await settle(() => getConfig(overlay), (c) => c.xpBasis === undefined, { timeoutMs: 10_000 })
+  check('an unknown denominator is dropped by main rather than stored', rejected.xpBasis === undefined)
+  const restored = await settle(() => span(overlay), (t) => t.includes('elapsed'), { timeoutMs: 15_000 })
+  check('…so the window degrades to the default rather than to a blank', restored.includes('elapsed'), restored)
 }
 
 /** Close it the way a user would — its own ✕ — and prove main recorded it. */
@@ -322,6 +382,7 @@ async function main(): Promise<void> {
       })
       await stepHydratesFromTheFold(overlay)
       await stepSlice(overlay)
+      await stepRateBasis(overlay)
       await stepLiveMote(overlay, log)
       await stepRowChecklist(overlay)
     } else {

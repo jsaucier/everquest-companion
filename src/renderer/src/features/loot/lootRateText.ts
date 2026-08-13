@@ -35,18 +35,18 @@ import { formatDropRate } from '../../lib/formatRate'
 import { fmtDuration } from '../leveling/levelChartGeometry'
 // ONE SPELLING OF "ACTIVE TIME", ON EVERY SURFACE THAT DIVIDES BY IT (JOS-249) — imported, never
 // re-worded. `NONE` is the same em-dash for the same reason.
-import { ACTIVE_TIME_TITLE, NONE } from '../leveling/rangeStatsRows'
+import { ACTIVE_TIME_TITLE, ELAPSED_TIME_TITLE, NONE } from '../leveling/rangeStatsRows'
 
 /**
  * WHAT THE WALL DENOMINATOR IS, in one clause, wherever it is shown.
  *
- * It is `RangeStats.levelsPerHourWall`'s denominator read out loud (`durationMs - offlineMs`), and
- * the sentence says what stays IN as well as what comes out: the point of this half of the pair is
- * that the medding, the banking and the run back are counted, because you spent them.
+ * THE STRING MOVED, THE SPELLING DID NOT (JOS-288). It was defined here when this line was the only
+ * surface showing both denominators; three more now do, and it lives beside `ACTIVE_TIME_TITLE` —
+ * which this file already imports — so the pair cannot be separated and this file importing that one
+ * while that one imported this one is not a cycle waiting to be discovered. Re-exported so every
+ * existing importer of `ELAPSED_TIME_TITLE` is untouched.
  */
-export const ELAPSED_TIME_TITLE =
-  'Elapsed time = the whole stretch the slice covers, including the idle time inside it, minus only ' +
-  'any stretch the log says you were logged out - so medding, banking and travelling stay in this denominator.'
+export { ELAPSED_TIME_TITLE }
 
 /** The hover sentence for the whole line: both denominators, and what the numerator counts. */
 export const LOOT_RATE_TITLE =

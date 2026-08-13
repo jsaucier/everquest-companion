@@ -386,7 +386,8 @@ const drops: LootEvent[] = [
 ]
 
 test('windowItemRows applies the slice ZONE as well as its range', () => {
-  const args = { events: drops, t0: T0, t1: T0 + DAY, activeMs: HOUR }
+  // JOS-288: the spans travel as one object now (both denominators or neither, lootRates rule 5).
+  const args = { events: drops, t0: T0, t1: T0 + DAY, spans: { durationMs: HOUR, activeMs: HOUR, offlineMs: 0 } }
   const everywhere = windowItemRows(args)
   assert.equal(everywhere.find((r) => r.key === 'mote of potential')?.drops, 5, '1 + 3 + 1, stacks counted')
 
@@ -409,7 +410,7 @@ test('the ledger filter and the stats query agree about which rows are in the sl
       events: drops,
       t0: slice.range.t0,
       t1: slice.range.t1,
-      activeMs: HOUR,
+      spans: { durationMs: HOUR, activeMs: HOUR, offlineMs: 0 },
       zoneKey: slice.zoneKey
     })
     const counted = rows.reduce((n, r) => n + r.events, 0)

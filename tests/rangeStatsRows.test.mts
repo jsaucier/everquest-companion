@@ -187,9 +187,14 @@ test('a null rate renders as an em-dash, never as 0.0', () => {
 })
 
 test('a zone with no idle at all carries no idle string', () => {
-  const [row] = zoneStatRows([
-    zone({ zone: 'Befallen', spanMs: 2 * HOUR + 41 * MIN, killsPerHourActive: 38.5, levelsPerHourActive: 1.42 })
-  ])
+  // ROWS ARE SHAPED OVER THE HOUR IN FORCE SINCE JOS-288, and the default is `elapsed`. This row
+  // states its ACTIVE rates, so the arm names that basis: what it is about is the idle string and
+  // the two rate spellings beside it, not which denominator produced them.
+  const [row] = zoneStatRows(
+    [zone({ zone: 'Befallen', spanMs: 2 * HOUR + 41 * MIN, killsPerHourActive: 38.5, levelsPerHourActive: 1.42 })],
+    'levels',
+    'active'
+  )
   assert.equal(row.idle, null, 'null, so the panel prints nothing rather than "0s idle"')
   assert.equal(row.time, '2h 41m')
   assert.equal(row.levelsPerHour, '1.42 lvl/hr')
@@ -243,7 +248,10 @@ test('the hero cards report the four headline numbers', () => {
         { ts: T0 + HOUR, level: 19 }
       ],
       levelRuns: [{ fromLevel: 18, toLevel: 19, startTs: T0, endTs: T0 + HOUR }]
-    })
+    }),
+    // The ACTIVE basis, named: this fixture states an active rate, and what the arm is about is the
+    // four cards rather than which hour they divide by (the pair below pins that).
+    'active'
   )
   assert.deepEqual(heroes.map((h) => h.id), ['rate', 'kills', 'levels', 'range'])
   assert.equal(heroes[0].value, '1.42 lvl/hr')
@@ -264,7 +272,8 @@ test('an at-the-cap range em-dashes the rate and says WHY', () => {
 })
 
 test('a range with no active time em-dashes the rate for the OTHER reason', () => {
-  const heroes = rangeHeroes(stats({ activeMs: 0, idleMs: 3 * HOUR, expSamples: 0 }))
+  // Named basis: the reason under test is "no time of THIS kind", and the kind is the active one.
+  const heroes = rangeHeroes(stats({ activeMs: 0, idleMs: 3 * HOUR, expSamples: 0 }), 'active')
   assert.equal(heroes[0].value, NONE)
   assert.equal(heroes[0].sub, 'no active time in this range')
   assert.equal(heroes[1].sub, 'no credited kills in this range')
@@ -414,10 +423,11 @@ test('withActiveTime appends the definition rather than replacing what a surface
 })
 
 test('the levels-per-hour hero card is the only one that hovers the definition', () => {
-  const heroes = rangeHeroes(stats({ activeMs: 2 * HOUR, levelsPerHourActive: 1.42, expSamples: 12 }))
+  const heroes = rangeHeroes(stats({ activeMs: 2 * HOUR, levelsPerHourActive: 1.42, expSamples: 12 }), 'active')
   const rateCard = heroes.find((h) => h.id === 'rate')
   assert.match(rateCard?.title ?? '', /Active time = /, 'the rate card divides by it, so it says what it is')
   for (const h of heroes.filter((c) => c.id !== 'rate')) {
-    assert.equal(h.title, undefined, `${h.id} has no active-time denominator and so carries no hover`)
+    assert.equal(h.title, undefined, `${h.id} has no rate denominator and so carries no hover`)
   }
 })
+

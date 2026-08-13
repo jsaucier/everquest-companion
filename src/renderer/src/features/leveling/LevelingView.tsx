@@ -34,7 +34,7 @@ import { visibleFrom, visibleSegments, windowFor, windowOver, type TimescaleId }
 // THE TIMESLICE (JOS-130): the one control every loot and xp analysis surface reads. It absorbed
 // this tab's timescale — the duration rungs are four more slices in the same id space — so a
 // reader who narrows to this session on the Loot ledger finds the xp rates already narrowed.
-import { SliceBar } from '../timeslice/SliceBar'
+import { ScopeBar } from '../timeslice/ScopeBar'
 import { useTimeslice } from '../timeslice/useTimeslice'
 import { TAIL_MS, sliceDurationMs, type SliceId, type SliceRange, type Timeslice } from '@shared/timeslice'
 // The SCOPE (JOS-75): which stretch of the log every number on this tab describes. The timescale
@@ -416,13 +416,9 @@ function ChartsColumn(p: {
       {/* Directly above the plots it governs, and ABOVE BOTH of them: the two charts draw one
           time base, so there is one control for it — and since JOS-75 one scope under it. Since
           JOS-130 it is the APP'S control, not this tab's (features/timeslice). */}
-      <SliceBar
-        available={p.available}
-        slice={p.slice}
-        onPick={p.onPick}
-        onCustom={p.onCustom}
-        testId="leveling-slice"
-      />
+      {/* BOTH halves of one sentence (JOS-288): which stretch, and per hour of what inside it. The
+          prefix is unchanged — `ScopeBar` spells the slice half's testids `leveling-slice…`. */}
+      <ScopeBar available={p.available} slice={p.slice} onPick={p.onPick} onCustom={p.onCustom} testId="leveling" />
       <AaOverTimePanel points={p.aaPoints} drawn={charts.aaVisible} aaEarned={p.aaEarned} chrome={chrome} />
       <LevelOverTimePanel
         segments={charts.segVisible}
@@ -516,8 +512,12 @@ export default function LevelingView({
 
   const feed = useMemo(() => buildFeed(sortedLevels, sortedAAs), [sortedLevels, sortedAAs])
 
-  // THE SLICE — app-wide, session-lifetime, `All` by default (features/timeslice/useTimeslice).
-  const { bounds, available, slice, setId, setCustom } = useTimeslice(useExtraTs(sortedLevels, aaCumulative))
+  // THE SLICE — app-wide and session-lifetime (features/timeslice/useTimeslice). THIS TAB OPENS ON
+  // `Zone + Session` (owner ruling, JOS-288): the exp surfaces are about the camp you are in right
+  // now, and a session that spans a loadout swap sums `levelEquiv` straight across the boundary. The
+  // Loot ledger's own opening (`All`, hiding nothing) is untouched — useTimeslice's header states
+  // why those two coexist under one shared pick.
+  const { bounds, available, slice, setId, setCustom } = useTimeslice(useExtraTs(sortedLevels, aaCumulative), 'zoneSession')
   const charts = useLevelingCharts({ prog, aas: aaCumulative, segments: levelSegments, slice, bounds })
   const { chrome, scope } = charts
   // The feed and the AA pace both follow that scope (JOS-75): the pace was its own hour-wide

@@ -54,9 +54,13 @@ import MilitaryTechIcon from '@mui/icons-material/MilitaryTech'
 import type { RangeStats } from '@shared/progressionStats'
 import type { ScopeKind } from './windowScope'
 import { formatDateTime } from '../../lib/formatDate'
+import type { RateBasis } from '@shared/rateBasis'
+// WHICH HOUR the rates below are per (JOS-288) — read where it is used, exactly as the slice's own
+// consumers read `useTimeslice`: the store is app-wide and every consumer of it is a leaf.
+import { useRateBasis } from '../timeslice/useRateBasis'
 import { fmtDuration } from './levelChartGeometry'
 import {
-  AA_RATE_TITLE,
+  aaRateTitle,
   AA_RESPEC_CAPTION,
   ACTIVE_TIME_TITLE,
   OFFLINE_CAPTION,
@@ -140,13 +144,13 @@ const CHIP_SX = { height: 20 } as const
  * kills (dimmed — they are context, and they enter no rate), and the AA gained with the same
  * respec reservation the "AA gained over time" panel carries.
  */
-function ChipRow({ stats }: { stats: RangeStats }): JSX.Element {
+function ChipRow({ stats, basis }: { stats: RangeStats; basis: RateBasis }): JSX.Element {
   const gaps = idleGapsText(stats)
   const witnessed = witnessedText(stats)
   const aa = aaText(stats)
   // The AA pace, beside the AA total it explains. Null together with `aa` — both are gated on
   // the range holding at least one gain line.
-  const aaRate = aaRateText(stats)
+  const aaRate = aaRateText(stats, basis)
   // Null unless a login line actually closed a logout inside the range — the offline chip and
   // its caption exist only when the log said so.
   const offline = offlineText(stats)
@@ -175,7 +179,7 @@ function ChipRow({ stats }: { stats: RangeStats }): JSX.Element {
           </Tooltip>
         )}
         {aaRate && (
-          <Tooltip title={AA_RATE_TITLE}>
+          <Tooltip title={aaRateTitle(stats, basis)}>
             <Chip size="small" variant="outlined" label={aaRate} sx={CHIP_SX} />
           </Tooltip>
         )}
@@ -245,9 +249,9 @@ const HEAD_SX = { ...CELL_SX, fontWeight: 700, whiteSpace: 'nowrap' } as const
  * its OWN `overflow: auto` — a range over a long session can list every zone visited and must
  * never size to its content and squeeze the charts above it.
  */
-function ZoneTable({ zones }: { zones: RangeStats['zones'] }): JSX.Element | null {
+function ZoneTable({ zones, basis }: { zones: RangeStats['zones']; basis: RateBasis }): JSX.Element | null {
   const [sort, setSort] = useState<ZoneSort>('levels')
-  const rows = zoneStatRows(zones, sort)
+  const rows = zoneStatRows(zones, sort, basis)
   if (rows.length === 0) return null
   const head = (key: ZoneSort, label: string): JSX.Element => (
     <TableSortLabel active={sort === key} direction="desc" onClick={() => { setSort(key) }}>
@@ -326,6 +330,7 @@ function HeaderRow({ stats, scope, onClear }: RangeStatsPanelProps): JSX.Element
 }
 
 export function RangeStatsPanel({ stats, scope, onClear }: RangeStatsPanelProps): JSX.Element {
+  const { basis } = useRateBasis()
   const footnote = unstatedCaption(stats)
   return (
     <Paper
@@ -336,12 +341,12 @@ export function RangeStatsPanel({ stats, scope, onClear }: RangeStatsPanelProps)
     >
       <HeaderRow stats={stats} scope={scope} onClear={onClear} />
       <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-        {rangeHeroes(stats).map((s) => (
+        {rangeHeroes(stats, basis).map((s) => (
           <StatCard key={s.id} stat={s} />
         ))}
       </Stack>
-      <ChipRow stats={stats} />
-      <ZoneTable zones={stats.zones} />
+      <ChipRow stats={stats} basis={basis} />
+      <ZoneTable zones={stats.zones} basis={basis} />
       {footnote && (
         <Typography variant="caption" color="text.secondary">
           {footnote}

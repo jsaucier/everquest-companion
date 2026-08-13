@@ -18,6 +18,7 @@
 // them" rather than "none" — a store written before this shipped must not come back empty.
 
 import type { LootEvent } from './types'
+import type { WindowSpans } from './lootRates'
 import { windowItemRows } from './lootRates'
 
 /**
@@ -124,6 +125,14 @@ export interface MoteRateRow {
   drops: number
   /** Per hour of the slice's ACTIVE time. Null when it has none (lootRates rule 3). */
   perHourActive: number | null
+  /**
+   * Per hour of the slice's ELAPSED (online wall) time — `wallMs`, lootRates rule 5's other
+   * denominator (JOS-288). Null when the slice is entirely offline.
+   *
+   * BOTH, ALWAYS, for the same reason the ledger states both: the XP overlay shows one at a time and
+   * names which, and a row that carried only one half would make the toggle a second derivation.
+   */
+  perHourWall: number | null
 }
 
 export interface MoteRatesArgs {
@@ -132,9 +141,9 @@ export interface MoteRatesArgs {
   /** The slice's instants, half-open at the top. */
   t0: number
   t1: number
-  /** The slice's ACTIVE ms — `RangeStats.activeMs`, the denominator every rate beside this one
-   *  already divides by. Passed in rather than re-derived (windowScope.ts's rule). */
-  activeMs: number
+  /** The slice's own `rangeStats(...)` — the spans every rate beside this one already divides by.
+   *  Passed in rather than re-derived (windowScope.ts's rule). */
+  spans: WindowSpans
   /** The slice's zone restriction (a `shared/zones.zoneKey` fold), or null for every zone. */
   zoneKey?: string | null
 }
@@ -160,6 +169,7 @@ export function moteRates(args: MoteRatesArgs): MoteRateRow[] {
       item: r.item,
       tier: moteTier(r.item),
       drops: r.drops,
-      perHourActive: r.dropsPerHourActive
+      perHourActive: r.dropsPerHourActive,
+      perHourWall: r.dropsPerHourWall
     }))
 }

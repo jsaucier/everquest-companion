@@ -35,6 +35,16 @@ import type { ComboInterval, RangeStats, ZoneRangeRow } from '@shared/progressio
 // precedent): `ACTIVE_TIME_TITLE` states the number of minutes out loud, and a hand-typed 5 there
 // would be a second copy of a measured constant waiting to drift from the one that classifies.
 import { IDLE_GAP_MS } from '../../../../shared/progressionStats'
+// WHICH HOUR THESE RATES ARE PER (JOS-288). The vocabulary, the default and the just-arrived gate
+// all live in `shared/rateBasis.ts`; this file only chooses the words, as it always has.
+import {
+  RATE_BASIS_DEFAULT,
+  RATE_TOO_SHORT_TITLE,
+  basisRead,
+  pickRate,
+  type BasisRead,
+  type RateBasis
+} from '../../../../shared/rateBasis'
 import { formatAaRate, formatKillRate, formatLevelRate, formatPointRate } from '../../lib/formatRate'
 import { fmtDuration } from './levelChartGeometry'
 import { zoneColor } from './zoneBands'
@@ -131,7 +141,16 @@ function zoneDetail(z: ZoneRangeRow): string | null {
   return z.offlineMs > 0 ? `${active} · ${fmtDuration(z.offlineMs)} offline` : active
 }
 
-function shapeZone(z: ZoneRangeRow): ZoneStatRow {
+/** A zone row's own spans, in the shape `basisRead` takes: its wall clock is its `spanMs`. */
+function zoneRead(z: ZoneRangeRow, basis: RateBasis): BasisRead {
+  return basisRead(basis, { durationMs: z.spanMs, activeMs: z.activeMs, offlineMs: z.offlineMs })
+}
+
+function shapeZone(z: ZoneRangeRow, basis: RateBasis): ZoneStatRow {
+  // EVERY RATE ON THE ROW OVER ONE HOUR (JOS-288), and the gate is the row's own: a camp you passed
+  // through for ninety seconds states its time and its counts and refuses its rates, while the camp
+  // above it that you farmed all evening keeps both of its numbers.
+  const read = zoneRead(z, basis)
   return {
     key: z.zone,
     zone: z.zone,
@@ -148,8 +167,8 @@ function shapeZone(z: ZoneRangeRow): ZoneStatRow {
     offline: z.offlineMs > 0 ? fmtDuration(z.offlineMs) : null,
     detail: zoneDetail(z),
     levels: levelsText(z.levelEquiv, z.expSamples, z.expUnstated),
-    levelsPerHour: rate(z.levelsPerHourActive, formatLevelRate),
-    killsPerHour: rate(z.killsPerHourActive, formatKillRate),
+    levelsPerHour: rate(pickRate(read, z.levelsPerHourActive, z.levelsPerHourWall), formatLevelRate),
+    killsPerHour: rate(pickRate(read, z.killsPerHourActive, z.killsPerHourWall), formatKillRate),
     unstated: z.expUnstated
   }
 }
@@ -157,9 +176,17 @@ function shapeZone(z: ZoneRangeRow): ZoneStatRow {
 /**
  * The per-zone table rows, sorted. `zones` is left untouched (the array is the snapshot
  * query's, not ours to reorder in place).
+ *
+ * THE SORT IS DELIBERATELY NOT BASIS-AWARE. It orders by `levelsPerHourActive` — the farming
+ * -efficiency question, which is what active time was always the right denominator for — so
+ * flipping the displayed hour re-words the table without reshuffling it under the reader's cursor.
  */
-export function zoneStatRows(zones: readonly ZoneRangeRow[], sort: ZoneSort = 'levels'): ZoneStatRow[] {
-  return [...zones].sort(sort === 'time' ? byTime : byLevels).map(shapeZone)
+export function zoneStatRows(
+  zones: readonly ZoneRangeRow[],
+  sort: ZoneSort = 'levels',
+  basis: RateBasis = RATE_BASIS_DEFAULT
+): ZoneStatRow[] {
+  return [...zones].sort(sort === 'time' ? byTime : byLevels).map((z) => shapeZone(z, basis))
 }
 
 /** The kills card's caption. The pet half is INFERRED — pet binding is learned from the
@@ -180,14 +207,32 @@ function killsSub(stats: RangeStats): string {
  * AA pace caption can never describe the same denominator differently.
  */
 export function activeSpanText(activeMs: number): string {
-  return `over ${fmtDuration(activeMs)} active`
+  return basisSpanText({ basis: 'active', word: 'active', ms: activeMs, measurable: true })
+}
+
+/**
+ * THE SPAN A RATE WAS MEASURED OVER, whichever hour that is (JOS-288) — `over 1h 0m elapsed`,
+ * `over 42m active`. The generalisation of `activeSpanText`, which is now one call of it and still
+ * renders byte for byte what it always did.
+ *
+ * The WORD is never dropped. A bare "over 42m" beside a rate is the exact ambiguity the pair exists
+ * to remove, and it is the ambiguity a toggle makes easiest to fall into.
+ */
+export function basisSpanText(read: BasisRead): string {
+  return `over ${fmtDuration(read.ms)} ${read.word}`
 }
 
 /** The levels-per-hour card's caption — including WHY it is an em-dash when it is. */
-function rateSub(stats: RangeStats): string {
-  if (stats.levelsPerHourActive != null) return activeSpanText(stats.activeMs)
+function rateSub(stats: RangeStats, read: BasisRead): string {
+  // ORDER MATTERS, and the two denominator refusals are NOT the same sentence (JOS-288). A range
+  // with NO time of this kind at all is the older, more specific fact and keeps its own words; a
+  // range that has some but too little is the just-arrived case. Both outrank anything the
+  // numerator could say, because with no hour to divide by there is nothing to say about it yet.
+  if (pickRate(read, stats.levelsPerHourActive, stats.levelsPerHourWall) != null) return basisSpanText(read)
+  if (read.ms === 0) return `no ${read.word} time in this range`
+  if (!read.measurable) return `${basisSpanText(read)} - too short to state as a rate`
   if (stats.expSamples > 0) return 'the log stated no percentage in this range'
-  return 'no active time in this range'
+  return `no ${read.word} time in this range`
 }
 
 /** Dings in range as level runs. A loadout swap opens a NEW run: the level legitimately goes
@@ -209,15 +254,17 @@ function levelRangeSub(stats: RangeStats): string {
  * level range covered. Every value that can be unknown is an em-dash with a caption that
  * says which kind of unknown it is.
  */
-export function rangeHeroes(stats: RangeStats): HeroStat[] {
+export function rangeHeroes(stats: RangeStats, basis: RateBasis = RATE_BASIS_DEFAULT): HeroStat[] {
+  const read = basisRead(basis, stats)
   return [
     {
       id: 'rate',
-      value: rate(stats.levelsPerHourActive, formatLevelRate),
+      value: rate(pickRate(read, stats.levelsPerHourActive, stats.levelsPerHourWall), formatLevelRate),
       label: 'Levels per hour',
-      sub: rateSub(stats),
-      // The caption already says "over 2h 03m active"; this says what that hour is (JOS-249).
-      title: withActiveTime('Levels of progress per hour of active time.')
+      sub: rateSub(stats, read),
+      // The caption already says "over 2h 03m elapsed"; this says what that hour is (JOS-249), and
+      // says instead why there is no number when the stretch is too short to have one (JOS-288).
+      title: withBasis(`Levels of progress per hour of ${read.word} time.`, read)
     },
     { id: 'kills', value: stats.kills.toLocaleString(), label: 'Mobs killed', sub: killsSub(stats) },
     {
@@ -285,10 +332,44 @@ export const ACTIVE_TIME_TITLE =
   `Active time = the span shown minus every gap over ${IDLE_GAP_MS / MS_PER_MIN} minutes with no experience, credited kill, ` +
   'or loot line, and minus any stretch the log says you were logged out - not an AFK check, and not out-of-combat time.'
 
+/**
+ * WHAT THE OTHER DENOMINATOR IS, in one clause, wherever it is shown.
+ *
+ * It was written for the loot ledger (JOS-261, `lootRateText.ts`) and MOVED HERE in JOS-288 — beside
+ * its twin, and for the reason the twin's own doc gives: the two sentences define each other's
+ * complement, three more surfaces now show them as a pair, and `lootRateText.ts` importing this file
+ * while this file imported that one would be a cycle around one string. `lootRateText.ts` re-exports
+ * it, so every existing importer is untouched and there is still exactly one spelling.
+ *
+ * It is `RangeStats.levelsPerHourWall`'s denominator read out loud (`wallMs` = `durationMs -
+ * offlineMs`), and the sentence says what stays IN as well as what comes out: the point of this half
+ * of the pair is that the medding, the banking and the run back are counted, because you spent them.
+ */
+export const ELAPSED_TIME_TITLE =
+  'Elapsed time = the whole stretch the slice covers, including the idle time inside it, minus only ' +
+  'any stretch the log says you were logged out - so medding, banking and travelling stay in this denominator.'
+
+/** The defining sentence for each basis. One lookup, so no surface can pair a word with the wrong
+ *  definition (JOS-288). */
+export const BASIS_TITLE: Record<RateBasis, string> = {
+  active: ACTIVE_TIME_TITLE,
+  elapsed: ELAPSED_TIME_TITLE
+}
+
 /** `title` with the definition appended — the ONE way a surface that already had a hover sentence
  *  gains this one, so the two can never be separated by a copy-paste. */
 export function withActiveTime(title: string): string {
   return `${title} ${ACTIVE_TIME_TITLE}`
+}
+
+/**
+ * `title` with the definition of the hour actually in force, plus the refusal when there is not
+ * enough of that hour to divide by. The basis-aware `withActiveTime`, and the only way a rate
+ * surface should be building a hover since JOS-288.
+ */
+export function withBasis(title: string, read: BasisRead): string {
+  const definition = BASIS_TITLE[read.basis]
+  return read.measurable ? `${title} ${definition}` : `${RATE_TOO_SHORT_TITLE} ${definition}`
 }
 
 /**
@@ -363,12 +444,21 @@ export const AA_RESPEC_CAPTION = 'from the gain lines'
  * did without claiming the potion made AA arrive faster. It does not — it doubles what a
  * completion pays, never what a completion costs.
  */
-export function aaRateText(stats: RangeStats): string | null {
+export function aaRateText(stats: RangeStats, basis: RateBasis = RATE_BASIS_DEFAULT): string | null {
   if (stats.aaGainEvents === 0) return null
-  return `${rate(stats.aaPerHourActive, formatAaRate)} · ${rate(stats.aaPointsPerHourActive, formatPointRate)}`
+  const read = basisRead(basis, stats)
+  const completions = rate(pickRate(read, stats.aaPerHourActive, stats.aaPerHourWall), formatAaRate)
+  const points = rate(pickRate(read, stats.aaPointsPerHourActive, stats.aaPointsPerHourWall), formatPointRate)
+  return `${completions} · ${points}`
 }
 
 /** The AA-rate chip's tooltip — what each half measures, and what the hour under it is. */
+export function aaRateTitle(stats: RangeStats, basis: RateBasis = RATE_BASIS_DEFAULT): string {
+  const read = basisRead(basis, stats)
+  return withBasis(`AA completions and ability points per hour of ${read.word} time.`, read)
+}
+
+/** The pre-JOS-288 constant, kept for surfaces that state the active reading unconditionally. */
 export const AA_RATE_TITLE = withActiveTime('AA completions and ability points per hour of active time.')
 
 /**

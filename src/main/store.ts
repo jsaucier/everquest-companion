@@ -36,6 +36,7 @@ import { applyTimerOverlayKnobs } from '../shared/buffTimers'
 // The XP overlay's two persisted knobs (JOS-195) — each validated by the module that owns its
 // meaning, never by a predicate written here.
 import { normalizeXpRows } from '../shared/xpOverlay'
+import { normalizeRateBasis } from '../shared/rateBasis'
 import { isSliceId } from '../shared/timeslice'
 import type { ComboCorrection } from '../shared/classCombo'
 // The exaltation planner's sets. The validator is main-side and pure; it runs on the way OUT as
@@ -449,9 +450,10 @@ const DEFAULT_OVERLAY_CONFIG: Record<OverlayKind, OverlayConfig> = {
   // policy). The schema version is untouched and a store written by this build round-trips through
   // the previous one unchanged.
   //
-  // `xpRows` and `xpSlice` are ABSENT here on purpose rather than spelled out: absent is what each
-  // one's default MEANS (every row; this session), those meanings live beside the code that reads
-  // them, and writing them here would be a second copy of both.
+  // `xpRows`, `xpSlice` and `xpBasis` are ABSENT here on purpose rather than spelled out: absent is
+  // what each one's default MEANS (every row; the current zone this session — JOS-288 moved that
+  // from `session`; the elapsed hour), those meanings live beside the code that reads them, and
+  // writing them here would be a second copy of all three.
   xp: { open: false, locked: false, bgAlpha: 0.72, bounds: undefined, drill: null },
   // RESPAWN CLOCKS (JOS-194). Default off, no migration — the fourth restatement of the same
   // policy, and the argument above holds verbatim: `overlays.respawn` has never been written by
@@ -509,13 +511,20 @@ export function setOverlayConfig(kind: OverlayKind, patch: Partial<OverlayConfig
   // rule lives beside `isTimerOverlayKind` in shared/buffTimers.ts, which is what "which kinds
   // carry this knob" is a fact about.
   applyTimerOverlayKnobs(kind, next)
-  // THE XP WINDOW'S TWO KNOBS (JOS-195), rebuilt rather than trusted — the same argument as the
-  // drill and the grouping above: a renderer patch must not be able to widen what is persisted, and
-  // ABSENT is a real answer for both (every row; this session). `normalizeXpRows` drops unknown row
-  // ids, so a hand-edited store cannot switch on a row this build does not have.
+  // THE XP WINDOW'S THREE KNOBS (JOS-195, plus the rate basis in JOS-288), rebuilt rather than
+  // trusted — the same argument as the drill and the grouping above: a renderer patch must not be
+  // able to widen what is persisted, and ABSENT is a real answer for all three (every row; the
+  // current zone this session; the elapsed hour). `normalizeXpRows` drops unknown row ids, so a
+  // hand-edited store cannot switch on a row this build does not have.
   const xpRows = normalizeXpRows(next.xpRows)
   if (xpRows && kind === 'xp') next.xpRows = xpRows
   else delete next.xpRows
+  // The rate basis is checked against its own closed union for `normalizeXpRows`' reason: a store
+  // that came back with a third denominator would put a number on screen under an hour no surface
+  // here can name. Unknown ⇒ absent ⇒ `RATE_BASIS_DEFAULT`, which is the honest degrade.
+  const xpBasis = normalizeRateBasis(next.xpBasis)
+  if (xpBasis && kind === 'xp') next.xpBasis = xpBasis
+  else delete next.xpBasis
   // The slice id is checked against the closed union, never against what the log can currently
   // define: `resolveSliceId` in the renderer already degrades a pick this record cannot answer, and
   // a store that forgot the user's choice because they happened to relaunch mid-session would be

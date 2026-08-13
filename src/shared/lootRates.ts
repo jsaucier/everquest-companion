@@ -49,6 +49,9 @@
 //      the only pair that cannot be mistaken for each other. So `windowLootRates` divides once by
 //      each and hands back both, each beside the span it was measured over; a surface that shows
 //      one alone must say WHICH one, in the words `lootRateText.ts` already spells.
+//      SINCE JOS-288 `windowItemRows` does the same PER ITEM — the XP overlay's mote rows are the
+//      caller that needed it, and a row carrying only the half its first caller printed is how the
+//      second caller ends up on a quietly different denominator.
 //
 //      THE WALL DENOMINATOR IS THE ONE THIS REPO ALREADY HAS: `durationMs - offlineMs`, exactly
 //      `RangeStats.levelsPerHourWall`'s (see that field). A logout the log CLOSED with a login
@@ -59,7 +62,10 @@
 
 import type { LootEvent } from './types'
 import type { ZoneRangeRow } from './progressionStats'
-import { zoneIdKey } from './progressionStats'
+// `wallMs` is rule 5's denominator as a function (JOS-288): the subtraction below used to be
+// spelled out here, and once the AA rates and the XP overlay needed the same one, a per-file
+// spelling became the drift law 12 warns about. Imported, never re-typed.
+import { wallMs, zoneIdKey } from './progressionStats'
 // The slice's MEMBERSHIP fold — coarser than the join's on purpose (see `WindowItemArgs.zoneKey`
 // and `RangeStatsArgs.zoneKey`). The JOIN below still runs on `zoneIdKey`, which is rule 2.
 import { zoneKey } from './zones'
@@ -189,6 +195,15 @@ export interface WindowItemRow {
   events: number
   /** Drops per hour of the window's ACTIVE time. Null when the window has none (rule 3). */
   dropsPerHourActive: number | null
+  /**
+   * Drops per hour of the window's ONLINE WALL time (`wallMs`) — rule 5's other denominator, per
+   * item (JOS-288). Null when the window is entirely offline (rule 3).
+   *
+   * BOTH ARE ALWAYS COMPUTED, exactly as `windowLootRates` computes both: rule 5 says the pair is
+   * what makes neither reading mistakable for the other, and a row that carried only the half its
+   * first caller happened to print is how the second caller gets a subtly different denominator.
+   */
+  dropsPerHourWall: number | null
   firstTs: number
   lastTs: number
 }
@@ -200,17 +215,20 @@ export interface WindowItemArgs {
   t0: number
   t1: number
   /**
-   * The scope's ACTIVE ms — `RangeStats.activeMs`, the denominator every other rate on the
-   * Leveling tab already divides by. Passed in rather than re-derived: a second active-time
-   * derivation is precisely what windowScope.ts exists to prevent.
+   * The scope's spans — `rangeStats(...)` for THIS window, assignable verbatim (`WindowSpans`).
+   *
+   * Passed in rather than re-derived: a second active-time derivation is precisely what
+   * windowScope.ts exists to prevent. It is the WHOLE spans object rather than a bare `activeMs`
+   * (JOS-288) for the same reason `windowLootRates` takes one — the two denominators travel
+   * together or they drift apart.
    */
-  activeMs: number
+  spans: WindowSpans
   /**
    * The slice's zone restriction (JOS-130) — a `shared/zones.zoneKey` fold (the MEMBERSHIP fold,
    * which strips instance noise), or null/absent for every zone.
    *
-   * It must be applied HERE and not by the caller, because `activeMs` above already is the zone's
-   * own active time when the slice carries one: counting every zone's drops against one zone's
+   * It must be applied HERE and not by the caller, because `spans` above is already the zone's
+   * own time when the slice carries one: counting every zone's drops against one zone's
    * hours is the exact mismatch rule 2 exists to prevent. A row with NO zone belongs to the
    * `unknown` stretch and so matches only a filter for `unknown`.
    */
@@ -230,14 +248,24 @@ export interface WindowItemArgs {
  * past the newest event so the live edge is inside every scope).
  */
 export function windowItemRows(args: WindowItemArgs): WindowItemRow[] {
-  const { events, t0, t1, activeMs } = args
+  const { events, t0, t1, spans } = args
+  const wall = wallMs(spans)
   const rows = new Map<string, WindowItemRow>()
   for (const e of events) {
     if (!inWindow(e, t0, t1, args.zoneKey)) continue
     const key = e.item.toLowerCase()
     let row = rows.get(key)
     if (!row) {
-      row = { key, item: e.item, drops: 0, events: 0, dropsPerHourActive: null, firstTs: e.ts, lastTs: e.ts }
+      row = {
+        key,
+        item: e.item,
+        drops: 0,
+        events: 0,
+        dropsPerHourActive: null,
+        dropsPerHourWall: null,
+        firstTs: e.ts,
+        lastTs: e.ts
+      }
       rows.set(key, row)
     }
     row.drops += dropsOf(e)
@@ -246,7 +274,10 @@ export function windowItemRows(args: WindowItemArgs): WindowItemRow[] {
     row.lastTs = Math.max(row.lastTs, e.ts)
   }
   const out = [...rows.values()]
-  for (const row of out) row.dropsPerHourActive = perHour(row.drops, activeMs)
+  for (const row of out) {
+    row.dropsPerHourActive = perHour(row.drops, spans.activeMs)
+    row.dropsPerHourWall = perHour(row.drops, wall)
+  }
   return out.sort((a, b) => b.drops - a.drops || b.lastTs - a.lastTs || a.item.localeCompare(b.item))
 }
 
@@ -316,13 +347,13 @@ export function windowLootRates(args: WindowRatesArgs): WindowLootRates {
     drops += dropsOf(e)
     lines += 1
   }
-  const wallMs = Math.max(0, spans.durationMs - spans.offlineMs)
+  const wall = wallMs(spans)
   return {
     drops,
     events: lines,
     activeMs: spans.activeMs,
-    wallMs,
+    wallMs: wall,
     dropsPerHourActive: perHour(drops, spans.activeMs),
-    dropsPerHourWall: perHour(drops, wallMs)
+    dropsPerHourWall: perHour(drops, wall)
   }
 }

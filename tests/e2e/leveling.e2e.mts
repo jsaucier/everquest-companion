@@ -40,7 +40,8 @@
  *      at their own centre. Steps 7/7b live in `levelingLayoutSteps.mts`;
  *   8. (JOS-78) the IN-WINDOW DROPS panel is mounted with the tab, states its empty window rather
  *      than drawing a blank box, and fills from loot the harness plays into the tailed file —
- *      ordered by observed drops, each row stating a count and a rate over a STATED active span;
+ *      ordered by observed drops, each row stating a count and a rate over a STATED span that
+ *      names its hour (JOS-288: elapsed by default, active behind the tab's basis toggle);
  *   9. and clicking a row opens that item's Loot drill-down (with its own per-zone drop-rate
  *      table) through the app's ONE navigation seam, so Back NAMES the Leveling tab and returns
  *      here (the JOS-43 law, on the app's newest cross-view link). Steps 8/9 live in

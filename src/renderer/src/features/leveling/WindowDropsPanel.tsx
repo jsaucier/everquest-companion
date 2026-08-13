@@ -27,7 +27,9 @@ import { windowItemRows, type WindowItemRow } from '@shared/lootRates'
 import { formatDropRate } from '../../lib/formatRate'
 import { EQ_ITEM_COLORS } from '../../lib/ItemWindow'
 import { useLootHistory } from '../loot/useLootHistory'
-import { ACTIVE_TIME_TITLE, NONE, activeSpanText } from './rangeStatsRows'
+import { basisRead, pickRate, type BasisRead } from '@shared/rateBasis'
+import { useRateBasis } from '../timeslice/useRateBasis'
+import { NONE, basisSpanText, withBasis } from './rangeStatsRows'
 import type { ScopedStats } from './windowScope'
 
 export interface WindowDropsPanelProps {
@@ -55,18 +57,29 @@ function useScopedDrops(scope: ScopedStats): WindowItemRow[] {
         events,
         t0: scope.range.t0,
         t1: scope.range.t1,
-        activeMs: scope.stats.activeMs,
-        // BOTH halves of the slice (JOS-130). `activeMs` above is already the zone's own active
-        // time when the slice carries a zone, so counting every zone's drops against it would
-        // put a rate under a denominator it was never measured over.
+        // The scope's own spans, whole (JOS-288) — `RangeStats` is assignable to `WindowSpans`, so
+        // both denominators arrive together and the panel picks the one in force.
+        spans: scope.stats,
+        // BOTH halves of the slice (JOS-130). `spans` above is already the zone's own time when
+        // the slice carries a zone, so counting every zone's drops against it would put a rate
+        // under a denominator it was never measured over.
         zoneKey: scope.zoneKey
       }),
     [events, scope]
   )
 }
 
-function DropRow({ row, onOpenItem }: { row: WindowItemRow; onOpenItem?: (item: string) => void }): JSX.Element {
-  const rate = row.dropsPerHourActive == null ? NONE : formatDropRate(row.dropsPerHourActive)
+function DropRow({
+  row,
+  read,
+  onOpenItem
+}: {
+  row: WindowItemRow
+  read: BasisRead
+  onOpenItem?: (item: string) => void
+}): JSX.Element {
+  const perHour = pickRate(read, row.dropsPerHourActive, row.dropsPerHourWall)
+  const rate = perHour == null ? NONE : formatDropRate(perHour)
   return (
     <Stack direction="row" spacing={1} alignItems="baseline" sx={{ py: 0.35 }} data-testid="leveling-drop-row">
       <Box sx={{ flexGrow: 1, minWidth: 0 }}>
@@ -112,7 +125,10 @@ function DropRow({ row, onOpenItem }: { row: WindowItemRow; onOpenItem?: (item: 
 
 export function WindowDropsPanel({ scope, onOpenItem }: WindowDropsPanelProps): JSX.Element {
   const rows = useScopedDrops(scope)
-  const activeMs = scope.stats.activeMs
+  // ONE basis read for the panel (JOS-288): the caption's span and every row's denominator are the
+  // same number, and the just-arrived gate fires once for all of them.
+  const { basis } = useRateBasis()
+  const read = basisRead(basis, scope.stats)
   return (
     <Paper
       variant="outlined"
@@ -133,11 +149,12 @@ export function WindowDropsPanel({ scope, onOpenItem }: WindowDropsPanelProps): 
         display="block"
         // The span every drops/hr on this panel divides by, so it hovers what that span IS
         // (JOS-249). Native title, no popper.
-        title={rows.length > 0 ? ACTIVE_TIME_TITLE : undefined}
+        title={rows.length > 0 ? withBasis('How much of this window the rates below are per.', read) : undefined}
       >
         {/* ONE span for the whole panel — every rate below divides by it, stated once rather
             than repeated on every row. Nothing is said when there is nothing to measure. */}
-        {rows.length > 0 ? activeSpanText(activeMs) : null}
+        {rows.length > 0 ? basisSpanText(read) : null}
+        {rows.length > 0 && !read.measurable ? ' · too short to rate' : null}
       </Typography>
       {rows.length === 0 && (
         // An empty window is a STATE and says which window it is empty for. A silently blank box
@@ -149,7 +166,7 @@ export function WindowDropsPanel({ scope, onOpenItem }: WindowDropsPanelProps): 
       {/* The list owns the scroll — a long window can hold hundreds of distinct items. */}
       <Box sx={{ flexGrow: 1, minHeight: 0, overflow: 'auto', pr: 0.75 }}>
         {rows.map((r) => (
-          <DropRow key={r.key} row={r} onOpenItem={onOpenItem} />
+          <DropRow key={r.key} row={r} read={read} onOpenItem={onOpenItem} />
         ))}
       </Box>
     </Paper>

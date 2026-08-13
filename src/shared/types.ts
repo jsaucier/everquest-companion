@@ -18,6 +18,7 @@ import type { TimerGrouping } from './buffTimers'
 // close (both files import from here) are erased at compile time, and each union lives beside the
 // code that gives it meaning rather than in this file, which is at its factoring ceiling.
 import type { XpRowId } from './xpOverlay'
+import type { RateBasis } from './rateBasis'
 import type { SliceId } from './timeslice'
 // Same posture for the inventory dump's baseline (JOS-128): ProgressState names the blob, and
 // ./outputs/baseline owns its shape beside the rules that produce and read it. Type-only, so
@@ -207,16 +208,34 @@ export interface OverlayConfig {
    * WHICH STRETCH THAT WINDOW MEASURES (JOS-195) — one id from the app-wide slice vocabulary
    * (shared/timeslice.ts, JOS-130), which is also where JOS-71's duration rungs live now.
    *
-   * ABSENT MEANS `session`, and that default is the ticket's: a floating pace read is something
-   * you glance at while playing, and "how am I doing right now" is this session rather than the
-   * whole record. It DEGRADES rather than sticks — a log that states no logout cannot define a
-   * session, and `resolveSliceId` falls back to `all` exactly as the tab's control does.
+   * ABSENT MEANS `zoneSession` (owner ruling, JOS-288 — it was `session` from JOS-195 until then).
+   * A floating pace read is asking "how am I doing right now", and the audit measured what the
+   * session slice alone does to that answer: across a loadout swap the session's `levelEquiv` sums
+   * straight over the LEVEL-50 leg that preceded it, so the same instant read 7.03 lvl/hr in
+   * `zoneSession` and a diluted figure in `session`, and the scope disagreement against `all` was
+   * 10x. The camp you are standing in, this session, is the stretch the number is about.
+   *
+   * It DEGRADES rather than sticks — a preset this record cannot define is not offered, and
+   * `resolveSliceId` falls back to `all` exactly as the tab's control does.
    *
    * It is remembered per window like position is, not shared with the main app's pick: the two
    * are read at different moments, and a slice chosen on the Loot tab has no business silently
    * re-scoping a window floating over the game.
    */
   xpSlice?: SliceId
+  /**
+   * WHICH HOUR THAT WINDOW'S RATES ARE PER (JOS-288) — `elapsed` or `active`, the loot ledger's own
+   * two words (`shared/rateBasis.ts` owns the vocabulary and the ruling).
+   *
+   * ABSENT MEANS `elapsed`, which is the default the owner ruled for and also the denominator the
+   * next-level ETA in this very window has always divided by. The toggle lives in the footer beside
+   * the row checklist, so the other reading is one click away and the window never shows a number
+   * without naming the hour under it.
+   *
+   * Present only on the 'xp' kind; `setOverlayConfig` deletes it everywhere else, exactly as it does
+   * for `xpRows` and `xpSlice`.
+   */
+  xpBasis?: RateBasis
 }
 
 // The overlays TEXT SIZE (owner feedback 2026-08-05) lives in ./overlayTextScale.ts and is

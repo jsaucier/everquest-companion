@@ -229,6 +229,17 @@ test('itemZoneRows: no loot at all ⇒ no rows (the question is where it drops, 
 // ── 4 + 5. the window panel ──────────────────────────────────────────────────────────────
 
 /**
+ * THE SPANS `windowItemRows` DIVIDES BY (JOS-288 moved it from a bare `activeMs` to this shape).
+ *
+ * It takes the whole `WindowSpans` object now — the same one `windowLootRates` has always taken —
+ * because it hands back BOTH rates now, and rule 5's argument for the pair applies per item exactly
+ * as it does in aggregate. These two fixtures are what the old `activeMs: HOUR` / `activeMs: 0`
+ * arguments meant: a fully-active hour with no logout in it, and the same hour with no active time.
+ */
+const FULL_HOUR = { durationMs: HOUR, activeMs: HOUR, offlineMs: 0 }
+const NO_ACTIVE = { durationMs: HOUR, activeMs: 0, offlineMs: 0 }
+
+/**
  * HALF-OPEN `[t0, t1)`, the same convention `rangeStats` uses. The tab's scope and this panel
  * must agree about which events are inside it, or the drops list and the numbers beside it are
  * describing two different stretches.
@@ -240,7 +251,7 @@ test('windowItemRows: membership is half-open [t0, t1) — the low edge is in, t
     loot(T0 + 30 * MIN, 'Ruby', "Nagafen's Lair"),
     loot(T0 + HOUR, 'Ruby', "Nagafen's Lair")
   ]
-  const rows = windowItemRows({ events, t0: T0, t1: T0 + HOUR, activeMs: HOUR })
+  const rows = windowItemRows({ events, t0: T0, t1: T0 + HOUR, spans: FULL_HOUR })
   assert.equal(rows.length, 1)
   assert.equal(rows[0].drops, 2, 'the event AT t1 is excluded and the one AT t0 is included')
   assert.equal(rows[0].firstTs, T0)
@@ -258,7 +269,7 @@ test('windowItemRows: ordered by observed drops, and a stack counts its size', (
     loot(T0 + 3 * MIN, 'Mote of Infinitesimal Potential', "Nagafen's Lair"),
     loot(T0 + 4 * MIN, 'Bone Chips', "Nagafen's Lair", 5)
   ]
-  const rows = windowItemRows({ events, t0: T0, t1: T0 + HOUR, activeMs: HOUR })
+  const rows = windowItemRows({ events, t0: T0, t1: T0 + HOUR, spans: FULL_HOUR })
   assert.deepEqual(
     rows.map((r) => [r.item, r.drops, r.events]),
     [
@@ -280,7 +291,7 @@ test('windowItemRows: ties break on recency then name (nothing reshuffles betwee
     loot(T0 + 1 * MIN, 'Jacinth', 'z'),
     loot(T0 + 2 * MIN, 'Diamond', 'z')
   ]
-  const order = (): string[] => windowItemRows({ events, t0: T0, t1: T0 + HOUR, activeMs: HOUR }).map((r) => r.item)
+  const order = (): string[] => windowItemRows({ events, t0: T0, t1: T0 + HOUR, spans: FULL_HOUR }).map((r) => r.item)
   assert.deepEqual(order(), ['Ruby', 'Diamond', 'Jacinth'])
   assert.deepEqual(order(), ['Ruby', 'Diamond', 'Jacinth'], 'the sort is stable across calls')
 })
@@ -298,7 +309,7 @@ test('windowItemRows: identity is the ledger’s raw lowercase key — a +N vari
     ],
     t0: T0,
     t1: T0 + HOUR,
-    activeMs: HOUR
+    spans: FULL_HOUR
   })
   assert.deepEqual(
     rows.map((r) => [r.item, r.drops]),
@@ -309,17 +320,33 @@ test('windowItemRows: identity is the ledger’s raw lowercase key — a +N vari
   )
 })
 
-/** A window with no active time states no rate at all — the em-dash rule, one level up. */
+/**
+ * A window with no active time states no ACTIVE rate at all — the em-dash rule, one level up.
+ *
+ * AND SINCE JOS-288 IT STILL STATES THE ELAPSED ONE, which is the whole point of carrying both: an
+ * hour you spent entirely idle paid one Ruby per elapsed hour and measured nothing per active hour,
+ * and those are two different true sentences about the same sixty minutes. Only the denominator
+ * that came up empty goes null; the other keeps answering.
+ */
 test('windowItemRows: a window with no active time states NULL rates, never 0.00', () => {
-  const rows = windowItemRows({ events: [loot(T0, 'Ruby', 'z')], t0: T0, t1: T0 + HOUR, activeMs: 0 })
+  const rows = windowItemRows({ events: [loot(T0, 'Ruby', 'z')], t0: T0, t1: T0 + HOUR, spans: NO_ACTIVE })
   assert.equal(rows[0].drops, 1)
   assert.equal(rows[0].dropsPerHourActive, null)
+  assert.equal(rows[0].dropsPerHourWall, 1, 'the elapsed hour was real, and it paid one drop')
+  // …and the mirror case: a window that was entirely a logout has no elapsed hour either.
+  const offline = windowItemRows({
+    events: [loot(T0, 'Ruby', 'z')],
+    t0: T0,
+    t1: T0 + HOUR,
+    spans: { durationMs: HOUR, activeMs: 0, offlineMs: HOUR }
+  })
+  assert.equal(offline[0].dropsPerHourWall, null, 'a logout is carved out of the elapsed denominator')
 })
 
 /** An empty window is a first-class state: no rows, and the panel says which window it is. */
 test('windowItemRows: nothing in range ⇒ no rows', () => {
   assert.deepEqual(
-    windowItemRows({ events: [loot(T0, 'Ruby', 'z')], t0: T0 + HOUR, t1: T0 + 2 * HOUR, activeMs: HOUR }),
+    windowItemRows({ events: [loot(T0, 'Ruby', 'z')], t0: T0 + HOUR, t1: T0 + 2 * HOUR, spans: FULL_HOUR }),
     []
   )
 })
@@ -418,7 +445,7 @@ test('windowLootRates: membership is half-open and zone-filtered, exactly like w
   assert.equal(inZone.drops, 1, 'and a zone-restricted slice counts only that zone’s rows')
   // The counts agree with the per-item derivation over the same window — one membership test.
   assert.equal(
-    windowItemRows({ events, t0: T0, t1: T0 + HOUR, activeMs: HOUR }).reduce((n, r) => n + r.drops, 0),
+    windowItemRows({ events, t0: T0, t1: T0 + HOUR, spans: FULL_HOUR }).reduce((n, r) => n + r.drops, 0),
     2
   )
 })

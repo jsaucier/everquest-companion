@@ -85,6 +85,13 @@ export interface CurrentLevelRead {
    * two cases where the number alone is not the whole fact: when your own `/who` is what stated
    * it (so the player can see their correction landed), and when the last thing that stated it
    * is old enough for an unlogged swap to be hiding behind it.
+   *
+   * AND THE TWO CASES COMPOSE (JOS-288). Until then a `/who` cue was the bare word whatever its
+   * age, so a 25-hour-old `/who` rendered exactly like a 4-second-old one while a 7-hour-old ding
+   * said `7h 0m ago` — the STALER statement looked the FRESHER of the two. Provenance and age are
+   * different facts about the same statement and staleness is a property of the statement, not of
+   * the source that made it: an old `/who` is behind an unlogged loadout swap for precisely the
+   * reason an old ding is. So a stale `/who` now wears both, `/who 25h 0m ago`.
    */
   cue: string
   /** the hover sentence — provenance, age, and the caveat when there is one */
@@ -158,8 +165,14 @@ export function currentLevelRead(
   const ageMs = Math.max(0, snap.lastTs - statement.ts)
   const stale = ageMs >= LEVEL_STALE_MS
   const words = SOURCE_WORDS[statement.source]
-  const title = `${words.said}, ${agoText(ageMs)} ago.${stale ? ` ${STALE_CAVEAT}` : ''}`
-  const cue = statement.source === 'who' ? '/who' : stale ? `${agoText(ageMs)} ago` : ''
+  const age = `${agoText(ageMs)} ago`
+  const title = `${words.said}, ${age}.${stale ? ` ${STALE_CAVEAT}` : ''}`
+  // AGE AND PROVENANCE COMPOSE — see `CurrentLevelRead.cue`. The ding's cue is the age alone
+  // because "level-up" is what a bare level already implies; the `/who` cue keeps its word because
+  // a correction the player typed is worth seeing land, and gains the age once it is old enough to
+  // have a swap hiding behind it.
+  const who = statement.source === 'who'
+  const cue = who ? (stale ? `/who ${age}` : '/who') : stale ? age : ''
   return {
     level: statement.level,
     source: statement.source,

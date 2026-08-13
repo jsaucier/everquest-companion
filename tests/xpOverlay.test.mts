@@ -19,7 +19,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { LootEvent } from '../src/shared/types'
 import type { ProgressionSnap } from '../src/shared/progressionTypes'
-import { resolveSlice, type SliceId } from '../src/shared/timeslice'
+import { availableSlices, resolveSlice, resolveSliceId, type SliceId } from '../src/shared/timeslice'
 import {
   XP_ROW_IDS,
   isMote,
@@ -92,8 +92,14 @@ function loot(item: string, msBeforeEnd: number, zone: string, count?: number): 
   return { ts: T0 - msBeforeEnd, item, zone, count }
 }
 
-/** The view, over the slice `id` — the same three calls the overlay component makes. */
-function view(snap: ProgressionSnap, events: LootEvent[], id: SliceId = 'all', visible?: string[]): ReturnType<typeof xpOverlayView> {
+/** The view, over the slice `id` — the same three calls the overlay component makes. WHICH HOUR the
+ *  rates are per is the shipped default here (elapsed); the toggle is pinned in tests/rateBasis. */
+function view(
+  snap: ProgressionSnap,
+  events: LootEvent[],
+  id: SliceId = 'all',
+  visible?: string[]
+): ReturnType<typeof xpOverlayView> {
   const bounds = dataBounds(snap, [])
   return xpOverlayView({
     snap,
@@ -171,13 +177,28 @@ test('motes are ordered by what was OBSERVED, and a stack counts as its size', (
     loot('Mote of Lesser Potential', 30 * MIN, zone, 3),
     loot('Bone Chips', 20 * MIN, zone, 9)
   ]
-  const rows = moteRates({ events, t0: T0 - HOUR, t1: T0 + 1, activeMs: HOUR })
+  // JOS-288: the spans travel as one object (lootRates rule 5 — both denominators or neither), and
+  // every mote row now carries both rates. This hour was fully active with no logout in it, so the
+  // two are the same number here, which is exactly what an unremarkable hour looks like.
+  const spans = { durationMs: HOUR, activeMs: HOUR, offlineMs: 0 }
+  const rows = moteRates({ events, t0: T0 - HOUR, t1: T0 + 1, spans })
   assert.deepEqual(rows.map((r) => r.tier), ['Lesser', 'Infinitesimal'], 'the stack of 3 outranks two lines')
   assert.deepEqual(rows.map((r) => r.drops), [3, 2])
   // Nothing in this repo ranks the ten tiers, so the top row is only ever "the one you looted
   // most" — Bone Chips is simply not a mote and never enters at all.
   assert.equal(rows.length, 2)
   assert.equal(rows[0].perHourActive, 3, '3 in an hour of active time')
+  assert.equal(rows[0].perHourWall, 3, 'and 3 in an hour of elapsed time, which this hour also was')
+  // …and the two part company the moment the hour holds a silence: half of it idle is the same
+  // three drops over half the active time.
+  const halfIdle = moteRates({
+    events,
+    t0: T0 - HOUR,
+    t1: T0 + 1,
+    spans: { durationMs: HOUR, activeMs: HOUR / 2, offlineMs: 0 }
+  })
+  assert.equal(halfIdle[0].perHourActive, 6)
+  assert.equal(halfIdle[0].perHourWall, 3, 'the medding stays in the elapsed denominator, deliberately')
 })
 
 test('a slice with no mote says so, once, instead of leaving a blank section', () => {
@@ -360,9 +381,14 @@ test('a refused projection is an em-dash WITH ITS REASON, never a number', () =>
   assert.equal(v.rows.find((r) => r.id === 'eta')?.detail, '', 'nothing is claimed about a level')
 })
 
+/**
+ * THE SPAN LINE IS THE TIME SPENT IN THE SCOPE (owner ruling 2, JOS-288) AND THE DENOMINATOR THE
+ * RATES DIVIDED BY, which are the same number by construction — the window states one hour and
+ * measures over it. The word moved from `active` to `elapsed` with the default (ruling 3).
+ */
 test('the window states the span every rate on it divides by', () => {
   const snap = farming({ pct: 1 })
-  assert.equal(view(snap, []).span, 'over 1h 0m active')
+  assert.equal(view(snap, []).span, 'over 1h 0m elapsed')
 })
 
 // ---------------------------------------------------------------------------------------
@@ -381,12 +407,51 @@ test('SESSION is a narrower stretch than ALL, and every number follows it', () =
   ]
   const session = view(snap, events, 'session')
   const all = view(snap, events, 'all')
-  assert.equal(session.span, 'over 20m active')
+  assert.equal(session.span, 'over 20m elapsed')
   assert.notEqual(all.span, session.span)
   // The drop from before the logout is outside this session, so the mote row counts one.
   assert.equal(session.rows.find((r) => r.row === 'motes')?.detail, '1×')
   assert.equal(all.rows.find((r) => r.row === 'motes')?.detail, '2×')
 })
+
+/**
+ * THE DEFAULT SCOPE IS `Zone + Session` (owner ruling 1, JOS-288).
+ *
+ * The component reads `config?.xpSlice ?? 'zoneSession'` through `resolveSliceId`, so what is pinned
+ * here is the pair of facts that ruling rests on: the id is offerable exactly when BOTH halves are,
+ * and it is a genuinely different measurement from either half alone — the audit measured a 10x
+ * disagreement against `all`, because `levelEquiv` sums straight across a loadout-swap boundary.
+ */
+test('Zone + Session is offered only when both halves are, and degrades to the whole log otherwise', () => {
+  const bare = farming({ pct: 1 })
+  const bounds = dataBounds(bare, [])
+  assert.equal(availableSlices(bare, bounds).includes('zoneSession'), false, 'no logout ⇒ no session half')
+  assert.equal(resolveSliceId('zoneSession', bare, bounds), 'all', 'so the shipped default degrades honestly')
+
+  const both = farming({ pct: 1 })
+  both.offlineStart.push(T0 - 40 * MIN)
+  both.offlineEnd.push(T0 - 20 * MIN)
+  both.offlineCamped.push(1)
+  const b2 = dataBounds(both, [])
+  assert.equal(availableSlices(both, b2).includes('zoneSession'), true)
+  assert.equal(resolveSliceId('zoneSession', both, b2), 'zoneSession')
+})
+
+test('Zone + Session measures the CAMP this session, not everything since the login', () => {
+  const snap = farming({ pct: 1, zone: 'Befallen' })
+  snap.offlineStart.push(T0 - 40 * MIN)
+  snap.offlineEnd.push(T0 - 20 * MIN)
+  snap.offlineCamped.push(1)
+  const events = [
+    // Same session, a DIFFERENT camp: in `session`, out of `zoneSession`. This is the audit's own
+    // dilution in miniature — the session slice answers for a stretch you have left.
+    loot('Mote of Minor Potential', 15 * MIN, 'Plane of Sky'),
+    loot('Mote of Minor Potential', 5 * MIN, 'Befallen')
+  ]
+  assert.equal(view(snap, events, 'session').rows.find((r) => r.row === 'motes')?.detail, '2×')
+  assert.equal(view(snap, events, 'zoneSession').rows.find((r) => r.row === 'motes')?.detail, '1×')
+})
+
 
 test('a record that states no logout cannot define a session — the pick degrades to the whole log', () => {
   const snap = farming({ pct: 1 })
