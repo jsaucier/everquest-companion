@@ -65,8 +65,10 @@
 // ===========================================================================
 // RESEARCH — the item upgrade (tier) + exaltation mechanic
 // Sources: eqlwiki.com pages "Item Upgrade System", "Exaltations", "Mote Guide",
-// "Marketplace", "Patch Notes" (read 2026-08-02). Everything below is quoted mechanics,
-// not inference; anything the wiki doesn't say is deliberately absent.
+// "Marketplace", "Patch Notes" (read 2026-08-02), PLUS — for the stat arithmetic, and
+// overruling the prose pages on it — the wiki's own ItemLevelSlider ResourceLoader module
+// (`load.php?modules=ext.itemLevelSlider`, extracted 2026-08-13). Everything below is
+// quoted mechanics, not inference; anything the wiki doesn't say is deliberately absent.
 //
 // TIERS ("item level"). All gear starts at tier 0 and can reach tier 10. You raise it by
 // MERGING: consume another copy of the same item, or a Mote of Potential, to add item
@@ -74,12 +76,38 @@
 // T+1 costs 2^T exp, so total exp for tier T is 2^T − 1. The in-game window's
 // "Tier N   x / y" row is exactly (exp banked toward the next tier) / (2^N) — which is
 // why the screenshots read "Tier 1  0 / 2" and "Tier 7  3 / 128".
-//   Stat effect: +10% cumulative per tier, applied to the item's base stats and rounded
-//   DOWN; a +1 minimum increase is guaranteed at each tier boundary; partial exp gives a
-//   partial (mid-tier) bonus of tier% + (percent-toward-next / 10); weapon DAMAGE scales
-//   +5%/tier; weapon DELAY never drops; weight shrinks but never below 0.1.
+//
+//   STAT EFFECT — CORRECTED 2026-08-13 (JOS-281). What stood here was read off the wiki's
+//   PROSE pages and was wrong three ways: it claimed one flat "+10% per tier, rounded DOWN"
+//   for every stat, a separate "+1 minimum increase per tier" floor rule, and "+5%/tier" for
+//   weapon DAMAGE. The authority is not the prose — it is the wiki's OWN CALCULATOR, the
+//   ItemLevelSlider module every item page runs when a reader drags the level slider. That
+//   algorithm is ported exactly (rounding, branches and all) in `src/shared/itemUpgrade.ts`;
+//   read that file's header for the rules and tests/itemUpgrade.test.mts for the numbers.
+//   In brief:
+//     - the state is a `full` tier plus a `fraction` out of 2^full, so a mid-tier item
+//       scales by a FRACTIONAL level — there is no separate "partial bonus" term;
+//     - a PRIMARY stat (AC, the seven attributes, HP/MP/END, every SV) at base > 10 is
+//       floor(base + round(base * effective / 10)): the increment rounds HALF-AWAY-FROM-ZERO
+//       BEFORE it is added and the SUM is floored (WIS 15 at tier 2+3/4 is 19, not 20). At
+//       base 1..10 it is simply base + tier with the FRACTION IGNORED — that branch is what
+//       the old "+1 minimum" note was actually describing, and it is a branch, never a floor
+//       laid over a percentage. A NEGATIVE stat shrinks toward zero by the tier and stops at 0;
+//     - weapon DAMAGE is base + floor(base * effective / 10) — +10% per level, NOT +5%
+//       (Thelvorn at tier 2+3/4 reads DMG 25; +5%/tier would say 22, and the screenshot
+//       says 25). Weapon DELAY never scales, which is where the ratio gain comes from;
+//     - WEIGHT shrinks on a log curve in total progression and is CEILED to one decimal.
+//       The old "never below 0.1" was an ENTRY GUARD misread as an output clamp: an item
+//       already at or under 0.1 is not touched at all, and the output clamps at 0;
+//     - an upgraded item with two or more attribute/save fields also gains a synthetic
+//       `SV VOID: +tier` line.
+//   `tierBonusPct` (shared/itemStats.ts) survives all of this as the window's LABEL only —
+//   the "+N% stats" headline — and is not arithmetic any individual stat goes through.
 //   The upgraded item's DISPLAY NAME carries the tier as a ` +N` suffix ("Cloak of
 //   Flames +4"), which is the only tier signal that ever reaches the log.
+//
+//   DEAD DATA: the wiki page `MediaWiki:ItemLevelMultipliers` ({1:1.3, 2:1.6, …}) is loaded
+//   by nothing, contradicts the real progression, and must not be ported.
 //
 // EXALTATIONS (the "slot rows" that vary between screenshots). Every item has exaltation
 // SOCKETS whose count is set by its item level, unlocking progressively:

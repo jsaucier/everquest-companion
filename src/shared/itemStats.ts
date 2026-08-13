@@ -370,7 +370,13 @@ export function expToNextTier(tier: number): number | null {
   return 2 ** tier
 }
 
-/** Cumulative stat bonus at a tier: +10% per tier. */
+/**
+ * The window's HEADLINE LABEL at a tier ("+30% stats"): 10% per tier, and nothing more.
+ *
+ * It is NOT the arithmetic any individual stat goes through — that is `itemUpgrade.ts`,
+ * the exact port of the wiki's own ItemLevelSlider calculator, where each stat class has
+ * its own branch and rounding (JOS-281). Never multiply a stat by this number.
+ */
 export function tierBonusPct(tier: number): number {
   return Math.max(0, Math.min(ITEM_MAX_TIER, tier)) * 10
 }
