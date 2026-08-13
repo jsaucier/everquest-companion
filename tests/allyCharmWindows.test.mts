@@ -33,6 +33,10 @@
 // The state-machine half — the shapes no real line in this corpus prints — is at the bottom,
 // driven through `AllyCharms` directly and labelled as such.
 //
+// JOS-270 SPLIT OFF NEXT DOOR (tests/allyPetLifecycle.test.mts): which ENDINGS a bind wears
+// depends on what the evidence says the creature is, and the hold now measures silence rather
+// than a spell's listed duration. Everything measured here is unchanged by it.
+//
 // Regenerate the fixtures with `npm run fixtures:combat -- <path to the real log>`.
 
 import { test } from 'node:test'
@@ -285,31 +289,27 @@ test('the arm expires with the spell, not with the session', () => {
 test('THE LEADER SAY binds outright, and covers a summoned pet no broadcast can reach', () => {
   // STRUCTURAL COVERAGE, stated as such: the owner's whole log (1,608,483 lines) holds exactly one
   // `says, 'My leader is …'` line and it names HIM. There is no third-party instance in this
-  // corpus, and the scrub will never let a fixture carry one (AGENTS.md — the pet-leader
-  // carve-out is SELF-GATED). So the sentence shape is proven by a real line, the third-party
-  // variant is that line with a different name in one capture, and this is where it is exercised.
+  // corpus, so the sentence shape is proven by a real line, the third-party variant is that line
+  // with a different name in one capture, and this is where it is exercised. (Until JOS-270 no
+  // fixture could ever have carried one either — the pet-leader scrub carve-out was SELF-GATED.)
   const line = `[Thu Jul 30 16:10:11 2026] Kober says, 'My leader is Gonekn.'`
   const ev = parseEvent(line, 0)
   assert.equal(ev?.kind, 'allyPetLeader')
 
   const m = new AllyCharms()
-  const bind = m.bindByLeader({ petKey: 'kober', pet: 'Kober', owner: 'Gonekn', ownerKey: 'gonekn', ts: 1_000 })
+  const bind = m.bindByLeader({
+    petKey: 'kober', pet: 'Kober', owner: 'Gonekn', ownerKey: 'gonekn', ts: 1_000, everCharmed: false
+  })
   assert.equal(bind.via, 'leader')
   assert.equal(bind.charmer, 'Gonekn')
   assert.equal(m.creditable('kober')?.charmerKey, 'gonekn')
   assert.ok(m.isFriendly('gonekn'), "the named owner is on their own pet's friendly side")
 })
 
-test('a bind cannot outlive its own charm: the hold is the spell duration + slack', () => {
-  const m = new AllyCharms()
-  m.noteCast({ caster: 'Gordon', casterKey: 'gordon', spell: CAJOLING, ts: 0, allowed: true })
-  const v = m.broadcast('an imp protector', 'an imp protector', 1_000)
-  assert.equal(v.kind, 'bind')
-  // Cajoling Whispers is listed at 16 minutes; DURATION_SLACK_MS adds one more.
-  assert.deepEqual(m.sweep(1_000 + 16 * 60_000), [], 'still inside its own duration')
-  assert.equal(m.sweep(1_000 + 17 * 60_000 + 1).length, 1, 'and over when the spell must be')
-  assert.ok(m.idle)
-})
+// THE HOLD MOVED (JOS-270). What used to be "a bind cannot outlive its own charm" is now a
+// SILENCE window that slides on every line the pet acts on — the fixed clock was wrong about a
+// game with AAs and focus effects in it. The reaper, the slide and the two lifecycles are pinned
+// in tests/allyPetLifecycle.test.mts.
 
 test('a re-charm by a DIFFERENT caster rebinds; the same caster restates', () => {
   const m = new AllyCharms()
@@ -353,3 +353,4 @@ test('a zone drops every bind and every arm, and keeps the people', () => {
   assert.ok(m.idle, 'charm cannot survive a zone')
   assert.ok(m.isFriendly('gordon'), 'a person does not stop being one because you walked a door')
 })
+

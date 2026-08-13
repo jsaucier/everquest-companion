@@ -76,6 +76,11 @@ export function ingestForeignCharm(st: EngineState, ev: CharmEvent, key: string)
  * and binds to you) and every leader that is not player-shaped, so by the time it arrives here the
  * only question left is the behavioural one: a name you have been killing, or that has been
  * charmed, or that is one of your own pets, is not a person (`allyCasterAllowed`).
+ *
+ * IT ALSO CARRIES THE CHARM-EVIDENCE ANSWER ACROSS (JOS-270). `CharmModel.everCharmed` is the
+ * other charm model's session-scoped record of every name a broadcast has ever named, ours or a
+ * stranger's; `AllyCharms` does not reach across for it any more than it reaches for
+ * `allyCasterAllowed`. It decides the bind's LIFECYCLE, never whether the bind happens.
  */
 export function ingestAllyPetLeader(st: EngineState, ev: AllyPetLeaderEvent): void {
   const ownerKey = idKey(ev.owner)
@@ -85,8 +90,24 @@ export function ingestAllyPetLeader(st: EngineState, ev: AllyPetLeaderEvent): vo
   // the same caveat from the other side), and the cost of getting this wrong is deleting a real
   // pet's damage — so the refusal is absolute and stated here rather than left to the ordering.
   if (st.petNames.has(petKey) || st.everPet.has(petKey)) return
-  const bind = st.ally.bindByLeader({ petKey, pet: ev.pet, owner: ev.owner, ownerKey, ts: ev.ts })
-  st.log(ev.ts, 'charm', 'info', `⚡ ${ev.pet} named ${bind.charmer} its leader - crediting its damage to them`)
+  const bind = st.ally.bindByLeader({
+    petKey,
+    pet: ev.pet,
+    owner: ev.owner,
+    ownerKey,
+    ts: ev.ts,
+    everCharmed: st.charm.everCharmed(petKey)
+  })
+  // The classification is SAID, because a lifecycle you cannot see is a lifecycle nobody can
+  // report a bug about — the two words are the whole difference between "it broke" and "it kept
+  // earning" eighteen minutes later.
+  const shape = bind.kind === 'summon' ? 'summoned pet' : 'charmed'
+  st.log(
+    ev.ts,
+    'charm',
+    'info',
+    `⚡ ${ev.pet} named ${bind.charmer} its leader (${shape}) - crediting its damage to them`
+  )
 }
 
 /**
@@ -104,6 +125,9 @@ export function ingestAllyPetLeader(st: EngineState, ev: AllyPetLeaderEvent): vo
  *   SOFT-HOSTILE PROOF — the bound pet swung at a FRIENDLY (state.allyFriendly). A charmed mob
  *   does not attack its charmer's side, so the charm is over at this instant. Landed or avoided:
  *   the intent is the proof (allyCharms.ts carries the Scooba measurement that settles it).
+ *   A CHARM BIND ONLY (JOS-270) — `AllyCharms.softHostile` refuses to end a leader bind, because
+ *   a summoned pet has no charm to break and the swing is a name collision. The decision lives
+ *   in the model, not here: this file asks, and prints only an ending the model actually made.
  *
  *   TWIN AMBIGUITY — attacker and target share the pet's name, so a second instance of it is
  *   acting and the name's mob-vs-mob lines cannot be told apart. The bind survives (the pet is
@@ -111,12 +135,20 @@ export function ingestAllyPetLeader(st: EngineState, ev: AllyPetLeaderEvent): vo
  *
  * A line proving either is NEVER credited itself: both run before `routeAllyPetDamage` is offered
  * the line, and both leave the bind uncreditable for it.
+ *
+ * AND A THIRD, WHICH IS NOT A JUDGEMENT AT ALL: THE PET IS STILL HERE (JOS-270). Every line this
+ * function sees is the bound name ACTING, which slides its hold — see `AllyCharms.noteActivity`.
+ * It is done here rather than in the two `route…` functions on purpose, because this is the one
+ * seam that sees a line whatever the meter goes on to do with it: the twin-ambiguous bind books
+ * nothing and must still not be reaped for silence, and the line that proves the break slides a
+ * hold that is about to be irrelevant, which costs nothing and needs no ordering rule.
  */
 export function noteAllyPetEvidence(st: EngineState, attacker: string, target: string, ts: number): void {
   if (st.ally.idle) return
   const aKey = idKey(attacker)
   const bind = st.ally.bindOf(aKey)
   if (!bind) return
+  st.ally.noteActivity(aKey, ts)
   if (aKey === idKey(target)) {
     if (st.ally.markAmbiguous(aKey)) {
       st.log(ts, 'charm', 'dropped', `~ ${bind.display}: a second one is active - ${bind.charmer}'s pet is unreadable`)
@@ -124,7 +156,7 @@ export function noteAllyPetEvidence(st: EngineState, attacker: string, target: s
     return
   }
   if (!st.allyFriendly(idKey(target))) return
-  st.ally.release(aKey)
+  if (!st.ally.softHostile(aKey)) return
   st.log(ts, 'charm', 'dropped', `✕ ${bind.display} turned on ${target} - ${bind.charmer}'s charm broke`)
 }
 
