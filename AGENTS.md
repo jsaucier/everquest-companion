@@ -553,6 +553,33 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   at startup from its pinned registry tag — seeded + suggested alert defs
   reference its derived soundIds. App signals (bossDefeat, questComplete)
   fire from single always-mounted detectors.
+  **PRESENCE IS NOT PRECEDENCE: THE DEFAULT PACK IS A PREFERENCE, AND A DELETION IS A
+  STATEMENT** (JOS-273, owner ruling 2026-08-13 — verbatim: *if someone deletes alan
+  rickman, they should be able to set a default and it should persist*). The shipped
+  pack used to be HARDCODED as the pack every picker pre-selected and every authored
+  alert pointed at, and startup provisioning re-installed it whenever it was missing
+  with no memory of a deletion — so deleting it held until the next launch, which
+  users experienced as "it re-enables itself with every update". Three parts, all in
+  `src/shared/soundPacks.ts` (the pure core) + `storeSoundPacks.ts` (accessors):
+  (1) the PREFERENCE `soundPacks.defaultPackId`, honoured by the picker pre-selection
+  (`SoundPicker.fallbackPack`, `alertForm` hydration, the row's `AudioPicker`), the
+  suggestion builder (every template/rank/illusion chip, the ready-made sets, the
+  observed slow offer) and the SEEDS (`alertSeeds.ts`); set from the pack browser's
+  star, beside the Uninstall the reporter was already reaching for. (2) the TOMBSTONE
+  `soundPacks.removedPackIds` — uninstalling a SHIPPED pack records it,
+  `packsToProvision` skips it, installing it again clears it; additive is not the same
+  as unconditional. (3) RESOLUTION, not silence: a ref whose pack (or sound) is gone
+  resolves through the preference keeping its CESP category (`resolveSoundRef` — the
+  live, pack-agnostic form of `migrateAlertSoundRef`'s intent mapping), and where
+  nothing can answer the alert ROW says so (`soundNotice`). `getSoundDataIn` used to
+  answer null for every pack but the reserved one; that rule was true right up until
+  deleting the shipped pack became a supported thing to do. FRESH INSTALLS ARE
+  UNCHANGED end to end — absent preference ⇒ every one of those is the identity
+  function, and the additive optional key needs no schema bump. The renderer's
+  `DEFAULT_PACK_ID` mirror (suggestions.ts) STAYS and keeps its mirror-sync law: it is
+  a compile-time fact about what the app SHIPS, and the preference arrives beside it
+  as runtime state. Pinned by tests/defaultPackPreference.test.mts +
+  tests/e2e/default-sound-pack.e2e.mts (two launches over one userData dir).
   **A `where.spell` MATCHER TESTS THE WHOLE CANDIDATE LIST, NEVER THE FIRST PICK**
   (JOS-84). EQ prints ONE landing/wears-off sentence per spell FAMILY, so
   `buffApply.spell` / `buffWearOff.spell` are a best-effort first candidate

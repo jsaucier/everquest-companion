@@ -185,6 +185,7 @@ export default function AlertsToolbar({
           startIcon={<LibraryMusicIcon />}
           variant="outlined"
           size="small"
+          data-testid="alerts-sound-packs"
           onClick={onOpenPacks}
         >
           Sound packs…

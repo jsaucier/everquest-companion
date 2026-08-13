@@ -27,6 +27,7 @@ import {
   audioChoiceOf,
   displayedChoice,
   outputValueOf,
+  soundNotice,
   withOutput,
   withPhrase,
   withSoundId,
@@ -199,4 +200,36 @@ test('an alert’s unrelated fields are never touched by an audio edit', () => {
   assert.equal(next.alwaysPlay, true)
   assert.equal(next.note, 'from a share string')
   assert.equal(next.audio, 'both')
+})
+
+// ------------------------------------------- what the row SAYS about a pack that is not there
+//
+// JOS-273's third clause: a ref whose pack is gone resolves through the default-pack preference
+// instead of going silently mute, and the row says so. The row is the only place a user finds
+// out — an alert that quietly plays a different line, or quietly plays nothing at all, is the
+// failure mode the whole ticket is about.
+
+test('a resolvable alert says nothing at all', () => {
+  const quiet = soundNotice(audioChoiceOf(def()), PACKS, { defaultPackId: 'alan-rickman' })
+  assert.equal(quiet, null, 'no chrome on the overwhelmingly common case')
+})
+
+test('a ref into an uninstalled pack names the pack that answers instead', () => {
+  const d = def({ sound: { packId: 'portal-turret', soundId: 'task-complete-1' } })
+  const notice = soundNotice(audioChoiceOf(d), PACKS, { defaultPackId: 'alan-rickman' })
+  assert.match(notice ?? '', /portal-turret/, 'it names what the def asked for…')
+  assert.match(notice ?? '', /alan-rickman/, '…and what is actually playing')
+})
+
+test('nothing installed at all says the alert is silent', () => {
+  const notice = soundNotice(audioChoiceOf(def()), [], { defaultPackId: 'alan-rickman' })
+  assert.match(notice ?? '', /silent/i)
+})
+
+test('a spoken-only alert is not nagged about a pack it never plays', () => {
+  const d = def({ audio: 'speech', sound: { packId: 'portal-turret', soundId: 'gone' } })
+  assert.equal(soundNotice(audioChoiceOf(d), PACKS, { defaultPackId: 'alan-rickman' }), null)
+  // …but a 'both' alert DOES play the sound, so it is told.
+  const both = def({ audio: 'both', sound: { packId: 'portal-turret', soundId: 'gone' } })
+  assert.notEqual(soundNotice(audioChoiceOf(both), PACKS, { defaultPackId: 'alan-rickman' }), null)
 })

@@ -103,6 +103,20 @@ async function provisionPack(pack: RegistryPack, packsRoot: string): Promise<boo
 }
 
 /**
+ * WHICH SHIPPED PACKS THIS LAUNCH SHOULD FETCH — the whole decision, as a pure function.
+ *
+ * Split out so the rule is testable without a network: "not installed" was the entire rule until
+ * JOS-273, and the half that was added (a deletion is remembered) is exactly the half a test has
+ * to be able to state. `provisionDefaultPacks` below does the I/O and nothing else decides.
+ */
+export function packsToProvision(
+  installed: ReadonlySet<string>,
+  removed?: ReadonlySet<string>
+): RegistryPack[] {
+  return DEFAULT_PACKS.filter((p) => !installed.has(p.name) && !removed?.has(p.name))
+}
+
+/**
  * Ensure every shipped default pack is present. For each id NOT already surfaced by
  * listPacks() (bundled or user), install it in the background. Best-effort: a failure on
  * one pack is logged and skipped; the next startup retries. Resolves to the number of
@@ -132,11 +146,9 @@ export async function provisionDefaultPacks(opts?: {
     }
   }
 
-  // NOT INSTALLED, AND NOT THROWN AWAY. The second half is the whole of JOS-273's provisioning
-  // scope: presence is no longer the only thing that decides, because a user's deletion is a
-  // statement this pass is now required to remember.
-  const removed = opts?.removedIds
-  const missing = DEFAULT_PACKS.filter((p) => !installed.has(p.name) && !removed?.has(p.name))
+  // NOT INSTALLED, AND NOT THROWN AWAY (see `packsToProvision` — the decision is up there so a
+  // test can state it without a network).
+  const missing = packsToProvision(installed, opts?.removedIds)
   if (missing.length === 0) return 0
 
   // Resolve the target root only once we know we'll write (keeps the no-op path from
