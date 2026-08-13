@@ -88,6 +88,11 @@ export const TELEMETRY_VIEWS = [
   // JOS-119: the ingest Lambda validates through this module, so the server has to learn the value
   // before a client that can emit it ships, or one dwell on this tab 400s the whole batch.
   'timers',
+  // The gear planner's search surface (JOS-284). SAME CLOSED-ENUM DEPLOY ORDER as every member
+  // added since JOS-119, and it is the reason this comment keeps being written: the ingest Lambda
+  // validates through this module, so the server has to learn the value before a client that can
+  // emit it ships, or one dwell on this tab 400s the whole batch and drops every counter in it.
+  'gear',
   'preferences',
   'triage'
 ] as const
