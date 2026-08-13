@@ -14,8 +14,12 @@
  */
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { check } from './appHarness.mjs'
-import { PERF_LAG_PROBE_INTERVAL_MS, STARTUP_STUTTER_INTERVAL_MS } from '../../src/shared/perf'
+import { check, note } from './appHarness.mjs'
+import {
+  PERF_LAG_PROBE_INTERVAL_MS,
+  STARTUP_STUTTER_INTERVAL_MS,
+  STARTUP_STUTTER_LATE_MS
+} from '../../src/shared/perf'
 
 /**
  * The strictly-sequential head of the boot, asserted as a LIST: a profile whose phases arrived
@@ -115,10 +119,36 @@ export function stepProfileFile(userData: string, firstRun: boolean): void {
     typeof profile.eventsReplayed === 'number' && profile.eventsReplayed >= 0,
     `${String(profile.eventsReplayed)} events`
   )
-  stepBlockProbe(profile.block, profile.phases.find((p) => p.phase === 'replayDone')?.durationMs ?? 0)
+  // THE PROBES GET THE PROBES' WINDOW, the duty ledger gets the replay's — see `probeWindowMs`.
+  stepBlockProbe(profile.block, probeWindowMs(profile))
   stepReplayDuty(profile.replay, replayWindowMs(profile))
-  stepStutterProbe(profile.stutter, replayWindowMs(profile))
+  stepStutterProbe(profile.stutter, probeWindowMs(profile))
   stepColdRead(profile, firstRun)
+}
+
+/**
+ * COULD THE PROBE HAVE TICKED AT ALL? — the one question both probe steps have to answer before
+ * they may assert anything, and the answer this file used to get wrong (JOS-279).
+ *
+ * Three verdicts rather than two, because a timer is not a stopwatch:
+ *   'silent' — the window is shorter than one interval, so a tick is IMPOSSIBLE and stats would
+ *     be a measurement nobody took (world-model law 1). The absence is the assertion.
+ *   'either' — the window has only just passed the interval. The first tick was DUE inside it,
+ *     but Windows' timer quantum is 15.625 ms and a timer may only ever fire late, so whether it
+ *     landed before the window closed is the OS's business, not the app's. Both answers are
+ *     honest here and the run says which it saw.
+ *   'measured' — the window outlived the interval by more than that slack, so a probe that
+ *     recorded nothing is a probe that never ran, which IS the regression these steps exist for.
+ *
+ * The grace is `STARTUP_STUTTER_LATE_MS` for both probes deliberately: it is this repo's own
+ * measured answer to "how late may a tick be before it means anything" (shared/perf.ts), it is
+ * comfortably past one quantum, and inventing a second such number here would be a spec
+ * disagreeing with the code it tests.
+ */
+function probeVerdict(samples: number, windowMs: number, intervalMs: number): 'silent' | 'either' | 'measured' {
+  if (windowMs < intervalMs) return 'silent'
+  if (samples === 0 && windowMs < intervalMs + STARTUP_STUTTER_LATE_MS) return 'either'
+  return 'measured'
 }
 
 /**
@@ -127,23 +157,34 @@ export function stepProfileFile(userData: string, firstRun: boolean): void {
  * stutters is what the FLEET is being asked; what a spec can pin is that the launch measured its
  * own clock and that what it wrote about it is internally consistent.
  */
-function stepStutterProbe(stutter: StutterStats | undefined, replayMs: number): void {
+function stepStutterProbe(stutter: StutterStats | undefined, probeMs: number): void {
   // Same honesty rule the block probe follows: a per-spec fixture folds in milliseconds, and a
   // window that held no ticks must report NOTHING rather than a distribution of zeroes.
-  if (replayMs < STARTUP_STUTTER_INTERVAL_MS) {
+  const samples = stutter?.samples ?? 0
+  const window = `probe window ${String(Math.round(probeMs))}ms vs ${String(STARTUP_STUTTER_INTERVAL_MS)}ms beat · ${String(samples)} ticks`
+  const verdict = probeVerdict(samples, probeMs, STARTUP_STUTTER_INTERVAL_MS)
+  if (verdict === 'silent') {
     check(
-      'a replay shorter than one heartbeat states NO drift figures rather than inventing them',
-      stutter === undefined || stutter.samples === 0,
-      `replay ${String(Math.round(replayMs))}ms < ${String(STARTUP_STUTTER_INTERVAL_MS)}ms beat`
+      'a probe window shorter than one heartbeat states NO drift figures rather than inventing them',
+      samples === 0,
+      window
     )
+    return
+  }
+  if (verdict === 'either') {
+    note(`the stutter probe's first beat was due inside a window this short — no ticks banked (${window})`)
     return
   }
   const ok = check(
     'the launch states what its own clock did while it read — the always-on stutter probe',
-    stutter !== undefined && stutter.samples > 0,
-    stutter ? `${String(stutter.samples)} heartbeat ticks` : 'absent'
+    samples > 0,
+    stutter ? `${String(stutter.samples)} heartbeat ticks` : `absent · ${window}`
   )
-  if (!ok || !stutter) return
+  if (ok && stutter) stutterIdentities(stutter)
+}
+
+/** The stutter reading's internal consistency, once a window that HAD to hold ticks held some. */
+function stutterIdentities(stutter: StutterStats): void {
   check(
     '…as an ordered distribution: p50 ≤ p95 ≤ the worst tick, none of them negative',
     stutter.p50Ms >= 0 && stutter.p50Ms <= stutter.p95Ms && stutter.p95Ms <= stutter.maxMs,
@@ -206,6 +247,29 @@ function replayWindowMs(profile: Profile): number {
 }
 
 /**
+ * How long the two always-on PROBES actually ran: `appReady` minus `replayDone`. NOT the replay.
+ *
+ * THE FIVE-SIGHTING HEARTBEAT FLAKE (JOS-279, AGENTS.md's ledger) was this distinction, missing.
+ * Both probes are opened by the `appReady` mark and closed by the `replayDone` one — one place,
+ * `src/main/perf.ts markStartupPhase` — and `appReady` lands THREE phases before `tailAttached`
+ * (protocols, windowCreated, tailAttached). So the window in which a beat could have ticked is
+ * strictly LONGER than the fold, by however long it took to register the protocols and open a
+ * window; measured on this machine that is a few tens of milliseconds, and the fixture folds in
+ * ~120 ms. Gating "no ticks" on the fold therefore claimed a precondition the probe had never
+ * been under: the run read `replay 118ms < 125ms beat`, believed no beat could have landed, and
+ * failed on the tick the probe had legitimately banked ~40 ms before the replay even started.
+ * Every one of the five sightings reads that way (115, 118, 118, 123 vs 125).
+ *
+ * The fix is not a tolerance — it is asking the question about the window that is actually being
+ * measured. `stepReplayDuty` keeps `replayWindowMs`, because the duty ledger really is timed
+ * across `tailAttached` → `replayDone` and nothing else.
+ */
+function probeWindowMs(profile: Profile): number {
+  const at = (phase: string): number => profile.phases.find((p) => p.phase === phase)?.atMs ?? 0
+  return Math.max(0, at('replayDone') - at('appReady'))
+}
+
+/**
  * THE DUTY LEDGER (JOS-50), asserted the same way and for the same reason as the block probe: as
  * IDENTITIES about a file a real launch wrote, never as this machine's numbers.
  *
@@ -248,28 +312,40 @@ function stepReplayDuty(replay: ReplayStats | undefined, windowMs: number): void
  * particular machine got is not something a spec can assert — the bench (`npm run bench:replay`)
  * owns that budget, against a known log, on one machine.
  */
-function stepBlockProbe(block: BlockStats | undefined, replayMs: number): void {
-  // THE PROBE'S WINDOW IS THE REPLAY, and it ticks on a 500 ms interval. A per-spec fixture folds
-  // in single-digit milliseconds (wave E2), so a launch against one legitimately produces ZERO
-  // samples — and a profile that then stated `maxBlockMs: 0` would be inventing a measurement
-  // nobody took (world-model law 1). So the presence of the stats is asserted only when the
-  // replay actually outlived a tick; below that, their absence is the correct answer and the run
-  // says so. The BUDGET on those numbers was never this spec's anyway: `npm run bench:replay`
-  // owns it, against a ~100 MB log, on one machine.
-  if (replayMs < PERF_LAG_PROBE_INTERVAL_MS) {
+function stepBlockProbe(block: BlockStats | undefined, probeMs: number): void {
+  // THE PROBE'S WINDOW IS `appReady` → `replayDone` (never the replay alone — see
+  // `probeWindowMs`), and it ticks on a 500 ms interval. A per-spec fixture folds in single-digit
+  // milliseconds (wave E2), so a launch against one legitimately produces ZERO samples — and a
+  // profile that then stated `maxBlockMs: 0` would be inventing a measurement nobody took
+  // (world-model law 1). So the presence of the stats is asserted only when the window actually
+  // outlived a tick; below that, their absence is the correct answer and the run says so. The
+  // BUDGET on those numbers was never this spec's anyway: `npm run bench:replay` owns it, against
+  // a ~100 MB log, on one machine.
+  const samples = block?.samples ?? 0
+  const window = `probe window ${String(Math.round(probeMs))}ms vs ${String(PERF_LAG_PROBE_INTERVAL_MS)}ms tick · ${String(samples)} samples`
+  const verdict = probeVerdict(samples, probeMs, PERF_LAG_PROBE_INTERVAL_MS)
+  if (verdict === 'silent') {
     check(
-      'a replay shorter than one probe tick states NO block figures rather than inventing zeroes',
-      block === undefined || block.samples === 0,
-      `replay ${String(Math.round(replayMs))}ms < ${String(PERF_LAG_PROBE_INTERVAL_MS)}ms tick · ${block ? `${String(block.samples)} samples` : 'absent'}`
+      'a probe window shorter than one probe tick states NO block figures rather than inventing zeroes',
+      samples === 0,
+      window
     )
+    return
+  }
+  if (verdict === 'either') {
+    note(`the block probe's first tick was due inside a window this short — no samples banked (${window})`)
     return
   }
   const ok = check(
     'the launch also states how blocked the main loop got — the always-on startup probe',
-    block !== undefined && block.samples > 0,
-    block ? `${String(block.samples)} probe ticks` : 'absent'
+    samples > 0,
+    block ? `${String(block.samples)} probe ticks` : `absent · ${window}`
   )
-  if (!ok || !block) return
+  if (ok && block) blockIdentities(block)
+}
+
+/** The block reading's internal consistency, once a window that HAD to hold ticks held some. */
+function blockIdentities(block: BlockStats): void {
   const sane =
     Number.isFinite(block.maxBlockMs) && block.maxBlockMs >= 0 && Number.isInteger(block.blocksOver50Ms)
   check(
