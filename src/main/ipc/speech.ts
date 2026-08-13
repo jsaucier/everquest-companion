@@ -106,9 +106,12 @@ let engine: SpeechEngine | null = null
 let bindingDir: string | null | undefined
 
 function onnxBindingDir(): string | null {
-  bindingDir ??= findOnnxBindingDir(
-    onnxBindingRoots({ appPath: app.getAppPath(), cwd: process.cwd() })
-  )
+  // `undefined` means "not asked yet"; `null` is a real answer and must STICK, which `??=`
+  // would not do — it would re-probe the filesystem on every call for the one install that
+  // cannot find its binding.
+  if (bindingDir === undefined) {
+    bindingDir = findOnnxBindingDir(onnxBindingRoots({ appPath: app.getAppPath(), cwd: process.cwd() }))
+  }
   return bindingDir
 }
 
