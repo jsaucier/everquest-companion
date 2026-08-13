@@ -125,6 +125,64 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '0.25.0',
+    date: '2026-08-13',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'The loot ledger renders everything you scroll to. Opening an item and coming back used to freeze the list at its first screenful - the scrollbar moved, the rows did not - and the dead scroll space above and below the list is gone with it.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The loot summary states its rate both ways - per hour of active time and per hour of elapsed time, side by side, each naming the span it measured. A long regen break stops inflating your motes-per-hour without a word of explanation.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The Plane of Sky tab reads your /outputfile inventory dump by itself the moment the file changes - the reload button is gone because there is nothing left to press. A quiet line under the count-source picker says when the dump was written and when it was read, and turns warning-colored only when your copy is provably stale.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A spell alert survives ranking up. Resist and cast alerts matched the exact name, so an alert on Elemental Maelstrom went silent the day you unlocked II. Every rank of the spell now matches, in both directions.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Buffs from last night survive a slow login. The app no longer guesses what counts as logging in from a 30-second window - it reads the log lines only an in-world character can produce - so long loading screens, crowded character selects, and starting the app mid-load stop wiping the buff bar.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Summon a pet and never order it, and the meter cannot see it - the game prints nothing that ties the pet to you. The meter now says so once, quietly, on its own overlay: order it once or type /pet who leader. The sentence times out by itself and does not nag.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Patch notes are one click from the version number - the icon beside it opens What is new, and the panel carries a link to every release on GitHub.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The DPS-over-time legend answers clicks: hide any line, the scale re-fits what is drawn, and the choice sticks between sessions. Hidden entries stay in the legend, dimmed, so the way back is where the way in was.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A full disk no longer makes the app thrash - the small local telemetry file writes atomically, cleans up after a failed attempt, and backs off instead of retrying every event.'
+      },
+      {
+        kind: 'fixed',
+        text: 'A cached wiki image that fails to read from disk heals itself - evicted and re-fetched - instead of logging an error and showing a blank.'
+      },
+      {
+        kind: 'changed',
+        text: 'The app phones home a fifth as often: usage counters leave in one batch every five minutes instead of every minute, and the idle pulse is every ten. Nothing new is collected - the batches are just bigger and rarer.'
+      }
+    ]
+  },
+  {
     version: '0.24.0',
     date: '2026-08-12',
     entries: [
