@@ -30,7 +30,8 @@ files:
   # package — 184 MB on disk, of which this Windows-x64-only app can use 33 MB. Without these
   # excludes the installer carries macOS dylibs and Linux .so files it can never load. Keep
   # the list in sync with `win.target.arch` above; a future arm64 target needs its line back.
-  - '!node_modules/onnxruntime-node/bin/napi-v3/{darwin,linux}/**'
+  # Removed linx from the block below because the linux target is now enabled.
+  - '!node_modules/onnxruntime-node/bin/napi-v3/darwin/**'
   - '!node_modules/onnxruntime-node/bin/napi-v3/win32/arm64/**'
   # native-reg (JOS-184, the in-process registry reads that replaced `reg.exe`/`wmic` in
   # discovery) ships prebuilt N-API binaries for all three Windows architectures in one tarball.
@@ -53,6 +54,7 @@ files:
   # load at all and `speech:say` answers 'engine-not-installed' forever (verified: dist:dir
   # with the exclusion, then a real synthesis in the packed app — zero wavs produced). It has
   # to ship. Do not re-litigate this without repeating that experiment.
+
 
 asarUnpack:
   - resources/**
@@ -119,6 +121,22 @@ publish:
   provider: github
   owner: jmoyers
   repo: everquest-companion
+
+linux:
+  target:
+    - AppImage
+  icon: build/icon.png
+  category: Utility
+  artifactName: everquest-companion-${version}.${ext}
+  files:
+    - out/**
+    - package.json
+    - build/icon.png
+    - resources/wiki-images/**
+    - '!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}'
+    - '!**/*.{o,obj,map,ts,tsx}'
+    - '!node_modules/onnxruntime-node/bin/napi-v3/{darwin,win32}/**'
+    - '!node_modules/onnxruntime-node/bin/napi-v3/linux/arm64/**'
 
 win:
   target:

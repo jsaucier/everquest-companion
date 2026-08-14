@@ -1,6 +1,6 @@
 {
   "name": "everquest-companion",
-  "version": "0.1.0",
+  "version": "0.27.0",
   "license": "FSL-1.1-MIT",
   "description": "EverQuest Legends companion â€” real-time log analysis and Plane of Sky quest tracking",
   "main": "./out/main/index.js",
@@ -56,7 +56,9 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "dist": "npm run build && electron-builder --win",
-    "dist:dir": "npm run build && electron-builder --win --dir"
+    "dist:dir": "npm run build && electron-builder --win --dir",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "dist:linux:dir": "npm run build && electron-builder --linux --dir"
   },
   "dependencies": {
     "@emotion/react": "^11.13.3",
