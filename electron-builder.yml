@@ -26,36 +26,48 @@ files:
   # thing keeping ~6 MB of them out of every installer. They are kept as a private CI artifact
   # instead; `tests/symbolicate.test.mts` pins this line so it cannot be tidied away.
   - '!**/*.{o,obj,map,ts,tsx}'
-  # onnxruntime-node ships PREBUILT binaries for every platform it supports in one npm
-  # package — 184 MB on disk, of which this Windows-x64-only app can use 33 MB. Without these
-  # excludes the installer carries macOS dylibs and Linux .so files it can never load. Keep
-  # the list in sync with `win.target.arch` above; a future arm64 target needs its line back.
-  #
-  # THESE ARE THE WINDOWS TARGET'S EXCLUDES. The linux target needs the opposite set, and
-  # cannot express it by adding `files` to the `linux` block alone — see the comment there.
-  - '!node_modules/onnxruntime-node/bin/napi-v3/{darwin,linux}/**'
-  - '!node_modules/onnxruntime-node/bin/napi-v3/win32/arm64/**'
   # native-reg (JOS-184, the in-process registry reads that replaced `reg.exe`/`wmic` in
-  # discovery) ships prebuilt N-API binaries for all three Windows architectures in one tarball.
-  # Same reasoning as onnxruntime above: this build is win/x64 only, so the other two are ~1 MB
-  # of binary the app can never load. A future arm64 target needs the ia32 line only.
+  # discovery) ships prebuilt N-API binaries for all three Windows architectures in one tarball,
+  # and this build is win/x64 only, so the other two are ~1 MB of binary the app can never load.
+  # Safe to keep at the TOP level (unlike onnxruntime below): every target — win, linux, any
+  # future mac — only ever wants the win32/x64 prebuild of this Windows-only utility, so there is
+  # no per-platform variance to express. A future arm64 target needs the ia32 line only.
   - '!node_modules/native-reg/prebuilds/win32-{arm64,ia32}/**'
   # koffi (JOS-182, the presence watcher's Win32 surface) is the same story again, and the most
   # lopsided of the three: 18 prebuilt N-API binaries in one tarball, 28.7 MB unpacked, of which
-  # this Windows-x64-only app can load exactly one. Keep in sync with `win.target.arch` too.
+  # this Windows-x64-only app can load exactly one. Same "no per-platform variance" reasoning as
+  # native-reg above.
   - '!node_modules/koffi/build/koffi/!(win32_x64)/**'
   # And koffi's SOURCES, which ship in the same tarball so `cnoke` can build a prebuild for a
   # platform it has none for. We never build one — `.npmrc` ignores install scripts and the
   # win32_x64 binary above is the one we load — so the C++, the vendored node-api headers and
   # the docs are 4 MB of installer that can never be read.
   - '!node_modules/koffi/{src,vendor,doc,lib}/**'
-  # DirectML.dll (18.5 MB) is NOT excludable, and that was MEASURED, not assumed. This app
-  # never asks for the DirectML execution provider — Kokoro runs on CPU on purpose, because it
-  # is a background alert reader on a machine that is also running EverQuest — so dropping the
-  # DLL looks free. It is not: onnxruntime.dll STATICALLY imports it, so the binding fails to
-  # load at all and `speech:say` answers 'engine-not-installed' forever (verified: dist:dir
-  # with the exclusion, then a real synthesis in the packed app — zero wavs produced). It has
-  # to ship. Do not re-litigate this without repeating that experiment.
+  # onnxruntime-node's PLATFORM excludes are DELIBERATELY ABSENT from this top-level list, unlike
+  # native-reg/koffi above — this app can run on EITHER win/x64 or linux/x64, so which binary is
+  # "the one we load" is target-dependent, and that variance cannot live here.
+  #
+  # THE BUG THIS REPLACES: a top-level `!node_modules/onnxruntime-node/bin/napi-v3/{darwin,linux}/**`
+  # line used to sit in this list, meant only to trim the Windows build (184 MB of prebuilts on
+  # disk, of which win/x64 can use 33 MB). It silently ALSO broke the Linux build: app-builder-lib's
+  # node_modules matcher (`getNodeModuleFileMatcher` in fileMatcher.js) merges this top-level
+  # list's `!` excludes with the ACTIVE PLATFORM's `files` excludes UNCONDITIONALLY, for every
+  # target, every time — unlike the main app-file matcher (out/**, package.json, …), which a
+  # platform's own `files` genuinely replaces. So a `dist:linux` build merged this top-level
+  # `{darwin,linux}` exclude with the `linux:` block's own `{darwin,win32}` exclude below, and the
+  # union of the two excluded ALL THREE platforms — the shipped AppImage's app.asar had zero files
+  # under node_modules/onnxruntime-node/bin, and `speech:say` failed at runtime with "Cannot find
+  # module '../bin/napi-v3/linux/x64/onnxruntime_binding.node'". Fix: give onnx excludes their OWN
+  # home per platform (`win:` and `linux:` below) instead of a shared one — an exclude scoped to
+  # one platform's block only ever merges into THAT platform's build, per the same rule.
+  #
+  # DirectML.dll (18.5 MB) is NOT excludable from the Windows binary set below, and that was
+  # MEASURED, not assumed. This app never asks for the DirectML execution provider — Kokoro runs
+  # on CPU on purpose, because it is a background alert reader on a machine that is also running
+  # EverQuest — so dropping the DLL looks free. It is not: onnxruntime.dll STATICALLY imports it,
+  # so the binding fails to load at all and `speech:say` answers 'engine-not-installed' forever
+  # (verified: dist:dir with the exclusion, then a real synthesis in the packed app — zero wavs
+  # produced). It has to ship. Do not re-litigate this without repeating that experiment.
 
 linux:
   target:
@@ -63,26 +75,29 @@ linux:
   icon: build/icon.png
   category: Utility
   artifactName: everquest-companion-${version}.${ext}
-  # A PLATFORM `files` REPLACES THE TOP-LEVEL `files` ENTIRELY — IT DOES NOT MERGE. That is why
-  # this block repeats every pattern above instead of listing only what differs, and the
-  # duplication is deliberate. MEASURED, from the build that got it wrong: with just the two
-  # onnx lines here, electron-builder's resolved `firstOrDefaultFilePatterns` came out as `**/*`
-  # plus negations (see a build's `builder-debug.yml`) — the `out/**` + `package.json` whitelist
-  # and the *.map/*.ts exclusion were GONE, so the AppImage shipped src/, tests/, docs/, site/,
-  # infra/, 701 sourcemaps and the full TypeScript source. Worse, `**/*` self-consumes: only
-  # `release/${version}` is auto-excluded, so the PREVIOUS build's release/0.1.0 directory —
+  # A PLATFORM `files` REPLACES THE TOP-LEVEL `files` ENTIRELY FOR MAIN APP FILES — IT DOES NOT
+  # MERGE. That is why this block repeats every pattern above (out/**, package.json, the
+  # wiki-images allowlist, the generic excludes) instead of listing only the onnx lines that
+  # differ, and the duplication is deliberate. MEASURED, from the build that got it wrong: with
+  # just the onnx lines here, electron-builder's resolved `firstOrDefaultFilePatterns` came out as
+  # `**/*` plus negations (see a build's `builder-debug.yml`) — the `out/**` + `package.json`
+  # whitelist and the *.map/*.ts exclusion were GONE, so the AppImage shipped src/, tests/, docs/,
+  # site/, infra/, 701 sourcemaps and the full TypeScript source. Worse, `**/*` self-consumes:
+  # only `release/${version}` is auto-excluded, so the PREVIOUS build's release/0.1.0 directory —
   # AppImage and all — was packed inside app.asar, taking it from 164 MB to 479 MB, and each
   # build would have swallowed every earlier one.
   #
-  # `tests/electronBuilderFiles.test.mts` asserts these two lists stay identical except for the
-  # onnx lines, because a drift here is silent: it produces a working build that leaks source.
+  # (This replace-not-merge rule is the OPPOSITE of how node_modules excludes behave — see the
+  # top-level comment above the koffi/onnxruntime lines for that half of the story, and why onnx's
+  # excludes had to move out of the shared list and into a block like this one per platform.)
   #
-  # THE ONLY INTENDED DIFFERENCE is which platform's onnxruntime binaries survive. The top-level
-  # list keeps win32/x64 (the shipped product); this one keeps linux/x64, without which voice
-  # alerts have no binding to load on Linux at all.
+  # These two lists (here and under `win:` below) should stay identical except for their onnx
+  # lines — a drift here is silent, since it still produces a working build that just leaks
+  # source or drops an asset. There is no test enforcing that yet; check by eye.
   files:
     - out/**
     - package.json
+    - resources/wiki-images/**
     - '!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}'
     - '!**/*.{o,obj,map,ts,tsx}'
     - '!node_modules/onnxruntime-node/bin/napi-v3/{darwin,win32}/**'
@@ -166,6 +181,22 @@ win:
     - target: nsis
       arch:
         - x64
+  # Full duplicate of the top-level `files` list (see the comment on the `linux:` block above for
+  # why this has to be a complete copy rather than just the two onnx lines), plus THIS platform's
+  # own onnx excludes — keep win32/x64, drop darwin, linux and win32/arm64. Before this block
+  # existed, the win/x64 trim lived in the shared top-level list, which is exactly what broke the
+  # Linux build (see the top-level comment): app-builder-lib merges the shared list's `!` excludes
+  # into every platform's node_modules filtering unconditionally, so a Windows-only exclude sitting
+  # there silently applied to Linux too. Scoping it to this block means it only ever merges into
+  # the Windows build.
+  files:
+    - out/**
+    - package.json
+    - resources/wiki-images/**
+    - '!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}'
+    - '!**/*.{o,obj,map,ts,tsx}'
+    - '!node_modules/onnxruntime-node/bin/napi-v3/{darwin,linux}/**'
+    - '!node_modules/onnxruntime-node/bin/napi-v3/win32/arm64/**'
   # Brand the exe + installer with our generated mark (scripts/gen-icon.mts).
   icon: build/icon.ico
   # We sign+edit the exe so it carries the icon + version metadata (rcedit). This
