@@ -64,8 +64,54 @@
 //     the same order, at the same plus-state.
 //
 // The plus-state is the one control on both sides of that line: hiding it does not merely remove a
-// slider, it puts the corpus back at base, because a simulation nobody can see or cancel is the
-// quiet lie `useUpgradeState` refuses to persist for exactly the same reason.
+// slider, it puts the corpus back at base, because a simulation nobody can see or cancel is a quiet
+// lie. THAT CLAUSE USED TO END "…the quiet lie `useUpgradeState` refuses to persist for exactly the
+// same reason", and the second half of it is retired: JOS-329's owner ruling persists the slider.
+// The clamp above is untouched and is now the whole of that defence — a plus-state you cannot see
+// is put back to base, and a plus-state you CAN see says what it is (`gearData.useUpgradeState`
+// carries the overruled law and the argument that answers it).
+//
+// AND SINCE JOS-329 NOTHING ON THIS TAB IS LOST TO A TAB SWITCH (owner report 2026-08-13: *we're
+// losing everything right now*). A view unmounts on every switch, and until this ticket only the
+// two JOS-297 chips were written down — the filters, the search box, the class pin, the sort and
+// the slider were all `useState`, so a glance at the Loot tab reset the whole form. All five go
+// through `useAreaMemory` now, on the tier `areaMemory.AREA_FORM_TIER` assigns them: the structural
+// picks survive a restart, the search box lasts the session. THE PIPELINE ABOVE DID NOT CHANGE FOR
+// IT — the three memos, both deferrals and both JOS-297 meeting points are byte-for-byte what they
+// were, because where a field is STORED is not a question the filter model has ever asked.
+//
+// AND SINCE JOS-335 A SEARCH ROW CAN BE WANTED. The sentence three paragraphs up — "ACQUISITION
+// PLANNING IS THE WISH LIST'S JOB NOW" — was true and only half wired: the Exaltations donor rows
+// could write a wish (JOS-326) and the 6,766 rows of this table could not, so the tab that IS the
+// item corpus was the one surface with no way to say "I want that". The gesture is per row and the
+// door is the one every other writer uses (`useWishlist` → `addWish` → the same character-scoped
+// document), so there is no second model, no second dedupe and nothing here that knows how a wish
+// is stored. The pipeline above is untouched again: a wish is not a filter, so the three memos
+// never see it — `wished` is read straight off the loaded document and joined to the rows in the
+// TABLE, by `row.key`, which is `itemKey(name)`, which is `WishEntry.itemKey` (phase 3's seam, for
+// the third time).
+//
+// AND SINCE JOS-343 THE GESTURE GOES BOTH WAYS, AND IT IS THE EXALTATIONS CONTROL (owner ruling
+// 2026-08-13, one day after JOS-335 shipped a heart). The row's control is the donor row's — the
+// same component, `features/wishlist/WishToggle.tsx` — and a second click on a row already on the
+// list REMOVES the wish through `useWishlist.remove`, the Wish list tab's own deletion. Everything
+// the paragraph above says is still true; what changed is that this table now writes the document
+// in both directions instead of one, and `useGearWishes` is where both doors are.
+//
+// AND SINCE JOS-338 A ROW SAYS WHAT IT WOULD REPLACE. Phase 4 taught the table whether you OWN a
+// candidate; hovering one now opens a card with the item's numbers, what is in each CELL that item
+// would occupy (`useGearCompare`, over the `plannerInventory` seam — gearData.ts argues the choice),
+// and how old the dump making that claim is. It is outside the three-memo pipeline for the same
+// reason the wish list is: what you are wearing is not a filter. The JOS-143 law the table has
+// carried since it shipped is narrowed rather than broken, and GearTable.tsx's header states how.
+//
+// MOUNTED HERE, AND WHAT MAKES THAT SAFE IS THE HOOK RATHER THAN THE ROUTER (JOS-346). This used
+// to read: the three tabs are siblings, App renders one view at a time, so two `useWishlist` mounts
+// never coexist and the remount is what re-reads a wish removed on another tab. The premise held
+// and the promise did not — a per-mount copy made the refresh depend on view lifecycle and on a
+// fire-and-forget write beating the next view's read. `useWishlist` holds ONE document for the
+// window now, so this table's controls are reading the same object the Wish list tab edits, and
+// they were correct before this view was ever rebuilt.
 //
 // AND SINCE JOS-302 THE FIRST TOOLBAR ROW NARROWS HARDER, in three ways the pipeline above did not
 // change one line for. The CLASS picks remove rows instead of chipping them (the owner's ruling —
@@ -76,7 +122,7 @@
 // the thresholds exactly as everything else does — the only thing this file had to learn is that a
 // third filter can now be the reason the table is empty (`emptyText`, and the pass that counts it).
 
-import { type JSX, useDeferredValue, useMemo, useRef, useState } from 'react'
+import { type JSX, useCallback, useDeferredValue, useMemo, useRef } from 'react'
 import { Box, Stack, Typography } from '@mui/material'
 import { ITEM_UPGRADE_BASE, type ItemUpgradeState } from '@shared/itemUpgrade'
 import type { GearRow } from '@shared/planner/gear'
@@ -85,7 +131,11 @@ import { useWindowedRows } from '../../lib/useWindowedRows'
 import GearFilterBar from './GearFilterBar'
 import GearPicker from './GearPickers'
 import GearTable, { ROW_HEIGHT } from './GearTable'
+import { useWishlist } from '../wishlist/useWishlist'
+import { wishFromGear } from '../wishlist/wishSearch'
 import { useGearPrefs, type GearPrefs } from './useGearPrefs'
+import { sanitizeGearForm, sanitizeGearSort, type GearFormMemory } from './areaMemory'
+import { useRemembered, useRememberedSearch } from './useAreaMemory'
 import {
   GEAR_CONTROLS,
   GEAR_CONTROL_LABEL,
@@ -98,6 +148,7 @@ import { PICKABLE_COLUMNS, columnLabel, columnsFor, sortWithin, type GearColumn 
 import {
   useEraHidden,
   useGearClasses,
+  useGearCompare,
   useGearIndex,
   useGearOwnership,
   useOwnedOrLooted,
@@ -106,7 +157,6 @@ import {
 import { uncountedNote, type GearOwnershipMap } from './gearOwnership'
 import {
   DEFAULT_GEAR_FILTERS,
-  DEFAULT_GEAR_SORT,
   filterGearRows,
   scaleAll,
   sortGearRows,
@@ -312,6 +362,51 @@ function CountLine({
   )
 }
 
+/**
+ * THE WISH JOIN (JOS-335, made a toggle by JOS-343), and every half of it is one line because the
+ * seam was already there.
+ *
+ * `wished` is keyed on `WishEntry.itemKey`, which is `row.key`; the ADD half builds the entry
+ * through `wishFromGear` — the SAME builder the wish list's own add control uses for a gear hit
+ * (wishSearch.ts) — so a wish written from this table and one written from that popover are the
+ * same bytes, `source: 'user'` included.
+ *
+ * AND THE REMOVE HALF IS `wishlist.remove`, WHICH IS NOT A SECOND DELETION (owner ruling
+ * 2026-08-13). It is the identical call `WishlistView` hands its per-row remove button — one
+ * `removeWish` fold over the character's document, one IPC write, one shape. A row that came off
+ * here is off there the moment that tab is opened, for the reason the header states: the tabs are
+ * siblings, so entering one re-reads the store.
+ *
+ * THE HANDLER TAKES THE ROW'S DRAWN STATE rather than consulting `wished`, and that is what keeps
+ * it a STABLE callback: `add` and `remove` are stable, `wished` is a fresh Set on every edit, and a
+ * handler depending on the set would re-render the whole mounted screenful on every click.
+ *
+ * IT IS UNDEFINED UNTIL THE DOCUMENT HAS LOADED, which is the absent-not-disabled rule arriving at
+ * its one real case here (`GearTableProps.onToggleWish` argues it): before `ready` the empty list is
+ * a default rather than an answer, and a control drawn unadded over an item that IS wished would be
+ * the app contradicting its own store — and now it would also offer the wrong ACTION.
+ *
+ * A HOOK RATHER THAN FIVE LINES IN THE VIEW, for the ordinary reason: the component is at the
+ * measured 100-code-line function ceiling and this is a self-contained join with one output.
+ */
+function useGearWishes(): {
+  wished: ReadonlySet<string>
+  onToggleWish?: (row: GearRow, wished: boolean) => void
+} {
+  const wishlist = useWishlist()
+  const entries = wishlist.list.entries
+  const wished = useMemo(() => new Set(entries.map((e) => e.itemKey)), [entries])
+  const { add, remove } = wishlist
+  const onToggleWish = useCallback(
+    (row: GearRow, wasWished: boolean) => {
+      if (wasWished) remove(row.key)
+      else add(wishFromGear(row, Date.now()))
+    },
+    [add, remove]
+  )
+  return { wished, onToggleWish: wishlist.ready ? onToggleWish : undefined }
+}
+
 export interface GearViewProps {
   /**
    * Deep-link an item name into the Loot tab's drill-down (App's `openLoot`) — where the ItemWindow
@@ -326,12 +421,42 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
   const classes = useGearClasses()
   const upgrade = useUpgradeState()
   const ownership = useGearOwnership()
+  // JOS-335. The wish list, mounted here so a search row can write to it and so every row knows
+  // whether it is already wanted — see the header for why one mount is the whole story.
+  const wishes = useGearWishes()
   // JOS-297. A view unmounts on every tab switch, so both choices are localStorage-backed.
   const prefs = useGearPrefs()
-  const [own, setOwn] = useState<GearFilters>(DEFAULT_GEAR_FILTERS)
-  const [text, setText] = useState('')
-  const [sort, setSort] = useState<GearSort>(DEFAULT_GEAR_SORT)
+  // JOS-329, and the same law one level up: EVERY field of this form outlives the tab now. The five
+  // structural filters and the sort are on the RESTART tier, the search box is on the SESSION tier
+  // — `areaMemory.ts` states the rule and owns both sanitizers.
+  const [form, setForm] = useRemembered<GearFormMemory>('eq.gear.filters', sanitizeGearForm)
+  const [text, setText] = useRememberedSearch('eq.gear.search')
+  const [sort, setSort] = useRemembered<GearSort>('eq.gear.sort', sanitizeGearSort)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  /**
+   * THE BAR'S OWN `GearFilters`, REBUILT FROM THE STORED FORM.
+   *
+   * `GearFilters` has seven fields and only five of them belong to this key: `text` and `classes`
+   * are remembered separately (different tier, and a provenance respectively) and are merged in
+   * below, exactly as they always were. Keeping the bar's prop a whole `GearFilters` is what lets
+   * `GearFilterBar` stay unchanged — it writes back a whole object and `setOwn` projects the five
+   * fields worth storing out of it, which is also what stops the deferred text and the detected
+   * trio from being written into a key that would only overwrite them on the next render.
+   */
+  const own = useMemo<GearFilters>(() => ({ ...DEFAULT_GEAR_FILTERS, ...form }), [form])
+  const setOwn = useCallback(
+    (next: GearFilters) => {
+      setForm({
+        slots: next.slots,
+        weaponTypes: next.weaponTypes,
+        effect: next.effect,
+        eraOnly: next.eraOnly,
+        ownedOnly: next.ownedOnly
+      })
+    },
+    [setForm]
+  )
 
   // Both deferrals, and nothing else deferred: the two controls whose every movement re-derives
   // six thousand rows (see the header).
@@ -357,6 +482,12 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
   const owned = useOwnedOrLooted(ownership.map)
   const deps = useMemo(() => ({ ...era, ...owned }), [era, owned])
   const table = useTableRows(rows, state, filters, { sort, deps, chosen: prefs.columns })
+  // JOS-338. The hover card's data, and it is deliberately OUTSIDE the three-memo pipeline above:
+  // what you are wearing is not a filter, not a sort and not a scale, so no keystroke and no slider
+  // tick can reach it. It takes the UNSCALED corpus (the card joins an equipped item by key and
+  // scales it at ITS OWN `+N`) and the state IN FORCE, which is what lets the card admit that its
+  // item half is a simulation while the equipped half is a fact off the player's dump.
+  const compare = useGearCompare(rows, state)
   const win = useWindowedRows({ count: table.rows.length, rowHeight: ROW_HEIGHT, scrollRef })
   const hint = useMemo(
     () => ownedHint(ownership.map, uncountedNote(ownership.payload.uncounted)),
@@ -412,6 +543,15 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
           // sorted column, clicking the header that took over must FLIP it rather than re-open it.
           onSort={(key) => setSort(nextSort(table.sort, key))}
           onOpenLoot={onOpenLoot}
+          // JOS-335, JOS-343 — the per-row wish gesture (add, and click again to remove) and the
+          // added state it reads. UNDEFINED until the document has loaded (`useGearWishes`), which
+          // is what draws no control at all rather than one lying about what is already on the list.
+          onToggleWish={wishes.onToggleWish}
+          wished={wishes.wished}
+          // JOS-338 — hovering a row opens the comparison card. Passed always: the card is useful
+          // with no dump at all (the item half plus the command that fills the other half), and
+          // `GearCompareData.ready` is what keeps it from claiming anything before the first read.
+          compare={compare}
         />
         {table.rows.length === 0 && (
           <Typography variant="body2" color="text.secondary" data-testid="gear-empty" sx={{ p: 2 }}>

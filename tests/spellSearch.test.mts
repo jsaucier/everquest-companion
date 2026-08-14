@@ -14,6 +14,8 @@
 //        lowercased, for every row main ships.
 //   (S4) THE SECTIONS + THE ROW BUDGET: the partition is total and disjoint, "From your
 //        fights" holds exactly the observed rows, and MAX_ROWS is a cap on the WHOLE dialog.
+//   (S5) THE APOSTROPHE FOLD (JOS-342): the reported query, the reverse direction, and the
+//        exhaustive property over every apostrophe-bearing row the app ships.
 //
 // Run: `npm test`.
 
@@ -23,6 +25,7 @@ import { loadSpellDb, buildSpellCatalog, searchTextFor } from '../src/main/data/
 import {
   SPELL_SECTIONS,
   filterSpells,
+  foldApostrophes,
   groupSpellSections,
   isPoisonSpell,
   matchesSpellQuery,
@@ -184,11 +187,19 @@ test('S3 every catalog row carries a lowercase searchText of name + ranks + the 
   const db = loadSpellDb()
   const catalog = buildSpellCatalog(db, new Map())
   assert.ok(catalog.entries.length > 1000, 'the catalog is the real one')
+  // …and APOSTROPHE-FOLDED (JOS-342), which is why every `includes` here folds its needle: the
+  // surface holds `aanyas animation`, not `aanya's animation`, and the query folds to meet it.
   for (const e of catalog.entries) {
     assert.equal(e.searchText, e.searchText.toLowerCase(), `${e.name}: searchText must be lowercased`)
-    assert.ok(e.searchText.includes(e.name.toLowerCase()), `${e.name}: its own name must be in it`)
+    assert.ok(
+      e.searchText.includes(foldApostrophes(e.name.toLowerCase())),
+      `${e.name}: its own name must be in it`
+    )
     for (const rank of e.rankNames ?? []) {
-      assert.ok(e.searchText.includes(rank.toLowerCase()), `${e.name}: rank ${rank} must be in it`)
+      assert.ok(
+        e.searchText.includes(foldApostrophes(rank.toLowerCase())),
+        `${e.name}: rank ${rank} must be in it`
+      )
     }
   }
 
@@ -197,8 +208,8 @@ test('S3 every catalog row carries a lowercase searchText of name + ranks + the 
   assert.ok(clarity)
   const spell = db.byKey.get('clarity')
   assert.ok(spell?.msgCastOnYou && spell.msgWearsOff)
-  assert.ok(clarity.searchText.includes(spell.msgCastOnYou.toLowerCase()))
-  assert.ok(clarity.searchText.includes(spell.msgWearsOff.toLowerCase()))
+  assert.ok(clarity.searchText.includes(foldApostrophes(spell.msgCastOnYou.toLowerCase())))
+  assert.ok(clarity.searchText.includes(foldApostrophes(spell.msgWearsOff.toLowerCase())))
 
   // A spell the DB gives no messages at all still gets a surface — its name.
   const bare = catalog.entries.find(
@@ -281,4 +292,98 @@ test('S4c the ready-made sets answer TEXT queries and decline spell-only ones', 
   for (const q of ['level:25', 'class:shm', 'type:buff', 'slow level:25']) {
     assert.equal(filterAlertGroups(VERIFIED_ALERT_GROUPS, tokenizeSpellQuery(q)).length, 0, q)
   }
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (S5) THE APOSTROPHE FOLD (JOS-342).
+//
+// The user types the possessive they SAY; the wiki spells it however the scrape found it. Both
+// sides are folded through `foldApostrophes` — the surface once in main (`searchTextFor`), the
+// query once per keystroke (`parseToken`) — and these say the meeting really happens, in both
+// directions, over the REAL catalog rather than over a hand-built row.
+//
+// The fold's third consumer is guarded next door: `POISON_EMOTES` is folded too, because four of
+// the ten Strike emotes carry an apostrophe and `searchText` no longer does. S2b (`isPoisonSpell`
+// on Weakening Strike) and S4 (`grouped.poisons.length === 20`) fail if that half is ever missed.
+
+/** Every name the REAL catalog reaches for this query. */
+function found(entries: readonly SpellCatalogEntry[], query: string): string[] {
+  return filterSpells(entries, tokenizeSpellQuery(query)).map((e) => e.name)
+}
+
+test('S5 THE REPORTED CASE: Snails Healing answers to the possessive the owner typed', () => {
+  // THE REPORT (owner, 2026-08-13): the row was invisible in suggested alerts. Nothing was
+  // missing — the DB and the game log both spell it apostrophe-free, and the owner typed what he
+  // says. `snails healing` does not contain `snail's`, and the matcher is a substring test.
+  const db = loadSpellDb()
+  const spell = db.byKey.get('snails healing')
+  assert.ok(spell, 'the shaman heal-over-time at 14 must still be in the DB')
+  assert.equal(spell.name, 'Snails Healing', "the DB's own spelling carries no apostrophe")
+  assert.equal(spell.spellType, 'Heal Over Time')
+
+  const entries = buildSpellCatalog(db, new Map()).entries
+  for (const query of [
+    'snails healing', // as the DB and the game spell it
+    "snail's healing", // as the owner typed it
+    "snail's", // …and half-typed, which is what a live search box sees first
+    'snails',
+    'snail’s healing' // the curly apostrophe a phone or Word substitutes while you type
+  ]) {
+    assert.ok(found(entries, query).includes('Snails Healing'), `"${query}" must reach it`)
+  }
+})
+
+test('S5b …and the OTHER direction: an apostrophe in the DB, omitted by the user', () => {
+  // The larger population, and the one the report did not mention. Measured over the committed
+  // spells.json: 167 of 1,928 names carry an apostrophe-ish character — 149 the ASCII `'`, 22 the
+  // BACKTICK the wiki uses as a stand-in — 136 of them as a `'s` possessive, plus 349 message
+  // fields. Every one is a string a user may reasonably type without the punctuation.
+  const entries = buildSpellCatalog(loadSpellDb(), new Map()).entries
+  const cases: readonly (readonly [string, string])[] = [
+    ['aanyas animation', "Aanya's Animation"], // the DB's apostrophe, dropped by the user
+    ["aanya's animation", "Aanya's Animation"], // …and spelled the DB's way
+    ['aanya’s animation', "Aanya's Animation"], // …and with the keyboard's curly one
+    ['atols spectral shackles', 'Atol`s Spectral Shackles'], // the wiki's BACKTICK possessive
+    ["atol's spectral shackles", 'Atol`s Spectral Shackles'] // …reached by the apostrophe instead
+  ]
+  for (const [typed, want] of cases) {
+    assert.ok(found(entries, typed).includes(want), `"${typed}" must reach ${want}`)
+  }
+})
+
+test('S5c EXHAUSTIVE: every apostrophe-bearing row the app ships is findable BOTH ways', () => {
+  // A PROPERTY, not a count — a count would rot on the next re-scrape while this holds for whatever
+  // the scrape ships. The bound below only says the population is real (164 catalog lines today,
+  // from the 167 DB names; the difference is rank siblings folding onto one line).
+  const entries = buildSpellCatalog(loadSpellDb(), new Map()).entries
+  let population = 0
+  for (const e of entries) {
+    if (!/['‘’ʼ`]/.test(e.name)) continue
+    population += 1
+    assert.equal(
+      matchesSpellQuery(e, tokenizeSpellQuery(e.name)),
+      true,
+      `${e.name}: must be found by the name as the DB spells it`
+    )
+    assert.equal(
+      matchesSpellQuery(e, tokenizeSpellQuery(foldApostrophes(e.name))),
+      true,
+      `${e.name}: must be found by the same name without the punctuation`
+    )
+  }
+  assert.ok(population > 100, `the apostrophe population is real (${String(population)} catalog rows)`)
+})
+
+test('S5d the fold deletes, and never touches the echo the user sees', () => {
+  // DELETED, not replaced by a space: `aanya's` and `aanyas` have to land on the SAME characters.
+  assert.equal(foldApostrophes("aanya's"), 'aanyas')
+  assert.equal(foldApostrophes('atol`s'), 'atols')
+  assert.equal(foldApostrophes('aanya’s ‘x’ ʼy'), 'aanyas x y')
+  // The acute accent is a diacritic, not punctuation, and is deliberately outside the class.
+  assert.equal(foldApostrophes('café ´'), 'café ´')
+
+  // `raw` is what the UI echoes back as a chip. A search box that silently re-spelled somebody's
+  // query would be lying about what it searched for.
+  const [token] = tokenizeSpellQuery("snail's")
+  assert.deepEqual(token, { kind: 'text', raw: "snail's", text: 'snails' })
 })

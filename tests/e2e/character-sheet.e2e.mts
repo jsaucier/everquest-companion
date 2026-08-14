@@ -44,6 +44,8 @@ import {
 } from './appHarness.mjs'
 import { mainWindow } from './appWindow.mjs'
 import { launchOnFixture } from './logFixture.mjs'
+// JOS-329's away-and-back step, from the module the gear and planner specs share.
+import { stepCarryMemory } from './areaMemorySteps.mjs'
 
 /** The gear area's one nav row, and the tab bar it opens. */
 const NAV_GEAR = '[data-testid="nav-gear"]'
@@ -395,6 +397,11 @@ async function main(): Promise<void> {
       await stepLayout(page)
       await stepSearch(page)
       await stepChips(page)
+      // JOS-329, and it runs LAST because it is the only step that leaves the tab. The carry-all
+      // box was `useState`, so a glance at another module emptied it; the session tier fixes that
+      // without breaking the promise JOS-327's own header made about a FRESH LAUNCH (CarryAll.tsx
+      // carries the rewritten paragraph). It hands the box back empty for the teardown.
+      await stepCarryMemory(page, SEARCH_TERM)
     } else {
       note('the Character tab never mounted — every claim below it is unmeasured, not passing')
     }

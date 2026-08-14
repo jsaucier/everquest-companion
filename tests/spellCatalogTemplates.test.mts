@@ -20,9 +20,15 @@ import {
   CLASSIFIED_SPELL_TYPES,
   buildSpellCatalog,
   castOnOtherSuffix,
-  loadSpellDb
+  isPlaceholderMessage,
+  loadSpellDb,
+  spellPlaceholdersReport
 } from '../src/main/data/spellDb'
 import { subjectCapturePattern } from '../src/shared/alertCaptures'
+// The RAW scrape, read directly — the independent count below has to look at the text the pass
+// blanked, which by definition is no longer in the effective DB.
+import spellsJson from '../src/main/data/spells.json'
+import type { SpellDbFile } from '../src/shared/types'
 
 const db = loadSpellDb()
 const catalog = buildSpellCatalog(db, new Map())
@@ -135,12 +141,21 @@ test('the dead-lands gate actually removed something, and the count is measured 
   // is the first entry the sweep admitted on a REPORTER'S SLICE rather than on his own bytes. The
   // rest of this population is still what nobody has evidenced from any log at all, which is what
   // the gate is for.
+  //
+  // AND IT IS 44 SINCE JOS-342, which took one off it WITHOUT correcting anything: `FireBomb`, a
+  // Detrimental NPC spell whose three message fields all say the literal string `N/A`. It was in
+  // this population because `N/A` is a non-empty string that yields no suffix — the same arithmetic
+  // as a real sentence with the wrong subject, for a field that states nothing at all. The
+  // placeholder pass now blanks it at load, so the row no longer has a cast-on-other message to be
+  // counted for, and the remainder is once again only spells whose message is real and unkeyable.
+  // (The wiki page agrees with the pass: FireBomb's own `classes` text reads "There are no messages
+  // in chat when the spell is cast/lands.")
   let dead = 0
   for (const s of db.spells) {
     if (s.spellType !== 'Detrimental' || !s.msgCastOnOther) continue
     if (castOnOtherSuffix(s.msgCastOnOther) === null) dead += 1
   }
-  assert.equal(dead, 45, 'the measured population the `lands` gate now excludes')
+  assert.equal(dead, 44, 'the measured population the `lands` gate now excludes')
 })
 
 test('`landsOnOther` always travels with the pattern it needs', () => {
@@ -168,6 +183,117 @@ test('the authored pattern is derived in MAIN and matches the shared rule exactl
     const expected = s?.msgCastOnOther ? subjectCapturePattern(s.msgCastOnOther) : null
     if (e.templates.landsOnOther) assert.equal(e.castOnOtherCapture, expected)
   }
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE SCRAPE'S PLACEHOLDER MESSAGES (JOS-342) — the same law, one level down.
+//
+// A template flag is a claim that the alert can fire, and the flag reads `!!s.msgCastOnOther`. A
+// SCRAPE STUB is a non-empty string, so it read as a message the wiki stated, and `Snails Healing`
+// was therefore offered a `landsOnOther` alert whose authored pattern matched any line ending in a
+// name and a period. `applyPlaceholderMessages` blanks those fields at load, and every gate here
+// then does the right thing by its EXISTING absent-field rule — nothing downstream was taught
+// anything new. What has to be pinned is the census: which shapes are folded, and that a short
+// REAL sentence is not among them.
+
+/** Every field the pass blanked, as `spell/field = "text"`, in the order it found them. */
+function nulledRows(): string[] {
+  const report = spellPlaceholdersReport()
+  assert.ok(report, 'loadSpellDb must have run the placeholder pass')
+  return report.rows.map((r) => `${r.spell}/${r.field} = ${JSON.stringify(r.text)}`)
+}
+
+test('THE CENSUS: exactly ten stub fields, on five spells, in two shapes', () => {
+  // Listed VERBATIM rather than counted, because the whole risk of this pass is swallowing a real
+  // sentence. A re-scrape that changes what it folds has to change this list and argue for it.
+  assert.deepEqual(nulledRows(), [
+    // SHAPE B — the literal not-applicable marker. FireBomb's own `classes` text says there are no
+    // chat messages for it at all, which is the wiki agreeing with the fold in prose.
+    'FireBomb/msgCastOnYou = "N/A"',
+    'FireBomb/msgCastOnOther = "N/A"',
+    'FireBomb/msgWearsOff = "N/A"',
+    'Nature\'s Holy Wrath/msgWearsOff = "N/A"',
+    // SHAPE A — a subject with no predicate. The three shaman heal-over-times whose wiki pages
+    // state the sentence's subject and then state nothing else.
+    'Sloths Healing/msgCastOnYou = "You ."',
+    'Sloths Healing/msgCastOnOther = "Someone ."',
+    'Slugs Healing/msgCastOnYou = "You ."',
+    'Slugs Healing/msgCastOnOther = "Someone ."',
+    'Snails Healing/msgCastOnYou = "You ."',
+    'Snails Healing/msgCastOnOther = "Someone ."'
+  ])
+  assert.equal(spellPlaceholdersReport()?.nulled, 10)
+})
+
+test('…and an INDEPENDENT count finds the same ten: they are the DB\'s only one-word messages', () => {
+  // Two directions on one population. The rule was derived from SHAPES; a word count knows nothing
+  // about shapes and lands on exactly the same ten fields. Every other one of the 3,847 non-empty
+  // message fields the scrape ships carries two or more words.
+  const single: string[] = []
+  for (const s of (spellsJson as unknown as SpellDbFile).spells) {
+    for (const field of ['msgCastOnYou', 'msgCastOnOther', 'msgWearsOff'] as const) {
+      const text = s[field]
+      if (!text) continue
+      const words = text.trim().split(/\s+/).filter((w) => /[A-Za-z0-9]/.test(w))
+      if (words.length <= 1) single.push(`${s.name}/${field} = ${JSON.stringify(text)}`)
+    }
+  }
+  assert.deepEqual(single.sort(), [...nulledRows()].sort())
+})
+
+test('THE BOUNDARY: a short sentence is still a sentence and survives the pass', () => {
+  // Law 1, stated as a test. Only a message with NOTHING BUT a subject, or the literal
+  // not-applicable marker, is a stub.
+  for (const stub of ['You .', 'Someone .', 'N/A', 'n/a', '  You  . ', 'Target .', '   ', '.']) {
+    assert.equal(isPlaceholderMessage(stub), true, `${JSON.stringify(stub)} states nothing`)
+  }
+  for (const real of [
+    'You burn.', // Flames of Ro — two words, and one of them is a verb
+    'You stop.', // Chase the Moon
+    'Someone dies.', // Death Peace
+    'Someone staggers.', // 41 rows share it
+    'fades away.', // 10 rows — the wiki cropped the SUBJECT, not the predicate
+    'starts limping!', // Hobbling Poison
+    "'s limbs move slower!" // Weakening Strike — a possessive fragment IS the parser's suffix
+  ]) {
+    assert.equal(isPlaceholderMessage(real), false, `${JSON.stringify(real)} is a sentence`)
+  }
+})
+
+test('THE REPORTED SPELL: Snails Healing carries no stub anywhere downstream', () => {
+  // The defect really was authored. Left in place, `Someone .` produces a raw trigger that fires on
+  // any line ending in a name-shaped run and a period — offered to the user as coverage for a
+  // spell landing, which is precisely the guessed trigger alertGroups.ts's law forbids.
+  assert.notEqual(
+    subjectCapturePattern('Someone .'),
+    null,
+    'the stub really did author a pattern — this is what the pass exists to remove'
+  )
+
+  const spell = db.byKey.get('snails healing')
+  assert.ok(spell, 'the row is still in the DB — the pass blanks fields, it never drops a spell')
+  assert.equal(spell.msgCastOnYou, undefined, 'absent, rather than the string "You ."')
+  assert.equal(spell.msgCastOnOther, undefined, 'absent, rather than the string "Someone ."')
+
+  const entry = byKey.get('snails healing')
+  assert.ok(entry, 'and still in the catalog: Heal Over Time is Beneficial, so `fade` stands')
+  assert.equal(entry.templates.fade, true, 'the one template it honestly earns')
+  assert.equal(entry.templates.landsOnOther, false, 'the junk capture is gone')
+  assert.equal(entry.castOnOtherCapture, undefined)
+  assert.equal(entry.templates.wearsOff, false, 'the DB states no wear-off sentence for it')
+  assert.equal(
+    entry.searchText,
+    'snails healing snails healing',
+    'the search surface is the name and its rank list — no stub text joined into it'
+  )
+
+  // …and the parser's own tables never learned the stubs either. `Someone .` minted the
+  // cast-on-other suffix `.`, a real entry that any line ending in a space and a period would have
+  // matched; `You .` and `N/A` were keys in the landing and wear-off maps.
+  assert.equal(db.castOnOtherSuffix.has('.'), false, 'the one-character suffix is out of the table')
+  assert.equal(db.castOnYou.has('You .'), false)
+  assert.equal(db.castOnYou.has('N/A'), false)
+  assert.equal(db.wearsOff.has('N/A'), false)
 })
 
 test('poison Strike procs are excluded from BOTH landing templates', () => {

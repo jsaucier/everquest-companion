@@ -25,6 +25,12 @@ import spellsJson from './spells.json'
 // every row of this dataset is DISPLAYED by name, and a card announcing a spell by a name the
 // game never prints is a card a player cannot act on.
 import { applySpellCorrections } from './spellCorrections'
+// The removals layer, for the reason THIS module is the one that named it (JOS-337). Every row
+// here becomes a CARD telling the player what they just unlocked and can go buy — so a spell EQ
+// Legends does not have is not an inert row, it is the app sending the owner to a vendor for
+// nothing. Invigor reached three of his levels (PAL 22, SHM 24, RNG 30) that way. Applied BEFORE
+// the corrections overlay, the load order `spellDb.ts` states.
+import { applySpellRemovals } from './spellRemovals'
 import { parseSpellClasses } from '../../shared/spellLevels'
 import { isClassAbbr, type ClassAbbr } from '../../shared/classCombo'
 import type { LevelUnlockData, UnlockSkill, UnlockSpell } from '../../shared/levelUnlocks'
@@ -79,7 +85,7 @@ function skillsFor(
 function unlockSpells(): UnlockSpell[] {
   const file = spellsJson as SpellDbFile
   const out: UnlockSpell[] = []
-  for (const s of applySpellCorrections(file.spells).spells) {
+  for (const s of applySpellCorrections(applySpellRemovals(file.spells).spells).spells) {
     const at = parseSpellClasses(s.classes)
     if (at.length === 0) continue
     const spell: UnlockSpell = { name: s.name, at }

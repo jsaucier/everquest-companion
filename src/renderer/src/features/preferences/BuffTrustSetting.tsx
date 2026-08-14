@@ -15,41 +15,39 @@
 // ONE BORDER: PreferencesView already wraps each item in an outlined Paper, so this renders bare
 // Stacks.
 
-import { type JSX, useCallback, useEffect, useState } from 'react'
+import { type JSX, useCallback, useState } from 'react'
 import { Button, Chip, Stack, TextField, Typography } from '@mui/material'
 import GroupIcon from '@mui/icons-material/Group'
 import {
   addExternalCaster,
-  DEFAULT_BUFF_TRUST_PREFS,
   MAX_CASTER_NAME_CHARS,
   MAX_EXTERNAL_CASTERS,
   removeExternalCaster,
   type BuffTrustPrefs
 } from '@shared/buffTrust'
+import { recordPref, usePrefsSeed } from './prefsHydration'
 import type { PrefSection } from './PreferencesView'
 
 /**
- * The list, hydrated once from main and written back on every edit — the GraphicsSetting /
- * OverlayAutoHide pattern exactly. The local write is optimistic (a chip must not lag an IPC
- * round trip) and main's reply is authoritative, being what was actually stored after the shared
- * normalizer had its say.
+ * The list, SEEDED from the pane's hydration snapshot and written back on every edit. The local
+ * write is optimistic (a chip must not lag an IPC round trip) and main's reply is authoritative,
+ * being what was actually stored after the shared normalizer had its say.
+ *
+ * It used to mount on `DEFAULT_BUFF_TRUST_PREFS` — the EMPTY allowlist — and correct itself
+ * (JOS-340), so a user with three trusted casters opened this section to a card that said they
+ * trusted nobody, and then watched their own list appear. Of every field in the pane this was the
+ * one whose wrong frame told the biggest lie, because "empty" here is a claim about who the app is
+ * listening to.
  */
 function useBuffTrust(): [BuffTrustPrefs, (next: BuffTrustPrefs) => void] {
-  const [prefs, setPrefs] = useState<BuffTrustPrefs>(DEFAULT_BUFF_TRUST_PREFS)
-
-  useEffect(() => {
-    let alive = true
-    void window.eq.getBuffTrust().then((stored) => {
-      if (alive) setPrefs(stored)
-    })
-    return () => {
-      alive = false
-    }
-  }, [])
+  const [prefs, setPrefs] = useState<BuffTrustPrefs>(usePrefsSeed().buffTrust)
 
   const update = useCallback((next: BuffTrustPrefs) => {
     setPrefs(next)
-    void window.eq.setBuffTrust(next).then(setPrefs)
+    void window.eq.setBuffTrust(next).then((stored) => {
+      setPrefs(stored)
+      recordPref('buffTrust', stored)
+    })
   }, [])
 
   return [prefs, update]

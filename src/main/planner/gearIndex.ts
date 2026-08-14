@@ -1,7 +1,7 @@
 // planner/gearIndex.ts — the committed item corpus → the GEAR PLANNER's candidate index
 // (JOS-283, phase 2; the row model and its design rule live in src/shared/planner/gear.ts).
 //
-// One row per EQUIPPABLE item — 6,858 of the corpus's 11,161 pages state a `Slot:`, plus the three
+// One row per EQUIPPABLE item — 6,884 of the corpus's 11,213 pages state a `Slot:`, plus the three
 // the curated layer repairs (JOS-67) — carrying slots, classes, races, era, flags, effects, the
 // weapon block and the NUMERIC BASE VECTOR the whole feature sorts and filters on.
 //
@@ -15,6 +15,13 @@
 // `COMMITTED_SPELL_FACTS` are exported from effectIndex.ts for exactly this reader. The dedupe is
 // the donor index's too: a page contributes at most one row, `|itemname` alias keys are skipped by
 // PAGE identity (196 of them), and where two pages describe one item the ITEM'S OWN PAGE wins.
+//
+// AND SINCE JOS-333 IT ALSO CARRIES LAYER 3 (`eraDerive.ts`, beside this file): the one stated
+// acquisition edge that points at out-of-era content, computed ONCE for the whole file before the
+// row walk and attached to the rows that have one (`eraDerived`). It is a BUILD-TIME answer on
+// purpose — the walk crosses the corpus's recipe and quest graph, and the renderer's job is to read
+// a field, not to re-derive it per row per keystroke. The build census counts it like every other
+// reading (`eraDerivedRows`), so a rescrape that changes the shape of the answer is visible.
 //
 // WHAT IT ADDS is the reading of NUMBERS, and there the honesty rule is the census rather than the
 // row: `statInteger` (shared/characterSheet.ts) is the parser, a `%` value is admitted for the one
@@ -30,6 +37,7 @@ import {
   type ResearchedKnowledge
 } from '../itemsResearch'
 import { COMMITTED_SPELL_FACTS, slotsOf, type SpellFactsIndex } from './effectIndex'
+import { buildEraDerivations } from './eraDerive'
 import {
   isHasteEffect,
   normalizeClasses,
@@ -40,6 +48,7 @@ import {
 import { extractionTier } from '../../shared/planner/rules'
 import { statInteger } from '../../shared/characterSheet'
 import { normalizeStatKey, synthesizesVoidSave } from '../../shared/itemUpgrade'
+import type { EraDerivation } from '../../shared/planner/era'
 import {
   GEAR_INDEX_VERSION,
   isGearStatKey,
@@ -190,10 +199,12 @@ interface Acc {
   unknownSlots: Set<string>
   unindexed: Map<string, number>
   unreadable: Map<string, number>
+  /** LAYER 3, built once for the whole file before the walk (`eraDerive.ts`) — itemKey → the edge */
+  derived: ReadonlyMap<string, EraDerivation>
   stats: Omit<GearBuildStats, 'unindexedStatKeys' | 'unreadableStatKeys' | 'unknownSlotTokens'>
 }
 
-function newAcc(): Acc {
+function newAcc(derived: ReadonlyMap<string, EraDerivation>): Acc {
   return {
     seenPages: new Set(),
     rows: new Map(),
@@ -201,6 +212,7 @@ function newAcc(): Acc {
     unknownSlots: new Set(),
     unindexed: new Map(),
     unreadable: new Map(),
+    derived,
     stats: {
       pages: 0,
       aliasKeys: 0,
@@ -211,6 +223,7 @@ function newAcc(): Acc {
       spellJoined: 0,
       socketless: 0,
       voidSynthRows: 0,
+      eraDerivedRows: 0,
       statValues: 0,
       percentValues: 0,
       rangeTexts: 0
@@ -272,11 +285,13 @@ function normalizeRaces(races: readonly string[] | undefined): string[] {
 function optionalFields(
   k: ResearchedKnowledge,
   read: GearStatReading | null,
-  voidSynth: boolean
+  voidSynth: boolean,
+  derived: EraDerivation | undefined
 ): Partial<GearRow> {
   return {
     ...(k.iconId === undefined ? {} : { iconId: k.iconId }),
     ...(k.eraTag === undefined ? {} : { eraTag: k.eraTag }),
+    ...(derived === undefined ? {} : { eraDerived: derived }),
     ...(k.stats?.skill === undefined ? {} : { skill: k.stats.skill }),
     ...(read?.rangeText === undefined ? {} : { rangeText: read.rangeText }),
     ...(voidSynth ? { voidSynth: true as const } : {}),
@@ -286,11 +301,22 @@ function optionalFields(
   }
 }
 
-/** What one emitted row contributes to the census. */
+/**
+ * What one KEPT row contributes to the census — run in a final pass over the deduped rows, never
+ * as each row is built.
+ *
+ * IT USED TO RUN AT BUILD TIME AND THAT WAS QUIETLY WRONG (found by JOS-341's sweep). A duplicate
+ * page's row is counted the moment it is built and then thrown away by `remember`, so every one of
+ * these numbers over-reported by however many duplicates happened to have the property. It read as
+ * exact for `eraDerivedRows` only because no duplicated page carried a derivation until layer 3
+ * grew the dropper edge; then eighteen did, and `stats.eraDerivedRows` and the rows themselves
+ * disagreed. The stats are documented as counts of ROWS, so they are taken from the rows.
+ */
 function countRow(acc: Acc, row: GearRow): void {
   if (row.stats.DMG !== undefined || row.stats.DELAY !== undefined) acc.stats.weaponRows++
   if (row.effects.length > 0) acc.stats.effectRows++
   if (row.voidSynth === true) acc.stats.voidSynthRows++
+  if (row.eraDerived !== undefined) acc.stats.eraDerivedRows++
 }
 
 /** One page → its row, or null when the corpus places the item in no slot at all. */
@@ -312,6 +338,9 @@ function pageRow(
 
   const read = readGearStats(block)
   foldReading(acc, read)
+  // LAYER 3 is keyed by the PAGE's canonical key (`eraDerive.ts` walks pages, not alias keys), while
+  // the row's key comes from the item NAME. They differ on the 196 `|itemname` alias pages, and the
+  // page is the thing the derivation walked, so the page is what it is looked up by.
   const row: GearRow = {
     key: itemKey(k.name),
     name: k.name,
@@ -324,9 +353,8 @@ function pageRow(
     playerCrafted: k.playerCrafted === true,
     stats: read.stats,
     effects: block.effects.map((e) => gearEffect(e, spells, acc)),
-    ...optionalFields(k, read, synthesizesVoidSave(block, ANY_UPGRADED))
+    ...optionalFields(k, read, synthesizesVoidSave(block, ANY_UPGRADED), acc.derived.get(itemKey(entry.page)))
   }
-  countRow(acc, row)
   return row
 }
 
@@ -368,8 +396,10 @@ export function buildGearIndex(
   research: ItemResearchFile = ITEMS_RESEARCH,
   spells: SpellFactsIndex = COMMITTED_SPELL_FACTS
 ): GearIndexPayload {
-  const acc = newAcc()
+  const acc = newAcc(buildEraDerivations(file))
   for (const entry of Object.values(file.items ?? {})) addPage(acc, entry, research, spells)
+  // The census is taken from the KEPT rows, after dedupe (see `countRow`).
+  for (const row of acc.rows.values()) countRow(acc, row)
   return {
     version: GEAR_INDEX_VERSION,
     scrapedAt: file.scrapedAt,

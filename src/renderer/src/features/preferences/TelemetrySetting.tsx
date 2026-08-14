@@ -22,32 +22,51 @@
 import { type JSX, useCallback, useEffect, useState } from 'react'
 import { Box, Button, FormControlLabel, Stack, Switch, Typography } from '@mui/material'
 import type { TelemetryPayloadView } from '@shared/telemetry'
+import { recordPref, usePrefsSeed } from './prefsHydration'
 
 /** Poll cadence while the pane is open — the buffer grows from main, which has no push channel
  *  for it (and should not gain one for a settings pane nobody watches for minutes). */
 const REFRESH_MS = 4_000
 
-function usePayload(): [TelemetryPayloadView | null, () => void] {
-  const [payload, setPayload] = useState<TelemetryPayloadView | null>(null)
+/**
+ * The payload, SEEDED from the pane's hydration snapshot and then polled.
+ *
+ * IT USED TO START `null` AND RENDER "Loading…" (JOS-340) — a per-control skeleton, which is the
+ * shape the gate exists to replace: thirteen cards each announcing their own wait is worse than
+ * one pane that simply arrives. Worse here than elsewhere, because the thing behind the skeleton
+ * is a PRIVACY switch, and "Loading…" where a user expects to read whether they are opted out is
+ * the one place in this app that should never hesitate.
+ *
+ * THE POLL STAYS. The buffer grows from main, which has no push channel for it (and should not
+ * gain one for a settings pane nobody watches for minutes), so the seed is a starting point and
+ * the interval keeps it honest. Every read it takes goes back into the snapshot, so re-opening
+ * the section starts from the newest counts rather than from the ones the pane first loaded.
+ */
+function usePayload(): [TelemetryPayloadView, () => void] {
+  const [payload, setPayload] = useState<TelemetryPayloadView>(usePrefsSeed().telemetry)
+
+  const adopt = useCallback((p: TelemetryPayloadView): void => {
+    setPayload(p)
+    recordPref('telemetry', p)
+  }, [])
 
   const refresh = useCallback((): void => {
-    void window.eq.getTelemetryPayload().then(setPayload)
-  }, [])
+    void window.eq.getTelemetryPayload().then(adopt)
+  }, [adopt])
 
   useEffect(() => {
     let alive = true
     const read = (): void => {
       void window.eq.getTelemetryPayload().then((p) => {
-        if (alive) setPayload(p)
+        if (alive) adopt(p)
       })
     }
-    read()
     const timer = setInterval(read, REFRESH_MS)
     return () => {
       alive = false
       clearInterval(timer)
     }
-  }, [])
+  }, [adopt])
 
   return [payload, refresh]
 }
@@ -156,8 +175,6 @@ export function TelemetrySetting(): JSX.Element {
   const rotate = useCallback((): void => {
     void window.eq.rotateAnalyticsId().then(refresh)
   }, [refresh])
-
-  if (payload === null) return <Typography variant="body2">Loading…</Typography>
 
   const enabled = payload.prefs.enabled
   return (

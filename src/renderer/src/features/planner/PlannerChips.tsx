@@ -64,13 +64,23 @@ function evidence(progress: DonorProgress): string {
   return parts.length === 0 ? '' : ` - ${parts.join(', ')}.`
 }
 
-/** The ONE state chip a planned socket carries. */
-export function StateChip({ progress }: { progress: DonorProgress }): JSX.Element {
+/**
+ * The ONE state chip a wanted item carries.
+ *
+ * `title` OVERRIDES THE SHARED SENTENCE, and exactly one caller needs it (JOS-326). The four hints
+ * above are the DONOR vocabulary — `ready` means "the log saw this merged to at least the tier its
+ * effect extracts at" — which is the right sentence for anything wanted for an effect and simply
+ * not what a GEAR wish is about. Rather than teach this chip a second vocabulary it would have to
+ * choose between, the one caller with a different rule states its own sentence and everything else
+ * keeps the shared one by passing nothing. The COUNTS are still appended either way: they are
+ * evidence, not vocabulary.
+ */
+export function StateChip({ progress, title }: { progress: DonorProgress; title?: string }): JSX.Element {
   return (
     <Chip
       size="small"
       label={progress.label}
-      title={`${STATE_HINT[progress.state]}${evidence(progress)}`}
+      title={`${title ?? STATE_HINT[progress.state]}${evidence(progress)}`}
       data-testid="planner-state-chip"
       data-state={progress.state}
       color={STATE_COLOR[progress.state]}

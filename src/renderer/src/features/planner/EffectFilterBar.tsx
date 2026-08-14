@@ -9,16 +9,16 @@
 // thing allowed to shrink — a bar that wraps turns a toolbar into a growing block and pushes the
 // list it filters off the bottom of the pane.
 //
-// FIVE CONTROLS, TWO KINDS. Socket type / search / slot are this mount's own state; "Usable by this
-// set" reads the plan. "Current era", "Non-equippable" and "Group by" are the PERSISTED set
-// (`eq.planner.*`), handed in as their `useState`-shaped tuples so this file owns none of that
-// storage — see plannerData for what each one means and why the two toggles' defaults are opposites.
+// FIVE CONTROLS, TWO KINDS. Socket type / search / slot are this mount's own state; "Usable by
+// these classes" reads the browse's class filter (JOS-326: it used to read the selected SET's
+// trio, and the sets' switcher is gone — the filter itself is not). "Current era",
+// "Non-equippable" and "Group by" are the PERSISTED set (`eq.planner.*`), handed in as their
+// `useState`-shaped tuples so this file owns none of that storage — see plannerData for what each
+// one means and why the two toggles' defaults are opposites.
 //
 // …AND ONE LEADING CHIP THAT NAMES THE ITEM (JOS-210). It is one control in two states: nothing
-// picked, so it offers to pick; or an item picked, so it says which and can be cleared. Whether the
-// item arrived from the Inventory tab (a `BrowsePreset`, which also names the cell and forces the
-// socket) or was typed into its picker, one chip is what the row spends on it — and the SOCKET TABS
-// no longer clear it, because "show me this item's worn effects instead of its procs" is one
+// picked, so it offers to pick; or an item picked, so it says which and can be cleared. The SOCKET
+// TABS do not clear it, because "show me this item's worn effects instead of its procs" is one
 // question, not two (the bug half of JOS-210: every filter-bar write used to hand the browser back).
 //
 // GROUP BY offers only the axes its socket tab can serve (`plannerGroups.axesFor` — "Focus family"
@@ -33,7 +33,7 @@
 
 import { type JSX, useState } from 'react'
 import { Chip, MenuItem, Stack, TextField, ToggleButton, ToggleButtonGroup } from '@mui/material'
-import { EQUIP_SLOTS, planSlotLabel, type EquipSlot, type SocketType } from '@shared/planner/types'
+import { EQUIP_SLOTS, type EquipSlot, type SocketType } from '@shared/planner/types'
 import ItemFilterPicker from './ItemFilterPicker'
 import { CURRENT_ERA_LABEL, type DonorFilters } from './plannerData'
 import { AXIS_LABEL, SOCKET_LABEL, axesFor, type GroupAxis } from './plannerGroups'
@@ -75,28 +75,27 @@ function ToggleChip({
 }
 
 /**
- * THE ITEM CHIP (V8's preset chip, generalised by JOS-210) — ONE control in two states.
+ * THE ITEM CHIP (JOS-210) — ONE control in two states.
  *
- * EMPTY, it offers the second door into the browser: pick any item the DB carries and see what can
- * go in it. FILLED, it is the browser's honesty about what it is narrowed to — and when the item
- * arrived from the Inventory tab it names the CELL and the SOCKET too, because the tabs and the
- * slot select beside it are then showing values the user did not choose.
+ * EMPTY, it offers the item-first way into the browser: pick any item the DB carries and see what
+ * can go in it. FILLED, it is the browser's honesty about what it is narrowed to, and the X hands
+ * the browser back.
  *
- * `planSlotLabel`, never the raw key: the chip is what the user reads back, and the keys are not
- * words ("FINGER2", "ANY1"). One spelling of a cell, everywhere.
+ * IT USED TO HAVE A THIRD STATE (JOS-326 removed it). While the Inventory tab existed, an item
+ * could also arrive as a `BrowsePreset` — one socket of one host — and the chip then named the CELL
+ * and the SOCKET too, because the tabs and the slot select beside it were showing values the user
+ * had not chosen. There are no cells any more, so every narrowing on this bar is one the user made
+ * here, and the chip says exactly one thing: which item.
  *
- * The X clears the narrowing; clicking the chip itself re-opens the picker, so swapping which item
- * you are filling costs one click rather than a clear and a re-open.
+ * Clicking the chip itself re-opens the picker, so swapping which item you are filling costs one
+ * click rather than a clear and a re-open.
  */
 function ItemChip({
   focus,
-  socket,
   onOpen,
   onClear
 }: {
   focus: ItemFocus | null
-  /** the kind tab in force — the preset's socket MOVES with it now (JOS-210) */
-  socket: SocketType
   onOpen: (anchor: HTMLElement) => void
   onClear: () => void
 }): JSX.Element {
@@ -113,17 +112,12 @@ function ItemChip({
       />
     )
   }
-  const fromCell = focus.cell !== undefined
   return (
     <Chip
       size="small"
       color="primary"
-      label={
-        focus.cell === undefined
-          ? focus.name
-          : `${planSlotLabel(focus.cell)} · ${SOCKET_LABEL[socket]} · ${focus.name}`
-      }
-      data-testid={fromCell ? 'planner-preset-chip' : 'planner-item-chip'}
+      label={focus.name}
+      data-testid="planner-item-chip"
       title={
         focus.slots.length === 0
           ? `Showing effects compatible with ${focus.name}`
@@ -143,17 +137,15 @@ function ItemChip({
  */
 function ItemNarrowing({
   focus,
-  socket,
   setFocus
 }: {
   focus: ItemFocus | null
-  socket: SocketType
   setFocus?: (f: ItemFocus | null) => void
 }): JSX.Element {
   const [picking, setPicking] = useState<HTMLElement | null>(null)
   return (
     <>
-      <ItemChip focus={focus} socket={socket} onOpen={setPicking} onClear={() => setFocus?.(null)} />
+      <ItemChip focus={focus} onOpen={setPicking} onClear={() => setFocus?.(null)} />
       <ItemFilterPicker
         anchor={picking}
         onClose={() => setPicking(null)}
@@ -201,7 +193,7 @@ export default function EffectFilterBar({
   const [axis, setAxis] = groupBy
   return (
     <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'nowrap', mb: 1 }}>
-      <ItemNarrowing focus={focus} socket={filters.socket} setFocus={setFocus} />
+      <ItemNarrowing focus={focus} setFocus={setFocus} />
       <ToggleButtonGroup
         exclusive
         size="small"
@@ -218,10 +210,13 @@ export default function EffectFilterBar({
         ))}
       </ToggleButtonGroup>
 
+      {/* The testid arrived with JOS-329: the box is remembered now (session tier), and an e2e that
+          asserts a search survived a module switch has to be able to read what is in it. */}
       <TextField
         size="small"
         label="Search effect or item"
         value={text}
+        data-testid="planner-search"
         onChange={(e) => setText(e.target.value)}
         sx={{ minWidth: 140, flexShrink: 1 }}
       />
@@ -262,10 +257,10 @@ export default function EffectFilterBar({
       </TextField>
 
       <ToggleChip
-        label="Usable by this set"
+        label="Usable by these classes"
         on={filters.trioOnly}
         onToggle={() => setFilters({ ...filters, trioOnly: !filters.trioOnly })}
-        hint="Hide donors no class in this set can use"
+        hint="Hide donors none of the classes in the filter can use"
       />
 
       <ToggleChip

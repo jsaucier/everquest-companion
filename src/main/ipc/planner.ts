@@ -20,12 +20,12 @@ import { buildPlannerIndex, searchPlannerItems, type PlannerIndex } from '../pla
 import { buildGearIndex } from '../planner/gearIndex'
 import type { GearIndexPayload } from '../../shared/planner/gear'
 import { NO_OWNERSHIP, ownershipPayload, type OwnershipPayload } from '../../shared/planner/ownership'
-import { sanitizeExaltPlans, sanitizeGearSets } from '../planner/validate'
+import { sanitizeExaltPlans, sanitizeGearSets, sanitizeWishlist } from '../planner/validate'
 import { loadInventoryDump, outputStatus } from '../outputs'
 import { activeCharId, getActiveCharacter } from '../session'
 // The two planner documents' store accessors live in their own module since JOS-286 — store.ts
 // was at its 400-code-line ceiling, and this repo splits rather than ratchets.
-import { getExaltPlans, getGearSets, setExaltPlans, setGearSets } from '../storePlans'
+import { getExaltPlans, getGearSets, getWishlist, setExaltPlans, setGearSets, setWishlist } from '../storePlans'
 import { itemKey, type ItemDbFile } from '../itemsDb'
 // The COMMITTED wiki item database — the same module itemLookup.ts imports, so the JSON is
 // inlined into the main bundle exactly once.
@@ -130,6 +130,15 @@ export function registerPlannerIpc(): void {
   ipcMain.handle(IPC.gearGetSets, () => getGearSets(activeCharId()))
   ipcMain.handle(IPC.gearSetSets, (_e, sets: unknown) => {
     setGearSets(activeCharId(), sanitizeGearSets(sets))
+  })
+
+  // The active character's FLAT WISH LIST (JOS-326). Same shape of promise again, over the third
+  // planner document and its own additive store key. Whole-document both ways: the entries and the
+  // two facts that hang off them (the done strip's dismissals, the one-time seed flag) are one
+  // thing, and a partial write would leave them disagreeing.
+  ipcMain.handle(IPC.wishlistGet, () => getWishlist(activeCharId()))
+  ipcMain.handle(IPC.wishlistSet, (_e, list: unknown) => {
+    setWishlist(activeCharId(), sanitizeWishlist(list))
   })
 
   // The active character's sets. Both directions run through the same validator (see store.ts).

@@ -20,6 +20,13 @@
 // consulted `eraFromTag` ONLY when they came back `unknown`. That is what answers for the quest
 // rewards, the crafted goods and the 126 catalog-orphan donors no zone ever placed.
 //
+// LAYER 2b, ADDED 2026-08-13 (JOS-328): 52 pages state an era through their `[[Category:X Era]]`
+// while carrying no banner at all, and `main/itemLookupParse.ts parseEraCategory` now folds those
+// into the same `eraTag`. Nothing in THIS file changes for them — a token is a token — except the
+// `namesEra` guard below, which exists so a category the register has never heard of stays silent
+// instead of reaching `#default`. The census, and the owner report that produced it, are recorded
+// in the parser beside the reader.
+//
 // AND SINCE 2026-08-13 (JOS-298) THAT BANNER OVERRULES THE ZONES IN ONE DIRECTION. The banner is
 // not only a section heading: `Template:PageEra` carries a machine-readable IN/OUT register, and
 // when it answers `out` the wiki draws a red `Out of Era` box on the page. A zone cannot refute
@@ -28,6 +35,35 @@
 // committed corpus the day it landed: 151 item keys claimed to be farmable while their own page
 // said otherwise, 113 of them slotted, 80 AC-bearing armour, and the top of the Gear tab's
 // CHEST-by-AC list. The register is mirrored below `eraFromTag`, cited to the template it copies.
+//
+// LAYER 3, ADDED 2026-08-13 (JOS-333): AN ERA READ OFF THE ACQUISITION PATH. Everything above asks
+// what THIS page says. The wiki also says something none of it can see — it renders an `OUT OF ERA`
+// pill on every LINK whose TARGET page is out of era — so a page that states no era of its own can
+// still be covered in out-of-era markers, which is exactly what the owner photographed. The rules,
+// the census and the measured refusals are in `src/main/planner/eraDerive.ts` (that is where the
+// corpus is); this file owns only the `EraDerivation` type below and the register the derivation
+// asks. Nothing in the strength order changed: layer 3 speaks ONLY into `unknown`.
+//
+// AND SINCE JOS-341 THAT LAST SENTENCE HAS TWO EXCEPTIONS, both of them the same wiki predicate
+// reaching a page our item corpus does not hold (`src/main/data/pageEra.json`, fetched at data-build
+// time and committed — no runtime wiki calls):
+//   * The `page` edge reads the era of a link target that is not an item at all — an armour-SET
+//     hub, a quest index — and it points BOTH ways. Out is the pill verbatim; IN is a positive
+//     classification (`Category:Classic Era` on the set page), and under the era?-hides rule of
+//     73ad7ec9 declining to read it would hide gear the wiki says is here.
+//   * The `drop-mob` edge is DEFINITIVE and can overrule a drop zone. See `EraDerivation.definitive`
+//     below; the short version is that a revamped zone keeps its name while its contents change,
+//     so the mob is the witness and the zone is not.
+//
+// WHAT MAKES THAT MIRRORING RATHER THAN GUESSING, measured live 2026-08-13: the pill is drawn by
+// eqlwiki's own skin module `skins.EQLImmersive.eraFilter`, which asks a custom `action=eqlmetadata`
+// for each link target's `outOfEra`, and whose documented fallback computes it from the target's
+// CATEGORIES against `mw.config.wgEQLEraOutKeys`. That config, read off a live page the same day,
+// is `[kunark, velious, luclin, chardok, chardokrevamp, holevp, warrensfearhaterevamp,
+// fearhaterevamp, epics, epicquests, unknown]` at `wgEQLEraConfigRevision` 156232 — the SAME eleven
+// keys, the same fold and the same revid as `PAGE_ERA`'s `out` rows below. So `eraBadge(tag) ==
+// 'out'` is not our opinion about a page; it is the wiki's own predicate, and the pill on a link is
+// that predicate applied to the link's target.
 //
 // WHAT IT REFUSES TO DO. The catalog's zone strings include real dirt: initialisms (`BBM`, `WFP`),
 // prose (`Most starting zones`, `Various`), concatenations where a wiki table cell ran two links
@@ -146,6 +182,54 @@ export function zoneEra(zoneName: string): Era | null {
 
 /** How a donor's drop zones read against the era the server is on. */
 export type EraVerdict = 'in-era' | 'out-of-era' | 'unknown'
+
+// ---- layer 3's vocabulary: an era read off the ACQUISITION PATH ------------------------------
+//
+// The rules and the census live in `src/main/planner/eraDerive.ts`, which is where the corpus is.
+// Only the TYPE is here, because three files have to name it — the corpus row that carries it
+// (`shared/planner/gear.ts`), the verdict that reads it (`features/planner/plannerData.ts`) and
+// the builder that writes it — and `era.ts` is already the file all three import for era words.
+
+/** Which stated edge decided an item's era. See the module header in `main/planner/eraDerive.ts`. */
+export type EraDerivationBasis = 'drop-mob' | 'component' | 'yield' | 'page' | 'quest' | 'component-zone'
+
+/**
+ * ONE named reason an item with no era claim of its own nevertheless has one: the stated way you
+ * would GET it points at something the wiki HAS classified.
+ *
+ * It is deliberately a single edge rather than a list. The chip has one sentence to spend, the
+ * owner's ruling makes ONE out-of-era reference sufficient, and a row that lists four of them is
+ * telling the player about our data rather than about the item. The strongest edge is the one kept
+ * (`BASIS_ORDER` in the builder), so which one is reported is deterministic and not a coin toss.
+ */
+export interface EraDerivation {
+  basis: EraDerivationBasis
+  /**
+   * WHICH WAY THE EDGE POINTS (JOS-341). Layer 3 shipped as an out-of-era-only rule, and the
+   * `page` edge is what made that untenable: an armour-set page the wiki files under `Classic Era`
+   * is a POSITIVE claim about its members, not an absence, and under the era?-hides rule of
+   * 73ad7ec9 a row with no verdict is hidden — so refusing to read an in-era classification is not
+   * neutrality, it is a decision to hide gear the wiki says you can go and get.
+   *
+   * `unknown` is not a member on purpose: a derivation that resolved nothing is `null`, not a
+   * third verdict, so a caller cannot accidentally overwrite a real answer with a shrug.
+   */
+  verdict: Exclude<EraVerdict, 'unknown'>
+  /** the item, quest, page or mob the edge points at, spelled the way the corpus spells it */
+  target: string
+  /** WHY that target decides: its banner token, the zone that placed it, or the droppers named */
+  detail: string
+  /**
+   * TRUE when this edge OUTRANKS layers 1-2 instead of speaking only into their silence.
+   *
+   * Exactly one basis sets it — `drop-mob` — and the argument is JOS-298's, one link further out:
+   * a revamp replaces a classic zone's CONTENTS without adding a zone, so `Plane of Hate` says
+   * nothing about whether this drop table is the one running on this server, while the wiki's
+   * per-MOB verdict is a positive claim about exactly that. Every other edge stays weaker than a
+   * drop zone, which is what keeps the rest of layer 3 unable to hide a row somebody can walk to.
+   */
+  definitive?: boolean
+}
 
 /**
  * Fold a donor's whole zone list into one verdict, against an ARBITRARY era — the testable core,
@@ -305,6 +389,28 @@ const PAGE_ERA: Readonly<Record<string, 'in' | 'out'>> = {
 /** The register's two answers: whether the wiki draws the red `Out of Era` badge on the page. */
 export type EraBadge = 'in' | 'out'
 
+/** The register's key fold: lowercased, spaces and underscores removed. One definition, because
+ *  `eraBadge` and `namesEra` must agree on what "the same token" means. */
+function registerKey(tag: string): string {
+  return tag.trim().toLowerCase().replace(/[\s_]+/g, '')
+}
+
+/**
+ * IS THIS A TOKEN THE ERA TABLES ACTUALLY NAME? — the guard the CATEGORY reader needs (JOS-328),
+ * and the one place outside this file that is allowed to ask.
+ *
+ * `eraBadge` below answers `out` for a token it has never heard of, and that is CORRECT for a
+ * BANNER: `Template:PageEra`'s `#default` is `out`, so the live page really does draw the red box
+ * for a key the switch does not know, and mirroring that is reporting, not guessing. A CATEGORY is
+ * the opposite case. `[[Category:Nov 2000 Era]]` renders nothing at all — it is the filing left
+ * behind by a `{{P99 Era Header|Nov|2000}}` DATE banner, 8 pages of it in the corpus — so reading
+ * `out` off it would be inventing a claim the wiki never made. So the category reader admits a
+ * token only when this says yes, and law 1 keeps the date filings undefined.
+ */
+export function namesEra(tag: string): boolean {
+  return registerKey(tag) in PAGE_ERA
+}
+
 /**
  * WHAT THE WIKI'S OWN BADGE SAYS about a page carrying this banner token.
  *
@@ -314,7 +420,7 @@ export type EraBadge = 'in' | 'out'
  * the live page render.
  */
 export function eraBadge(tag: string): EraBadge {
-  return PAGE_ERA[tag.trim().toLowerCase().replace(/[\s_]+/g, '')] ?? 'out'
+  return PAGE_ERA[registerKey(tag)] ?? 'out'
 }
 
 /**

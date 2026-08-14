@@ -9,6 +9,10 @@
 //   spell whose landing emote says it and "dispelled" finds the dispel family — from the game's
 //   own strings, never from a hand-built effect taxonomy that would rot (world-model law 1).
 //
+// AND THE APOSTROPHE IS NOT PART OF THE WORD (JOS-342). Both sides are folded through
+// `foldApostrophes` below — the surface once in main, the query once per keystroke — so a
+// possessive the user types finds a name the wiki spells without one, and the other way round.
+//
 // FOUR TOKEN FORMS, whitespace-split, AND-composed (every token must match):
 //   `slow`        text     — substring of searchText
 //   `25`          number   — a class entry level OR a substring of searchText (rank numerals)
@@ -30,6 +34,46 @@ import type { ClassAbbr } from './classCombo'
 import type { SpellCatalogEntry } from './buffTypes'
 import { classAbbrFor } from './spellLines'
 import { POISONS, POISON_PROCS } from './poisons'
+
+/**
+ * THE APOSTROPHE CLASS — every character this data and its users write where a possessive belongs.
+ *
+ * Measured over the committed `src/main/data/spells.json` (1,928 rows): the DB itself only ever
+ * writes two of them, the ASCII `'` (149 names, 344 message fields) and the BACKTICK the wiki uses
+ * as a typographic stand-in (22 names — `Atol\`s Spectral Shackles`, `Bristlebane\`s Bundle`,
+ * `Tigir\`s Insects`; 8 message fields). The other three are what a KEYBOARD produces and the DB
+ * never contains: `’` is what macOS, iOS and Word substitute while you type, and `‘` /
+ * `ʼ` arrive by paste. Folding all five on both sides is what makes the two vocabularies meet.
+ *
+ * The acute accent `´` is deliberately NOT here: it is a letter's diacritic, and nothing in
+ * this data uses it as punctuation.
+ */
+const APOSTROPHES = /['‘’ʼ`]/g
+
+/**
+ * Remove every apostrophe — THE FOLD (JOS-342), applied to the search surface and to the query.
+ *
+ * THE REPORT (owner, 2026-08-13). `Snails Healing`, the shaman heal-over-time at 14, could not be
+ * found in suggested alerts. Nothing was missing: the row is in the DB, it is catalog-eligible, and
+ * the game log spells it exactly as the DB does — with no apostrophe. The owner typed the
+ * possessive he SAYS, `snail's`, the matcher is a substring test, and `snails healing` does not
+ * contain `snail's`. The spell was on the screen behind an unreachable query the whole time.
+ *
+ * IT RUNS BOTH WAYS, and the census says the other direction is the larger population: 167 of the
+ * 1,928 committed names carry an apostrophe (136 of them a `'s` possessive) and 349 message fields
+ * do — every one of them a string a user may reasonably type WITHOUT the punctuation. After the
+ * fold neither spelling can miss the other, in either direction.
+ *
+ * DELETED, NEVER REPLACED BY A SPACE. `aanya's` and `aanyas` have to land on the same characters;
+ * a space would make one of them two words and the substring test would fail again, quietly.
+ *
+ * Folding LOSES the ability to search for a literal apostrophe. That is the intended trade: no
+ * player is looking for punctuation, and four DB names already prove the wiki cannot keep its own
+ * spelling straight (`O\`Keil's Flickering Flame` and `O\`Keils Flickering Flame` are two rows).
+ */
+export function foldApostrophes(text: string): string {
+  return text.replace(APOSTROPHES, '')
+}
 
 /** The five facets `type:` can name — the ones the catalog can answer honestly. */
 export type SpellFacet = 'buff' | 'debuff' | 'illusion' | 'poison' | 'seen'
@@ -87,9 +131,17 @@ function parsePrefixedToken(prefix: string, value: string, raw: string): SpellSe
   return null
 }
 
-/** A single whitespace-delimited word → its token. Prefixes win; everything else is text. */
+/**
+ * A single whitespace-delimited word → its token. Prefixes win; everything else is text.
+ *
+ * THE FOLD IS APPLIED ONCE, HERE (JOS-342), to the matching text and never to `raw` — the UI echoes
+ * `raw` back as the user typed it, and a chip that silently re-spelled somebody's query would be
+ * lying about what it searched for. It is applied BEFORE the `:` split, which is safe because no
+ * prefix, class name or facet contains an apostrophe and none can grow one: they are all closed
+ * vocabularies stated in this file and in `classCombo`.
+ */
 function parseToken(word: string): SpellSearchToken {
-  const lower = word.toLowerCase()
+  const lower = foldApostrophes(word.toLowerCase())
   const colon = lower.indexOf(':')
   const prefixed =
     colon > 0 ? parsePrefixedToken(lower.slice(0, colon), lower.slice(colon + 1), word) : null
@@ -113,12 +165,23 @@ const POISON_NAMES: ReadonlySet<string> = new Set(
   POISONS.flatMap((p) => [p.name.toLowerCase(), ...p.strikes.map((s) => s.toLowerCase())])
 )
 
-/** The Strike landing emotes, lowercased — the second half (a Strike the roster doesn't name). */
-const POISON_EMOTES: readonly string[] = POISON_PROCS.map((p) => p.suffix.toLowerCase())
+/**
+ * The Strike landing emotes, lowercased — the second half (a Strike the roster doesn't name).
+ *
+ * FOLDED LIKE THE SURFACE THEY ARE TESTED AGAINST (JOS-342), and this one is not cosmetic: four of
+ * the ten Strike emotes carry an apostrophe (`'s limbs move slower!`, `'s fingers slow down.`,
+ * `'s blessings wither!`, `'s feet won't budge!`) and `searchText` no longer does. Left unfolded,
+ * every rogue Strike would silently drop out of `type:poison` and out of the Poisons section.
+ */
+const POISON_EMOTES: readonly string[] = POISON_PROCS.map((p) => foldApostrophes(p.suffix.toLowerCase()))
 
 /**
  * Is this row a rogue poison? The roster IS the answer (shared/poisons.ts — imported, never
  * copied): a coatable poison, one of its Strikes, or a row whose own emote is a Strike emote.
+ *
+ * The NAME half compares two RAW strings and is deliberately left unfolded: both sides are spelled
+ * by us (the roster) and by the DB, no roster name contains an apostrophe, and an exact-name test
+ * between two unfolded strings cannot drift. Only the half that reads the folded `searchText` folds.
  */
 export function isPoisonSpell(entry: SearchableSpell): boolean {
   if (POISON_NAMES.has(entry.name.trim().toLowerCase())) return true

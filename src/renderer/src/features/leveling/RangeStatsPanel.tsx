@@ -309,7 +309,12 @@ function HeaderRow({ stats, scope, onClear }: RangeStatsPanelProps): JSX.Element
       <Typography variant="subtitle2" sx={{ fontWeight: 700 }} data-testid="leveling-range-window">
         {formatDateTime(stats.t0)} → {formatDateTime(stats.t1)}
       </Typography>
-      <Typography variant="caption" color="text.secondary">
+      {/* THE ELAPSED SPAN THE NUMBERS COVER — `durationMs`, which under a zone slice is Σ of the
+          ADMITTED VISITS and therefore narrows with the tier membership (JOS-332). It carries a
+          testid because it is the number the owner's bug report was about: `elapsed 27m` over a
+          camp when only one of its tiers was selected. tests/e2e/sliceSteps.mts reads it on both
+          sides of the toggle. */}
+      <Typography variant="caption" color="text.secondary" data-testid="leveling-range-duration">
         {fmtDuration(stats.durationMs)}
       </Typography>
       {/* STATE, NOT PROCESS: one word saying these numbers are narrower than the timescale

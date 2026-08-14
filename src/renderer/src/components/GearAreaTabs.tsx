@@ -12,11 +12,11 @@
 // link into any of the four still lands with the bar already reading the right tab. A bespoke
 // in-area router would have had to re-earn all three.
 //
-// WHY CHARACTER IS PUSHED RIGHT. Gear, Exaltations and Wish list are three phrasings of "what do I
-// want"; the Character sheet is "what am I wearing", which is the answer rather than the question.
-// The gap says so without a divider or a second bar. (It was also the last tab to graduate —
-// UNRELEASED until JOS-327 — and sitting off the end of the run of three meant its arrival
-// disturbed nothing.)
+// CHARACTER SITS IN THE RUN, LEFT OF WISH LIST (owner ruling 2026-08-13). The first cut pushed it
+// to the right-hand edge to say "answer, not question" with a gap — and the gap said it so well
+// the owner reported the tab missing within the hour. A tab nobody can find states nothing; four
+// tabs in one run is the honest shape, and the order (appViews.ts `GEAR_AREA_VIEWS`) keeps truth
+// beside the search tabs it grounds, with intent last.
 //
 // The bar renders even on a machine with no character logs, where the content underneath is the
 // fresh-machine empty state. That matches the nav drawer, which likewise draws every row on such a
@@ -26,9 +26,6 @@
 import type { JSX } from 'react'
 import { Tab, Tabs } from '@mui/material'
 import { GEAR_AREA_VIEWS, VIEW_LABELS, type View } from '../appViews'
-
-/** The one tab that is not a shopping question, and is therefore held to the right-hand edge. */
-const LAST_TAB: View = 'character'
 
 /**
  * The in-area tab bar. `data-testid="tab-<view>"` is the stable handle the e2e clicks, mirroring
@@ -58,15 +55,7 @@ export default function GearAreaTabs({
       }}
     >
       {GEAR_AREA_VIEWS.map((v) => (
-        <Tab
-          key={v}
-          value={v}
-          label={VIEW_LABELS[v]}
-          data-testid={`tab-${v}`}
-          // `marginLeft: auto` on a MUI Tab works because the tab strip is a plain flex row — no
-          // spacer element, which would otherwise be a focusable hole in the keyboard order.
-          sx={v === LAST_TAB ? { ml: 'auto' } : undefined}
-        />
+        <Tab key={v} value={v} label={VIEW_LABELS[v]} data-testid={`tab-${v}`} />
       ))}
     </Tabs>
   )

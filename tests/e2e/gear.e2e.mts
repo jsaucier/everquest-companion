@@ -63,12 +63,35 @@
  * the only thing that speaks for it — which is the right level, because the store round trip is
  * all that is left of the feature.
  *
+ * AND SINCE JOS-338 IT ASSERTS THE COMPARISON CARD, which is the first popper this tab has ever
+ * mounted and therefore the first place the JOS-143 defect could come back. The step
+ * (`gearCompareSteps.mts`) opens the card on a real row, reads the equipped half against the same
+ * staged dump the ownership steps read, and then — with the card OPEN — hit-tests the toolbar, the
+ * row's wish control and the item name's Loot link. That last part is the regression, stated the way
+ * the owner met it twice: not "is a popper on screen" but "does the click still land".
+ *
+ * …AND SINCE JOS-344 IT ASSERTS THAT A HUMAN CAN SEE IT. The version above shipped a card drawn
+ * three pixels inside the right edge of the window: present, correct, and invisible. So the step
+ * takes the WINDOW now (it narrows it past the app's own minimum and puts it back) and measures the
+ * two cards' boxes against the viewport at both sizes. Its header carries the measurement and the
+ * two traps in taking it.
+ *
+ * AND SINCE JOS-329 IT ASSERTS THAT THE FORM COMES HOME. The owner's report was that the whole gear
+ * area lost its state on every module switch, so the two round trips he described are steps here:
+ * set six controls to values nothing defaults to, leave for the Loot MODULE and come back; then
+ * drill into the Loot detail from a row and press BACK. Both compare a fingerprint read off the
+ * SCREEN — including the count line, which moves if any narrowing was silently dropped — and both
+ * assert the view UNMOUNTED first, because a spec that skipped that would pass on the one build
+ * where the bug cannot happen (AGENTS.md, JOS-90/97/116). The second launch then proves the
+ * RESTART SPLIT in both directions: the slot pick and the era toggle survive the process, the typed
+ * search does not.
+ *
  * The one thing it deliberately does NOT assert is a row count: the corpus grows (AGENTS.md,
  * "frozen numbers rot"), so every count here is a floor or an identity.
  *
  * Run: `npm run test:e2e -- gear`.
  */
-import type { Page } from 'playwright-core'
+import type { ElectronApplication, Page } from 'playwright-core'
 import {
   buildIfStale,
   check,
@@ -97,6 +120,17 @@ import {
 } from './gearColumnSteps.mjs'
 // JOS-302's class, slot-union and weapon-type steps, likewise.
 import { clearPicks, pickIn, stepGearClassFilter, stepGearSlotPicks, stepGearWeaponTypes } from './gearFilterSteps.mjs'
+// JOS-336's EFFECTIVE HP step: pick the derived column, sort it, and move the slider under it.
+import { stepGearEffectiveHp } from './gearEffectiveHpSteps.mjs'
+// JOS-335's wish gesture — a module for the same reason, and it spans two tabs (its header argues
+// why the chain, rather than the fold, is what needs a real app).
+import { stepGearWish } from './gearWishSteps.mjs'
+// JOS-338's comparison card, likewise — and it is the step that hit-tests the JOS-143 regression
+// with a popper open over this tab for the first time since the table shipped.
+import { stepGearCompare } from './gearCompareSteps.mjs'
+// JOS-329's away-and-back steps, shared with the planner and character specs — one module because
+// the claim is identical on every tab of the area and only the fingerprint differs.
+import { stepGearMemory, stepGearMemoryRelaunched } from './areaMemorySteps.mjs'
 // Phase 0's scaler and phase 2's ratio, so the EXPECTED numbers are computed rather than typed.
 import { gearRatio, scaleGearRow } from '../../src/shared/planner/gearScale'
 import type { GearRow } from '../../src/shared/planner/gear'
@@ -195,7 +229,7 @@ function boxOf(page: Page, sel: string): Promise<{ h: number; scrollH: number; c
   }, sel)
 }
 
-/** `"212 of 6,766 items"` → `[212, 6766]`. The readout is the only place the total is stated. */
+/** `"212 of 6,814 items"` → `[212, 6766]`. The readout is the only place the total is stated. */
 async function counts(page: Page): Promise<{ shown: number; total: number }> {
   const text = await textOf(page, COUNT)
   const nums = [...text.matchAll(/[\d,]+/g)].map((m) => Number(m[0].replace(/,/g, '')))
@@ -552,19 +586,31 @@ async function stepUpgrade(page: Page): Promise<void> {
   await resetColumns(page)
 }
 
-async function steps(page: Page, log: FixtureLog): Promise<void> {
+async function steps(app: ElectronApplication, page: Page, log: FixtureLog): Promise<void> {
   if (!(await stepRows(page))) return
   // JOS-302's class step runs FIRST of the filter steps, and it has to: the picker mounts holding
   // whatever the combo module inferred off the fixture log, that pick now NARROWS the corpus, and
   // every step below was written against an unfiltered one. It proves the narrowing and then
   // clears the picker (gearFilterSteps.mts states the whole argument).
   await stepGearClassFilter(page)
+  // JOS-335 runs HERE, and the position is load-bearing in one direction: it needs the era toggle
+  // still at its default ON, so the row it picks is one the app itself calls in-era and the wish it
+  // writes lands in the wish list's ROUTE rather than behind that tab's own era filter. It leaves
+  // the tab exactly as it found it — nothing narrowed, search empty — so the step below still
+  // measures the era toggle against the whole corpus.
+  await stepGearWish(page)
   await stepEra(page)
   // Phase 4 runs here, on a table narrowed by NOTHING but the era toggle the step above turned
   // off: the ownership steps put the search box back to empty and the checkbox back off, so the
   // phase-3 steps below start from the state they were written against.
   await stepOwnedCells(page, log)
   await stepOwnedFilter(page)
+  // JOS-338 runs HERE, on the same staged dump the two ownership steps just read: it is the other
+  // half of the same file — that one says whether you own a candidate, this one says what you are
+  // wearing instead of it. It needs the GLOBAL SELECTOR STILL AT BASE (the card admits to a
+  // simulation, and the step asserts it has nothing to admit to yet), which is true anywhere above
+  // `stepUpgrade`. It hands the tab back with the box empty and both pickers clear.
+  await stepGearCompare(app, page, THELVORN_BASE)
   // Phase 5's set steps used to run HERE, between the ownership steps and the phase-3 ones, and
   // JOS-325 removed them with the surface they drove. The clear-the-box line they were followed by
   // STAYS, even though `stepOwnedFilter` now leaves the box empty on its own: `stepSearch` measures
@@ -575,6 +621,12 @@ async function steps(page: Page, log: FixtureLog): Promise<void> {
     // narrowing: its whole subject is what one picker does to the whole corpus, and it hands the
     // tab back with both of its pickers empty.
     await stepGearWeaponTypes(page)
+    // JOS-336's EFFECTIVE HP step runs HERE, in the one seam that gives it what it needs: the
+    // weapon-type step clears both of its pickers and empties the search box, and nothing has
+    // touched the global selector yet — so the derived column is measured against the WHOLE corpus
+    // at base and then again at a plus it moves itself. It hands all three back the way it found
+    // them (selector at base, columns derived, box empty) for the steps below.
+    await stepGearEffectiveHp(page)
     await stepFilters(page)
     await stepSort(page)
     await stepUpgrade(page)
@@ -582,6 +634,12 @@ async function steps(page: Page, log: FixtureLog): Promise<void> {
     // at the checkpoint (so the picked columns can be re-read against `scaleGearRow` at a plus
     // nobody is about to move), and it parks a column choice for the second launch to find.
     await stepGearColumns(page, COLUMNS)
+    // …and JOS-329 runs after IT, for two reasons. It MOVES the global selector (a Tier 1 label on
+    // the far side of a module switch is the whole point of the overridden law), which every step
+    // above reads; and the choice JOS-297 just parked is untouched by it, because the columns
+    // picker and the filter form are different keys on the same tier. It parks a slot pick and an
+    // era toggle of its own for `stepGearMemoryRelaunched` below.
+    await stepGearMemory(page)
   }
   const over = await pageOverflow(page)
   check(
@@ -621,7 +679,7 @@ async function main(): Promise<void> {
   try {
     const page = await mainWindow(first.app)
     watch(page, consoleErrors)
-    if (await stepMount(page)) await steps(page, log)
+    if (await stepMount(page)) await steps(first.app, page, log)
     if (failures.length) await dumpArtifacts(page, 'gear-FAIL')
     else await dumpArtifacts(page, 'gear-pass')
   } finally {
@@ -634,7 +692,13 @@ async function main(): Promise<void> {
     const page = await mainWindow(second.app)
     watch(page, consoleErrors)
     const up = await stepMount(page)
-    if (up) await stepGearColumnsRelaunched(page)
+    if (up) {
+      await stepGearColumnsRelaunched(page)
+      // THE RESTART HALF OF JOS-329's SPLIT, and the only place it can be proved: a structural pick
+      // comes back across the process and a TYPED search does not. Both directions, because
+      // "persisted everything" is as wrong as "persisted nothing".
+      await stepGearMemoryRelaunched(page)
+    }
     if (failures.length) await dumpArtifacts(page, 'gear-relaunch-FAIL')
   } finally {
     await second.close()

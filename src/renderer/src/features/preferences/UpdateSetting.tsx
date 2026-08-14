@@ -13,6 +13,7 @@ import RestartAltIcon from '@mui/icons-material/RestartAlt'
 import type { UpdateStatus } from '@shared/types'
 import { type UpdateChipState, updateChipState } from '@shared/update'
 import { formatDateTime } from '../../lib/formatDate'
+import { recordPref, usePrefsSeed } from './prefsHydration'
 
 interface ChipLook {
   label: string
@@ -28,20 +29,22 @@ const STATE_CHIP: Record<UpdateStatus['state'], ChipLook> = {
   error: { label: 'check failed', color: 'warning' }
 }
 
-/** Shared status state: pull the last one (pushes predate this mount), then follow pushes. */
+/**
+ * Shared status state: SEEDED with the last one (pushes predate this mount), then following
+ * pushes.
+ *
+ * The pull used to be an effect that started from `{ state: 'idle' }` (JOS-340), so a user with a
+ * downloaded update waiting read "up to date" for a frame before the Relaunch button appeared —
+ * the one state in this card where the wrong frame is also the wrong ADVICE. The seed is the same
+ * pull, taken by the pane's gate before anything paints (./prefsHydration.tsx); the subscription
+ * is untouched, because a push is news rather than hydration.
+ */
 export function useUpdateStatus(): UpdateStatus {
-  const [status, setStatus] = useState<UpdateStatus>({ state: 'idle' })
+  const [status, setStatus] = useState<UpdateStatus>(usePrefsSeed().updateStatus)
   useEffect(() => {
-    let alive = true
-    void window.eq.getUpdateStatus().then((s) => {
-      if (alive) setStatus(s)
-    })
-    const off = window.eq.onUpdateStatus(setStatus)
-    return () => {
-      alive = false
-      off()
-    }
-  }, [])
+    recordPref('updateStatus', status)
+  }, [status])
+  useEffect(() => window.eq.onUpdateStatus(setStatus), [])
   return status
 }
 

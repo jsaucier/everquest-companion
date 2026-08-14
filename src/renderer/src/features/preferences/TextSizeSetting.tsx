@@ -22,36 +22,34 @@
 // ONE BORDER: PreferencesView already wraps each item in an outlined Paper, so this renders a bare
 // Stack.
 
-import { type JSX, useCallback, useEffect, useState } from 'react'
+import { type JSX, useCallback, useState } from 'react'
 import { Stack, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material'
 import FormatSizeIcon from '@mui/icons-material/FormatSize'
-import { UI_SCALE_DEFAULT, UI_SCALE_STEPS, normalizeUiScale, uiScalePercent } from '@shared/uiScale'
+import { UI_SCALE_STEPS, normalizeUiScale, uiScalePercent } from '@shared/uiScale'
+import { recordPref, usePrefsSeed } from './prefsHydration'
 import type { PrefSection } from './PreferencesView'
 
 /**
- * The stored scale, hydrated once from main and written back on every press — the
- * GraphicsSetting / OverlayAutoHide pattern exactly. The local write is optimistic (a size button
- * must not lag an IPC round trip) and main's reply is authoritative, being what was actually
- * stored: the normalizer snaps to the ladder, so a reply that disagrees with the request is a
- * reply worth taking.
+ * The stored scale, SEEDED from the pane's hydration snapshot and written back on every press. The
+ * local write is optimistic (a size button must not lag an IPC round trip) and main's reply is
+ * authoritative, being what was actually stored: the normalizer snaps to the ladder, so a reply
+ * that disagrees with the request is a reply worth taking.
+ *
+ * IT USED TO MOUNT ON `UI_SCALE_DEFAULT` AND CORRECT ITSELF (JOS-340), and this card is where that
+ * was most absurd: a person who came here BECAUSE they cannot read the screen — and who therefore
+ * has the ladder somewhere above 100% — opened the section and watched 100% light up first. The
+ * window was already at their size; only the control disagreed, for a frame, about what they had
+ * chosen. The snapshot already holds the value, snapped to the ladder.
  */
 function useUiScale(): [number, (next: number) => void] {
-  const [scale, setScale] = useState(UI_SCALE_DEFAULT)
-
-  useEffect(() => {
-    let alive = true
-    void window.eq.getUiScale().then((stored) => {
-      if (alive) setScale(normalizeUiScale(stored))
-    })
-    return () => {
-      alive = false
-    }
-  }, [])
+  const [scale, setScale] = useState(usePrefsSeed().uiScale)
 
   const choose = useCallback((next: number) => {
     setScale(normalizeUiScale(next))
     void window.eq.setUiScale(next).then((stored) => {
-      setScale(normalizeUiScale(stored))
+      const snapped = normalizeUiScale(stored)
+      setScale(snapped)
+      recordPref('uiScale', snapped)
     })
   }, [])
 

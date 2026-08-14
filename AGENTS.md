@@ -55,6 +55,26 @@ docs/agents-archive.md.
   partitioned into disjoint waves with per-wave regression gates and run
   until done. The user gets a short "In flight / Settled" readout whenever
   a turn ends with agents still running.
+- **THE BRIEF IS SIZED TO THE ASK (owner, 2026-08-13).** A cosmetic or
+  single-control change gets a NARROW brief: the one surface named, one
+  targeted e2e step, explicit permission to skip every suite the change
+  cannot touch, and a stated size expectation in the dispatch comment so an
+  overrun is visible mid-flight. The full-discipline brief — both-surface
+  parity, comment-law rewrites, full unit plus multi-spec e2e — is reserved
+  for changes that move laws or data. MEASURED, and why this is a law: the
+  owner asked to swap a heart icon for a labeled toggle (JOS-343) and the
+  integrator's brief tripled it (both surfaces, semantics change, six e2e
+  claims revised, two full spec suites re-run repeatedly) — 55 minutes and
+  225k tokens for what the owner correctly called a pretty cosmetic change.
+  The diagnosis found no stuck loop: every token was "legitimate" under the
+  brief as written, which is exactly the problem — uniform maximal
+  verification makes small changes cost like features, and the e2e
+  wall-clock (3-6 minutes per spec, run 2-4 times) dominates everything on
+  a small ticket. The one counterweight, stated so it is not forgotten:
+  that oversized verification did catch a real wrong-direction-click bug
+  (an ungated toggle on an unready store). The law is calibration, not
+  laxity — a targeted step would have caught the same bug on the surface
+  that had it.
 - **THE BOARD IS IN LINEAR, AND THE OWNER STEERS IT (owner, 2026-08-05).**
   Canonical project management is the kanban in the owner's PERSONAL Linear
   workspace (Josh's Maker Space, team JOS — never the work workspace).

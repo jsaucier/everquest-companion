@@ -32,6 +32,11 @@ import spellsJson from './spells.json'
 // `You begin singing Solon's Bewitching Bravura IX.` folded to a key the wiki's `Solon's Bravura`
 // never produced, and a bard's own signature song contributed nothing to class inference.
 import { applySpellCorrections } from './spellCorrections'
+// …and through the removals layer first (JOS-337), the load order `spellDb.ts` states. A spell EQ
+// Legends does not have places nobody: no cast line can ever name it, so its classes are evidence
+// about a game that is not running. Keeping it here would widen a candidate set on the strength of
+// a spell that cannot be cast — the conservative direction, but conservative in the wrong currency.
+import { applySpellRemovals } from './spellRemovals'
 import type { SpellDbFile } from '../../shared/types'
 import type { ClassAbbr } from '../../shared/classCombo'
 
@@ -89,7 +94,8 @@ export function parseSpellClassString(classes: string | undefined): ClassAbbr[] 
 /** Build the canon-key → class-set index once, at module init. */
 function buildIndex(): Map<string, Set<ClassAbbr>> {
   const index = new Map<string, Set<ClassAbbr>>()
-  for (const spell of applySpellCorrections((spellsJson as SpellDbFile).spells).spells) {
+  const present = applySpellRemovals((spellsJson as SpellDbFile).spells).spells
+  for (const spell of applySpellCorrections(present).spells) {
     const classes = parseSpellClassString(spell.classes)
     if (classes.length === 0) continue
     const key = spellCanonKey(spell.name)

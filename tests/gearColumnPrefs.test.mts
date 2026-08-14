@@ -73,7 +73,11 @@ function row(name: string, stats: GearStats): GearRow {
   }
 }
 
-/** Every indexed key at `n`, with DELAY forced so the derived RATIO moves the same way DMG does. */
+/**
+ * Every indexed key at `n`, with DELAY forced so the derived RATIO moves the same way DMG does.
+ * The other derived key needs no such help: HP and STA are both in the list, so `EFF_HP` reads `2n`
+ * on any row this builds and `undefined` on the row that states nothing.
+ */
 function everyStat(n: number, delay: number): GearStats {
   const out: GearStats = {}
   for (const key of GEAR_STAT_KEYS) out[key] = n
@@ -132,13 +136,23 @@ test('a stored choice DEGRADES rather than erroring, whatever another build wrot
   assert.deepEqual(sanitizeColumns(['AC', 'NOT_A_STAT', 'name', 42, 'HP']), ['AC', 'HP'], 'unknown keys drop out')
   assert.deepEqual(sanitizeColumns(['HP', 'AC', 'HP']), ['HP', 'AC'], 'repeats collapse, stored order survives')
   assert.deepEqual(sanitizeColumns(['RATIO']), ['RATIO'], 'the derived ratio is a pickable column')
+  assert.deepEqual(sanitizeColumns(['EFF_HP']), ['EFF_HP'], '…and so is the derived effective HP')
 })
 
-test('the picker offers the WHOLE vocabulary - every indexed stat, plus ratio, and never the name', () => {
-  assert.equal(PICKABLE_COLUMNS.length, GEAR_STAT_KEYS.length + 1)
+test('the picker offers the WHOLE vocabulary - every indexed stat, both derived keys, never the name', () => {
+  // TWO DERIVED KEYS SINCE JOS-336: `RATIO` and `EFF_HP`. Neither is a field of `GearStats`, both
+  // are computed off the SCALED vector at read time, and both are offered exactly like a stat.
+  assert.equal(PICKABLE_COLUMNS.length, GEAR_STAT_KEYS.length + 2)
   for (const key of GEAR_STAT_KEYS) assert.ok(PICKABLE_COLUMNS.includes(key), `${key} is offered`)
   assert.ok(PICKABLE_COLUMNS.includes('RATIO'))
+  assert.ok(PICKABLE_COLUMNS.includes('EFF_HP'))
   assert.ok(!PICKABLE_COLUMNS.includes('name' as GearSortKey), 'the item column is not optional')
+  // A DERIVED KEY STANDS BESIDE THE NUMBERS IT IS MADE OF — the only documentation a flat checkbox
+  // list can carry (gearColumns.ts). Ratio follows DELAY; effective HP follows HP, one row under
+  // the STA it is summed with.
+  assert.equal(PICKABLE_COLUMNS[PICKABLE_COLUMNS.indexOf('DELAY') + 1], 'RATIO')
+  assert.equal(PICKABLE_COLUMNS[PICKABLE_COLUMNS.indexOf('HP') + 1], 'EFF_HP')
+  assert.ok(PICKABLE_COLUMNS.indexOf('STA') < PICKABLE_COLUMNS.indexOf('EFF_HP'), 'both halves come first')
   // The seven attributes the owner named by hand. Since JOS-302 this list is the ONLY way to put a
   // stat on the table that the sort has not already put there - which is exactly the trade the
   // owner priced when the stat-threshold box went: the picker names it, the header ranks it.
@@ -247,9 +261,11 @@ test('past the floor the layout switches to PIXELS and states a table minimum - 
   assert.ok(gearTableLayout(20, true).minWidth > gearTableLayout(20, false).minWidth)
 
   // A full-vocabulary pick is wider than any window this app runs in - the case the ticket names.
+  // The count is read off `PICKABLE_COLUMNS` rather than typed, so a key added to the vocabulary
+  // (JOS-336 added the thirty-fourth) widens this claim instead of stale-ing it.
   const everything = gearTableLayout(PICKABLE_COLUMNS.length, true)
   assert.equal(everything.mode, 'pixel')
-  assert.ok(everything.minWidth > 2500, `all 33 columns state ${String(everything.minWidth)}px`)
+  assert.ok(everything.minWidth > 2500, `all ${String(PICKABLE_COLUMNS.length)} columns state ${String(everything.minWidth)}px`)
 })
 
 // =================================================================================
@@ -264,20 +280,83 @@ test('no stored toolbar choice shows every control, and a stored EMPTY one shows
 
 test('a stored toolbar choice degrades the same way a column choice does', () => {
   assert.equal(sanitizeControls('era'), null)
-  assert.deepEqual(sanitizeControls(['era', 'nope', 'era', 7, 'slot']), ['era', 'slot'])
-  assert.deepEqual(sanitizeControls([]), [])
-  // A KEY THIS VERSION DROPPED degrades rather than erroring, and JOS-302 dropped one for real:
+  assert.equal(sanitizeControls(42), null)
+  assert.equal(sanitizeControls({ vocab: [...GEAR_CONTROLS] }), null, 'an object with no `shown` has said nothing')
+  // A KEY THIS VERSION DROPPED degrades rather than erroring, and JOS-302 dropped three for real:
   // `classOnly` was the "Usable by these" toggle (the class picks narrow on their own now), and
   // `ratio`/`thresholds` were the two numeric filters the fourth owner ask deleted outright. A
   // toolbar choice stored by an older build simply loses those entries and keeps the rest.
-  assert.deepEqual(sanitizeControls(['slot', 'classOnly', 'classes']), ['slot', 'classes'])
-  assert.deepEqual(sanitizeControls(['upgrade', 'ratio', 'thresholds', 'era']), ['upgrade', 'era'])
-  assert.deepEqual(sanitizeControls(['weapon']), ['weapon'], 'and the control it gained is offered')
+  //
+  // THE EXPECTATIONS ON THIS TEST CHANGED ON 2026-08-13 and the old ones are worth stating, because
+  // they were the bug rather than the contract: `['slot','classOnly','classes']` used to resolve to
+  // exactly `['slot','classes']`, and it now resolves to `['slot','weapon','classes']`. See the next
+  // test and `gearPrefs.LEGACY_GEAR_CONTROLS` — a legacy list cannot have hidden a control that did
+  // not exist when it was written, so `weapon` joins every one of these. The DEGRADATION claim these
+  // lines were written for is untouched: unknown keys still drop out, repeats still collapse.
+  assert.deepEqual(sanitizeControls(['slot', 'classOnly', 'classes']), ['slot', 'weapon', 'classes'])
+  assert.deepEqual(sanitizeControls(['upgrade', 'ratio', 'thresholds', 'era']), ['weapon', 'era', 'upgrade'])
+  assert.deepEqual(sanitizeControls(['era', 'nope', 'era', 7, 'slot']), ['slot', 'weapon', 'era'])
+  // ORDER IS THE BAR'S, not the store's — and that is not a loss. A control list is turned into a
+  // Set by `controlsVisible` and `GearFilterBar` draws in its own fixed order, so unlike the COLUMN
+  // list (which the user can see the order of) this one has no order anybody can observe.
   assert.deepEqual(toggleControl(['era'], 'slot'), ['slot', 'era'], 'the bar draws slot before era, so the list does too')
   assert.deepEqual(toggleControl(['slot', 'era'], 'era'), ['slot'])
   for (const control of GEAR_CONTROLS) {
     assert.ok(GEAR_CONTROL_LABEL[control].length > 0, `${control} has words in the picker`)
   }
+})
+
+// ---------------------------------------------------------------------------------
+// EVERY FILTER CONTROL IS ENABLED BY DEFAULT (owner ruling 2026-08-13, folded into JOS-329)
+// ---------------------------------------------------------------------------------
+//
+// The ask was "all filter controls on the equipment tab are ENABLED by default", on the belief that
+// the picker derived a default subset. IT NEVER DID — the first test below has always passed — and
+// finding that out is what located the real defect: a stored choice is a closed statement about the
+// vocabulary that existed when it was written, so every control added AFTERWARDS read as one the
+// user had hidden. JOS-302 added `weapon`, which is why the owner's own Gear tab has been missing
+// the Weapon type picker with nothing in the UI to explain it.
+//
+// The rule these four tests pin: A CONTROL THE USER NEVER HAD THE CHANCE TO RULE ON IS ON, and a
+// control they DID rule on keeps their ruling.
+
+test('THE DEFAULT IS EVERY CONTROL - an untouched install has the whole toolbar', () => {
+  assert.equal(controlsVisible(sanitizeControls(null)).size, GEAR_CONTROLS.length)
+  for (const control of GEAR_CONTROLS) {
+    assert.ok(controlsVisible(null).has(control), `${control} draws with no stored choice`)
+  }
+})
+
+test('a LEGACY choice gains the controls it was never offered, and keeps the hides it made', () => {
+  // The owner's shape: a pre-JOS-302 list. `weapon` did not exist to be hidden, so it comes back…
+  const resolved = sanitizeControls(['slot', 'classes', 'era', 'owned', 'upgrade', 'classOnly'])
+  assert.ok(resolved !== null && resolved.includes('weapon'), 'the control added after the choice is ON')
+  // …while `effect`, which DID exist and was left out, stays hidden. That is the half the owner's
+  // "existing users keep their choice" clause protects, and the half a blanket reset would destroy.
+  assert.ok(resolved !== null && !resolved.includes('effect'), 'a control they really did hide stays hidden')
+})
+
+test('a NEW-shape choice is taken at its word — hiding weapon deliberately keeps it hidden', () => {
+  // Once the picker has been touched, the vocabulary travels with the choice and there is nothing
+  // left to guess: every control is accounted for, so `shown` means exactly what it says.
+  const deliberate = sanitizeControls({ shown: ['slot', 'era'], vocab: [...GEAR_CONTROLS] })
+  assert.deepEqual(deliberate, ['slot', 'era'])
+  assert.ok(deliberate !== null && !deliberate.includes('weapon'), 'this user really did hide it')
+  // …and an empty toolbar is still expressible, which is the absent-is-not-empty law (gearPrefs.ts).
+  assert.deepEqual(sanitizeControls({ shown: [], vocab: [...GEAR_CONTROLS] }), [])
+  assert.equal(controlsVisible(sanitizeControls({ shown: [], vocab: [...GEAR_CONTROLS] })).size, 0)
+})
+
+test('…and the migration heals itself: a stale vocab only widens, never narrows', () => {
+  // A choice recorded against a vocabulary MISSING two of today's controls gets both of them, and
+  // this is what makes the rule future-proof rather than a one-off patch for `weapon`: the next
+  // control the bar grows is on for everybody without anyone editing this file again.
+  const stale = sanitizeControls({ shown: ['slot'], vocab: ['slot', 'effect', 'classes'] })
+  assert.ok(stale !== null)
+  for (const grown of ['weapon', 'era', 'owned', 'upgrade'] as const) {
+    assert.ok(stale.includes(grown), `${grown} was not in the recorded vocabulary, so it is ON`)
+  }
+  assert.ok(!stale.includes('effect'), 'while a control that WAS in it and was not picked stays off')
 })
 
 test('a control that is not on screen is not filtering either - every field goes INERT', () => {

@@ -22,31 +22,34 @@
 // of the Companion while they were trying to read it. The OVERLAYS still don't count (clicking one
 // must not make it vanish under your cursor); the main window does.
 
-import { type JSX, useCallback, useEffect, useState } from 'react'
+import { type JSX, useCallback, useState } from 'react'
 import { FormControlLabel, Stack, Switch, Typography } from '@mui/material'
-import { type OverlayAutoHidePrefs, DEFAULT_OVERLAY_AUTO_HIDE } from '@shared/presencePrefs'
+import type { OverlayAutoHidePrefs } from '@shared/presencePrefs'
+import { recordPref, usePrefsSeed } from './prefsHydration'
 
 /**
- * The prefs blob, hydrated once from main and written back on every change — the VoiceSetting
- * pattern exactly. Writes are optimistic locally (a switch must not lag an IPC round trip) and
- * authoritative from main's reply, which is what was actually stored.
+ * The prefs blob, SEEDED from the pane's hydration snapshot and written back on every change.
+ *
+ * IT USED TO MOUNT ON `DEFAULT_OVERLAY_AUTO_HIDE` AND CORRECT ITSELF (JOS-340), which is the
+ * flicker the owner reported — and this card is the worst case of it in the pane, because its two
+ * defaults point OPPOSITE ways: `hideWhenNotRunning` ships `true`, so a user who turned it off
+ * watched it paint ON and drop; `hideWhenUnfocused` ships `false`, so a user who turned it on
+ * watched it paint OFF and rise. The starting value now comes out of the snapshot the gate already
+ * has in hand (./prefsHydration.tsx), synchronously, so there is no first frame to be wrong in.
+ *
+ * Writes are unchanged: optimistic locally (a switch must not lag an IPC round trip) and
+ * authoritative from main's reply, which is what was actually stored — and that reply is what goes
+ * back into the snapshot, so the next mount of this card seeds from the same truth.
  */
 function useOverlayAutoHide(): [OverlayAutoHidePrefs, (patch: Partial<OverlayAutoHidePrefs>) => void] {
-  const [prefs, setPrefs] = useState<OverlayAutoHidePrefs>(DEFAULT_OVERLAY_AUTO_HIDE)
-
-  useEffect(() => {
-    let alive = true
-    void window.eq.getOverlayAutoHide().then((stored) => {
-      if (alive) setPrefs(stored)
-    })
-    return () => {
-      alive = false
-    }
-  }, [])
+  const [prefs, setPrefs] = useState<OverlayAutoHidePrefs>(usePrefsSeed().overlayAutoHide)
 
   const update = useCallback((patch: Partial<OverlayAutoHidePrefs>) => {
     setPrefs((cur) => ({ ...cur, ...patch }))
-    void window.eq.setOverlayAutoHide(patch).then(setPrefs)
+    void window.eq.setOverlayAutoHide(patch).then((stored) => {
+      setPrefs(stored)
+      recordPref('overlayAutoHide', stored)
+    })
   }, [])
 
   return [prefs, update]

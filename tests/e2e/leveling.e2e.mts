@@ -89,7 +89,7 @@ import { launchOnFixture, type FixtureLog } from './logFixture.mjs'
 // The in-window drops panel and its round trip into the item drill-down (JOS-78) — next door
 // because this spec sits AT the repo max-lines budget; see that file's header.
 import { stepDrops } from './dropSteps.mjs'
-import { stepZoneSlice } from './sliceSteps.mjs'
+import { stepScopeDefaults, stepZoneSlice } from './sliceSteps.mjs'
 // The layout contract, the spell card in the per-level readout and the narrow window (JOS-289,
 // which inverted JOS-151's claim here) — next door for the same reason, and see that file's header
 // for what the reporter's 1073x937 did to this tab and what the owner overturned afterwards.
@@ -99,7 +99,9 @@ import { dismissFirstRunNotice, stepNarrowLayout, stepPageScroll, stepSpellCard 
 import { stepDragCost } from './dragPerfSteps.mjs'
 // THE FRACTIONAL CURVE (JOS-292) — the vertices, the uncertainty bands, and the readout standing
 // on one. Next door for the same line-budget reason; see that file's header.
-import { stepLevelCurve } from './curveSteps.mjs'
+// …and (JOS-339) THE CAMERA beside them: three PNGs of the chart column at three window shapes,
+// for an owner who has to rule on how the plots LOOK. Same file — same two plots.
+import { stepChartShots, stepLevelCurve } from './curveSteps.mjs'
 
 const NAV = '[data-testid="nav-leveling"]'
 const VIEW = '[data-testid="leveling-view"]'
@@ -691,6 +693,9 @@ async function main(): Promise<void> {
       await waitReplayed(page)
       const chart = await stepChart(page)
       if (chart) {
+        // FIRST OF THE SCOPE STEPS, and it has to be: it reads what the tab OPENED on (JOS-332,
+        // this tier + elapsed), so anything that presses a control has to come after it.
+        await stepScopeDefaults(page)
         await stepBands(page)
         // The curve itself (JOS-292), read before any gesture has been made: its vertices, its
         // refusals, and the readout standing on one. It leaves no selection and no tooltip.
@@ -702,6 +707,9 @@ async function main(): Promise<void> {
         // AFTER the selection step, which proves the panel works on the default (full-history)
         // window — this one then proves the same gestures survive a wholesale window change.
         await stepTimescale(page, chart)
+        // STRAIGHT AFTER IT (JOS-339): that step leaves the tab on `All` with no selection, which
+        // is the state the shots open from. It puts the window size and the slice back itself.
+        await stepChartShots(app, page)
         // The other half of the same control (JOS-130, sliceSteps.mts): the preset that moves the
         // arithmetic and not the window. It runs AFTER stepTimescale, which leaves the tab on
         // `All`, and takes the spec's own dashboard readout so "byte for byte" means one thing.

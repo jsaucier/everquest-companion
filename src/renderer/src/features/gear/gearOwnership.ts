@@ -206,7 +206,7 @@ export function factText(fact: OwnedFact): string {
  *
  * The precedence is the strength of the claim: a copy you can wear beats a gem made from one,
  * which beats a line in the log. An empty string is a row the app knows nothing about — which is
- * most of a 6,766-row corpus, and a blank cell is what "nothing to say" looks like (the same rule
+ * most of a 6,814-row corpus, and a blank cell is what "nothing to say" looks like (the same rule
  * `statText` applies to an absent stat).
  */
 export function ownedCellText(o: GearOwnership): string {

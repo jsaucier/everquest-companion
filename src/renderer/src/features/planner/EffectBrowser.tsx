@@ -47,23 +47,25 @@
 // 67 procs, which are poisons and coatings. Turning it on shows them chipped `no slot`, because an
 // empty slot list is "the page stated none" (law 1) and just occasionally that is a wiki gap.
 //
+// AND SINCE JOS-329 THE BROWSER REMEMBERS WHERE YOU LEFT IT. Four things here were `useState` and
+// were therefore erased by every tab and module switch — the socket/slot/trio FORM, the search box,
+// JOS-210's item narrowing and which groups were expanded — while the era toggle, the
+// non-equippable toggle and the group-by axis sitting right beside them on the same bar survived,
+// because those three happened to have been written down. That inconsistency IS the bug the owner
+// reported area-wide (*we're losing everything right now*): the bar looked like one row of controls
+// and behaved like two. All four now go through the area's one mechanism (`gear/areaMemory.ts`),
+// which also states why the item narrowing is session-scoped while the form is not.
+//
 // …AND WHEN THE TWO OF THEM EMPTY THE LIST, THE LIST SAYS SO (JOS-67). A player searched for a
 // click effect that was real, legal and hidden by the slot filter, and got "No effects match these
 // filters" — a true sentence that told them nothing (feedback 01KZCGXY8WC6YCD8W44W7EAS5H). An empty
 // result now counts what the two view toggles are holding back and names them, because a filter
 // that can hide everything must be able to admit it (`hiddenByView`, plannerData.ts).
 
-import { type JSX, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { Box, Menu, MenuItem, Typography } from '@mui/material'
+import { type JSX, useCallback, useDeferredValue, useEffect, useMemo, useRef } from 'react'
+import { Box, Typography } from '@mui/material'
 import type { ClassAbbr } from '@shared/classCombo'
-import {
-  equipSlotOf,
-  planSlotLabel,
-  type ExaltPlan,
-  type PlanSlotId,
-  type PlanSocket,
-  type SocketType
-} from '@shared/planner/types'
+import type { SocketType } from '@shared/planner/types'
 import { useWindowedRows } from '../../lib/useWindowedRows'
 import EffectFilterBar from './EffectFilterBar'
 import { DonorLine, GroupLine, ROW_HEIGHT } from './EffectRows'
@@ -82,24 +84,22 @@ import {
   type HiddenByView
 } from './plannerData'
 import { browserRows, groupDonors, type BrowserRow, type GroupAxis } from './plannerGroups'
-import { outgoing, plannedBySocket, replacesFor, targetCells, type SocketKey } from './plannerReplace'
-import { itemFits, useItemFocus, type BrowsePreset, type ItemFocus } from './plannerPreset'
+import { itemFits, type ItemFocus } from './plannerPreset'
 import { sourceIndex } from './sourceIndex'
-
-/** Which (donor, effect) pairs the selected set already plans — the "in set" chip. */
-function plannedPairs(plan: ExaltPlan | null): ReadonlySet<string> {
-  const out = new Set<string>()
-  for (const planSlot of Object.values(plan?.slots ?? {})) {
-    for (const socket of Object.values(planSlot?.sockets ?? {})) {
-      if (socket) out.add(`${socket.donorKey}::${socket.effect}`)
-    }
-  }
-  return out
-}
-
-// WHAT AN ADD WOULD OVERWRITE is `plannerReplace.ts` — pure, node-tested, and imported rather
-// than improvised here. The browser is the only place that holds BOTH the plan and the target
-// socket, so it is the caller; it is not the right place for the rule itself.
+// JOS-329 — the gear area's one form-memory mechanism. It lives beside the Gear tab because the
+// four tabs are ONE area (appViews.GEAR_AREA_VIEWS) and the rule they share had to have one home;
+// this file already reaches across the same seam for `useGearIndex`'s siblings.
+import {
+  sanitizeBrowseForm,
+  sanitizeItemFocus,
+  sanitizeOpenGroups,
+  type BrowseFormMemory
+} from '../gear/areaMemory'
+import { useRemembered, useRememberedSearch } from '../gear/useAreaMemory'
+// JOS-344 — the donor names get the Gear tab's comparison pair. Same two hooks the Gear tab calls,
+// across the same seam the four lines above already cross; see `compare` in the component.
+import { ITEM_UPGRADE_BASE } from '@shared/itemUpgrade'
+import { useGearCompare, useGearIndex, type GearCompareData } from '../gear/gearData'
 
 // ---- the row pipeline ------------------------------------------------------------------
 
@@ -151,67 +151,26 @@ function useVisibleRows(input: RowsInput): { rows: BrowserRow[]; hidden: HiddenB
 
 // ---- the browser ---------------------------------------------------------------------
 
-interface PendingAdd {
-  donor: DonorRow
-  anchor: HTMLElement
-}
-
 /** The answer for every render that HAS rows — a constant, so the memo below never allocates. */
 const NOTHING_HIDDEN: HiddenByView = { era: 0, nonEquip: 0 }
-
-/**
- * WHICH CELL — asked only when the donor could land in more than one, because the planner must not
- * pick which of PRIMARY/SECONDARY a sword goes into, or WHICH RING (JOS-67), on the user's behalf.
- *
- * It is also where a multi-cell donor's REPLACE warning lives (JOS-42): FINGER 1 may be empty while
- * FINGER 2 already holds something, so the row's button cannot say which, and this menu is the
- * moment the target stops being ambiguous.
- */
-function SlotMenu({
-  pending,
-  occupied,
-  onClose,
-  onPick
-}: {
-  pending: PendingAdd | null
-  occupied: ReadonlyMap<SocketKey, PlanSocket>
-  onClose: () => void
-  onPick: (slot: PlanSlotId) => void
-}): JSX.Element {
-  return (
-    <Menu anchorEl={pending?.anchor ?? null} open={pending !== null} onClose={onClose}>
-      {(pending === null ? [] : targetCells(pending.donor)).map((cell) => {
-        const over = pending === null ? null : outgoing(occupied, cell, pending.donor.socket, pending.donor)
-        return (
-          <MenuItem key={cell} data-testid="planner-slot-choice" onClick={() => onPick(cell)}>
-            {planSlotLabel(cell)}
-            {over !== null && (
-              <Typography variant="caption" color="warning.main" sx={{ ml: 1 }}>
-                replaces {over}
-              </Typography>
-            )}
-          </MenuItem>
-        )
-      })}
-    </Menu>
-  )
-}
 
 interface RowListProps {
   rows: readonly BrowserRow[]
   win: { start: number; end: number; topPad: number; bottomPad: number }
   planClasses: readonly ClassAbbr[]
-  planned: ReadonlySet<string>
-  /** what each row's ADD would displace — `replacesFor`, folded once per plan change */
-  replaces: (donor: DonorRow) => string | null
+  /** the item keys already on the wish list — the `wished` chip and the control's REMOVE state */
+  wished: ReadonlySet<string>
   ready: boolean
   /** what the two view toggles are holding back — only consulted when `rows` is empty (JOS-67) */
   hidden: HiddenByView
   /** the item the list is narrowed to, so an empty list can name it (JOS-210) */
   item: string | null
   onToggle: (id: string) => void
-  onAdd: (donor: DonorRow, anchor: HTMLElement) => void
+  /** absent until the wish document has loaded — `DonorLineProps.onToggleWish` argues why */
+  onToggleWish?: (donor: DonorRow, wished: boolean) => void
   onOpenLoot?: (item: string) => void
+  /** the comparison seam behind the donor-name hover (JOS-344) — a STABLE object, see below */
+  compare: GearCompareData
 }
 
 /**
@@ -238,7 +197,7 @@ function emptyText(ready: boolean, hidden: HiddenByView, item: string | null): s
 
 /** The bounded scroll box (AGENTS.md UI conventions) and the window of rows inside it. */
 function RowList(props: RowListProps): JSX.Element {
-  const { rows, win, planClasses, planned, replaces, ready, hidden, item, onToggle, onAdd, onOpenLoot } = props
+  const { rows, win, planClasses, wished, ready, hidden, item, onToggle, onToggleWish, onOpenLoot, compare } = props
   return (
     <>
       <Box sx={{ height: win.topPad }} />
@@ -250,13 +209,13 @@ function RowList(props: RowListProps): JSX.Element {
             key={`${row.groupId}:${row.donor.key}:${row.donor.effect}`}
             donor={row.donor}
             planClasses={planClasses}
-            planned={planned.has(`${row.donor.key}::${row.donor.effect}`)}
+            wished={wished.has(row.donor.key)}
             best={row.best}
             namesEffect={row.namesEffect}
             namesSays={row.namesSays}
-            replaces={replaces(row.donor)}
-            onAdd={onAdd}
+            onToggleWish={onToggleWish}
             onOpenLoot={onOpenLoot}
+            compare={compare}
           />
         )
       )}
@@ -271,143 +230,109 @@ function RowList(props: RowListProps): JSX.Element {
 }
 
 /**
- * THE TWO WRITES THE BROWSER MAKES, and the one question it may have to ask first.
+ * THE THREE WRITES THE FILTER BAR MAKES — and, since JOS-326, there is nothing left for any of them
+ * to clear.
  *
- * One CELL ⇒ one click. Several ⇒ the slot menu, because the planner must not pick which of
- * PRIMARY/SECONDARY a sword goes into — or which of your two rings (JOS-67) — on the user's behalf.
- * UNDER A PRESET THERE IS NOTHING TO ASK (V8): you clicked a specific socket of a specific item, so
- * a two-slot sword goes into the socket you opened rather than into a menu re-asking the question.
+ * They used to have a second job. While the Inventory tab could hand the browser a `BrowsePreset`
+ * — one socket of one host, arrived at by clicking a cell — every filter control had to say
+ * whether touching it contradicted the cell you came from, and the four kind tabs had to MOVE the
+ * preset's socket rather than drop the item (JOS-210's bug half). The board is gone with this
+ * ticket and the preset with it, so all three writes are the plain ones underneath.
  *
- * A plain function, not a hook — it closes over props and state the caller already holds, and
- * calls nothing of React's.
- */
-function writeFlow(ctx: {
-  preset: BrowsePreset | null
-  onSocket: (slot: PlanSlotId, socket: SocketType, planned: { effect: string; donorKey: string }) => void
-  pending: PendingAdd | null
-  setPending: (p: PendingAdd | null) => void
-}): {
-  add: (donor: DonorRow, anchor: HTMLElement) => void
-  chooseSlot: (slot: PlanSlotId) => void
-} {
-  const { preset, onSocket, pending, setPending } = ctx
-  return {
-    add: (donor, anchor) => {
-      const planned = { effect: donor.effect, donorKey: donor.key }
-      const cells = targetCells(donor)
-      if (preset !== null) onSocket(preset.slot, preset.socket, planned)
-      else if (cells.length === 1) onSocket(cells[0], donor.socket, planned)
-      else if (cells.length > 1) setPending({ donor, anchor })
-    },
-    chooseSlot: (slot) => {
-      if (pending) {
-        onSocket(slot, pending.donor.socket, { effect: pending.donor.effect, donorKey: pending.donor.key })
-      }
-      setPending(null)
-    }
-  }
-}
-
-/**
- * THE THREE WRITES THE FILTER BAR MAKES, and which of them hand the browser back (JOS-210).
+ * WHAT SURVIVES IS THE PART THAT WAS A SEARCH CAPABILITY. `pickItem` is the filter bar's own item
+ * picker — the OTHER door JOS-210 opened, and the one that reaches ANY item the DB carries rather
+ * than only the ones a set already hosted. It is untouched, and the narrowing it makes still
+ * survives a kind switch: the picked item is its own state, and no filter write clears it.
  *
- * `change` is the slot select and the "usable by this set" chip: both contradict the cell you
- * arrived from, so both clear the preset — with its values still SELECTED, which is what makes
- * clearing feel like being handed the browser rather than being reset.
- *
- * `setSocket` is the four kind tabs, and it is the bug this ticket names. It used to run that same
- * clear path, so narrowing to an item and then asking "what about its worn effects?" silently threw
- * the item away. Switching kinds is ONE question about the SAME item, so the item stays and the
- * preset's socket MOVES with the tab — which keeps the add target, the replace warning and the
- * chip's own label all naming the socket that is actually on screen.
- *
- * `pickItem` is the filter bar's item picker, and a hand-picked item REPLACES whatever the browser
- * was narrowed to, preset included: you are now filling a different item, and the cell you came
- * from is no longer the question.
- *
- * A plain function, not a hook — it closes over state the caller already holds (the `writeFlow`
- * precedent below) and calls nothing of React's.
+ * A plain function, not a hook — it closes over state the caller already holds and calls nothing
+ * of React's.
  */
 function filterWrites(ctx: {
-  preset: BrowsePreset | null
-  /** the MERGED filters, so clearing the preset leaves its values selected */
   filters: DonorFilters
   setOwn: (f: DonorFilters) => void
   setPicked: (f: ItemFocus | null) => void
-  onPreset?: (p: BrowsePreset | null) => void
 }): {
   change: (f: DonorFilters) => void
   setSocket: (s: SocketType) => void
   pickItem: (f: ItemFocus | null) => void
 } {
-  const { preset, filters, setOwn, setPicked, onPreset } = ctx
+  const { filters, setOwn, setPicked } = ctx
   return {
     change: (next) => {
       setOwn(next)
-      onPreset?.(null)
     },
     setSocket: (socket) => {
       setOwn({ ...filters, socket })
-      if (preset !== null) onPreset?.({ ...preset, socket })
     },
     pickItem: (next) => {
       setPicked(next)
-      onPreset?.(null)
     }
   }
 }
 
 export interface EffectBrowserProps {
-  plan: ExaltPlan
   /**
-   * V8 — browsing ONE SOCKET OF ONE HOST, arrived at by clicking a socket on the Inventory tab.
-   * It overrides the socket and slot controls and narrows to the host's own classes; clearing it
-   * (the X on the preset chip, or touching any filter control) hands the browser back.
+   * The class trio the browse is filtered for — R2's class half. It used to be the SELECTED SET's
+   * (`ExaltPlan.classes`); with the sets' switcher gone it is a machine-class browse preference
+   * (`useBrowseClasses`), and PlannerView owns it because the disagree chip lives in the toolbar.
    */
-  preset?: BrowsePreset | null
+  classes: readonly ClassAbbr[]
+  /** the item keys already on the wish list — `itemKey`, which is `DonorRow.key` */
+  wished: ReadonlySet<string>
   /**
-   * Write the preset back (`null` clears it) — the seam that lets a KIND SWITCH move the socket it
-   * names instead of dropping the item (JOS-210). PlannerView owns the state because the trip that
-   * sets it starts on another tab.
+   * Put this donor on the wish list, or take it off (JOS-343 — `useWishlist`'s `add` and `remove`,
+   * wrapped by PlannerView). The row hands back the state it was drawn in, so the handler never has
+   * to close over the wished set and can stay a stable callback across an edit.
+   *
+   * UNDEFINED UNTIL THE DOCUMENT HAS LOADED, and every row draws NO control rather than a wrong one
+   * while it is (`EffectRows.DonorLineProps.onToggleWish` states the failure it prevents).
    */
-  onPreset?: (p: BrowsePreset | null) => void
-  /** write one socket of the selected set (usePlans' `setSocket`) */
-  onSocket: (slot: PlanSlotId, socket: SocketType, planned: { effect: string; donorKey: string }) => void
+  onToggleWish?: (donor: DonorRow, wished: boolean) => void
   /** deep-link a donor into the Loot tab's item drill-down (App's `openLoot`) */
   onOpenLoot?: (item: string) => void
 }
 
 export default function EffectBrowser({
-  plan,
-  preset = null,
-  onPreset,
-  onSocket,
+  classes,
+  wished,
+  onToggleWish,
   onOpenLoot
 }: EffectBrowserProps): JSX.Element {
   const { donors, ready } = useDonors()
   const era = useEraOnly()
   const nonEquip = useNonEquip()
-  const [own, setOwn] = useState<DonorFilters>(DEFAULT_FILTERS)
-  // The item picked in the filter bar (JOS-210's second door). The preset outranks it while one is
-  // on, and picking by hand clears the preset — so exactly one item is ever being filled.
-  const [picked, setPicked] = useState<ItemFocus | null>(null)
-  const focus = useItemFocus(preset, picked)
-  // THE PRESET WINS while it is on: the socket and slot it names are facts about the item window
-  // you came from, not preferences. The preset names a CELL; the donor filter is about the
-  // equipment SLOT that cell occupies, so browsing FINGER 2 shows the same ring donors as browsing
-  // FINGER 1 (JOS-67). An ANY cell occupies none, and `equipSlotOf` returns null there — which is
-  // already this filter's word for "every slot" (JOS-104), so browsing an any-slot's socket narrows
-  // by socket and by the host itself and leaves the slot select alone.
-  const filters: DonorFilters = useMemo(
-    () => (preset === null ? own : { ...own, socket: preset.socket, slot: equipSlotOf(preset.slot) }),
-    [own, preset]
+  // JOS-329. Four pieces of this browser's state used to be `useState` and were therefore destroyed
+  // by every tab and module switch (the JOS-90/97/116 law, reported area-wide). Each is now on the
+  // tier `areaMemory.AREA_FORM_TIER` assigns it: the FORM (socket tab, slot, "usable by these
+  // classes") survives a restart with the era/non-equippable/group-by keys it sits beside; the
+  // search box, the item narrowing and the expanded groups last the session. `DEFAULT_FILTERS` is
+  // passed IN rather than imported by the sanitizer, so "proc leads" has exactly one home.
+  const [storedForm, setStoredForm] = useRemembered<BrowseFormMemory>('eq.planner.filters', (raw) =>
+    sanitizeBrowseForm(raw, DEFAULT_FILTERS)
   )
-  // The three filter-bar writes, and which of them hand the browser back — `filterWrites` above.
-  const { change, setSocket, pickItem } = filterWrites({ preset, filters, setOwn, setPicked, onPreset })
+  // The item the browser is narrowed to (JOS-210's filter-bar picker). It was the second of two
+  // doors into one narrowing; with the Inventory tab's preset gone it is the only one, so the
+  // merge that used to arbitrate between them (`useItemFocus`) is gone with it and this state IS
+  // the focus.
+  const [picked, setPicked] = useRemembered<ItemFocus | null>('eq.planner.item', sanitizeItemFocus)
+  const focus = picked
+  // `DonorFilters` carries `text` and the stored form does not (different tiers), so the two are
+  // recombined here — the same shape every control below has always been handed.
+  const filters = useMemo<DonorFilters>(() => ({ ...DEFAULT_FILTERS, ...storedForm }), [storedForm])
+  const setOwn = useCallback(
+    (next: DonorFilters) => {
+      setStoredForm({ socket: next.socket, slot: next.slot, trioOnly: next.trioOnly })
+    },
+    [setStoredForm]
+  )
+  // The three filter-bar writes — `filterWrites` above.
+  const { change, setSocket, pickItem } = filterWrites({ filters, setOwn, setPicked })
   const groupBy = useGroupBy(filters.socket)
-  const [text, setText] = useState('')
-  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set<string>())
-  const [pending, setPending] = useState<PendingAdd | null>(null)
+  const [text, setText] = useRememberedSearch('eq.planner.search')
+  const [openIds, setOpenIds] = useRemembered<string[]>('eq.planner.open', sanitizeOpenGroups)
+  // The row flattener wants a Set and the store wants a list; the memo is the seam, and it keys on
+  // the stored array so `browserRows` re-runs when a group opens and never merely because we drew.
+  const open = useMemo<ReadonlySet<string>>(() => new Set(openIds), [openIds])
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // Warm the source index AFTER mount, not on the render path: the first donor row to ask for a
@@ -425,30 +350,38 @@ export default function EffectBrowser({
     donors,
     filters,
     text: deferredText,
-    planClasses: plan.classes,
+    planClasses: classes,
     view,
     focus,
     axis: groupBy[0],
     open
   })
-  const planned = useMemo(() => plannedPairs(plan), [plan])
-  // Folded once per plan (or preset) change, not per row: the occupancy map is a handful of
-  // entries and every visible row asks it the same question.
-  const occupied = useMemo(() => plannedBySocket(plan), [plan])
-  const replaces = useMemo(
-    () => (donor: DonorRow) => replacesFor(occupied, preset, donor),
-    [occupied, preset]
-  )
   const win = useWindowedRows({ count: rows.length, rowHeight: ROW_HEIGHT, scrollRef })
 
+  /**
+   * WHAT A HOVERED DONOR NAME IS COMPARED AGAINST (JOS-344) — the Gear tab's own two hooks, called
+   * here for the first time outside `features/gear`.
+   *
+   * THE COST IS TWO CACHED READS PER WINDOW AND NOTHING PER HOVER. `useGearIndex` is cached for the
+   * life of the window (one IPC, shared with the Gear tab, which is the tab next door in this same
+   * area), and `useGearCompare` re-asks `plannerInventory` once per mount and once per
+   * `inventory:autoReloaded`. Both maps are memos over data that moves only when the corpus arrives
+   * or the player re-exports; a hover costs one `Map.get`.
+   *
+   * AT BASE, ALWAYS. `ITEM_UPGRADE_BASE` is a module constant, so the memo inside `useGearCompare`
+   * is stable — and it is the honest state for this surface: the Gear tab has a plus-state slider
+   * and this browser has none, so the item card here states the numbers the corpus states and the
+   * card's "simulated at Tier N" line correctly never appears.
+   */
+  const gear = useGearIndex()
+  const compare = useGearCompare(gear.rows, ITEM_UPGRADE_BASE)
+
+  // Toggling reads the CURRENT list rather than taking a functional update, because the stored
+  // value is the source of truth and `useRemembered`'s setter writes what it is given — there is no
+  // "previous state" the store has not already seen.
   const toggle = (id: string): void => {
-    setOpen((prev) => {
-      const next = new Set(prev)
-      if (!next.delete(id)) next.add(id)
-      return next
-    })
+    setOpenIds(openIds.includes(id) ? openIds.filter((k) => k !== id) : [...openIds, id])
   }
-  const { add, chooseSlot } = writeFlow({ preset, onSocket, pending, setPending })
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: 0 }}>
@@ -473,24 +406,17 @@ export default function EffectBrowser({
         <RowList
           rows={rows}
           win={win}
-          planClasses={plan.classes}
-          planned={planned}
-          replaces={replaces}
+          planClasses={classes}
+          wished={wished}
           ready={ready}
           hidden={hidden}
           item={focus?.name ?? null}
           onToggle={toggle}
-          onAdd={add}
+          onToggleWish={onToggleWish}
           onOpenLoot={onOpenLoot}
+          compare={compare}
         />
       </Box>
-
-      <SlotMenu
-        pending={pending}
-        occupied={occupied}
-        onClose={() => setPending(null)}
-        onPick={chooseSlot}
-      />
     </Box>
   )
 }

@@ -22,6 +22,7 @@ import type { PlannerInventory } from '../shared/planner/inventorySlots'
 import type { GearIndexPayload } from '../shared/planner/gear'
 import type { GearSet } from '../shared/planner/gearSet'
 import type { OwnershipPayload } from '../shared/planner/ownership'
+import type { WishList } from '../shared/planner/wishlist'
 
 export const plannerApi = {
   // ---- exaltation planner (docs/plans/exaltation-planner.md §4.1, §6) ----
@@ -50,7 +51,7 @@ export const plannerApi = {
 
   // ---- gear planner (JOS-283 phase 2, JOS-285 phase 4) ----
 
-  /** The gear CANDIDATE INDEX: one row per equippable item (~6,858), each carrying its NUMERIC
+  /** The gear CANDIDATE INDEX: one row per equippable item (~6,814), each carrying its NUMERIC
    *  base stat vector plus slots/classes/races/era/flags/effects and the weapon block. Built
    *  lazily in main and memoized there. Fetch ONCE and cache — it is derived from bytes compiled
    *  into the bundle, and every `+N` view of it is a pure map over the rows
@@ -78,5 +79,17 @@ export const plannerApi = {
   /** Replace the whole gear-set list for the active character. Main re-validates every cell
    *  against the closed `PLAN_SLOTS` allowlist and clamps every plus-state to one the game's item
    *  window can actually be in, silently dropping what does not fit. */
-  setGearSets: (sets: GearSet[]): Promise<void> => ipcRenderer.invoke(IPC.gearSetSets, sets)
+  setGearSets: (sets: GearSet[]): Promise<void> => ipcRenderer.invoke(IPC.gearSetSets, sets),
+
+  // ---- the flat wish list (JOS-326) ----
+
+  /** The active character's WISH LIST — the empty document when it has none. One flat list of
+   *  items they have decided they want, with no cell/socket/host structure at all, plus the done
+   *  strip's dismissals and the one-time exaltation-plan seed flag. */
+  getWishlist: (): Promise<WishList> => ipcRenderer.invoke(IPC.wishlistGet),
+
+  /** Replace the whole wish list for the active character. Main re-validates every entry — the
+   *  item key, the two kinds, the closed socket allowlist — and silently drops what does not fit.
+   *  Whole-document, because the list and the two facts about it must move together. */
+  setWishlist: (list: WishList): Promise<void> => ipcRenderer.invoke(IPC.wishlistSet, list)
 }

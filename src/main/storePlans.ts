@@ -23,10 +23,11 @@
 // loadout. Whole-array writes — a list is small (tens of entries at most) and the renderer edits
 // it as one document.
 
-import { sanitizeExaltPlans, sanitizeGearSets } from './planner/validate'
+import { sanitizeExaltPlans, sanitizeGearSets, sanitizeWishlist } from './planner/validate'
 import { getProgress, setProgress } from './store'
 import type { ExaltPlan } from '../shared/planner/types'
 import type { GearSet } from '../shared/planner/gearSet'
+import type { WishList } from '../shared/planner/wishlist'
 
 /** This character's saved exaltation sets ([] when it has none, or the stored value is unusable). */
 export function getExaltPlans(charId: string): ExaltPlan[] {
@@ -49,5 +50,25 @@ export function getGearSets(charId: string): GearSet[] {
 export function setGearSets(charId: string, sets: GearSet[]): GearSet[] {
   const next = sanitizeGearSets(sets)
   setProgress(charId, { ...getProgress(charId), gearSets: next })
+  return next
+}
+
+/**
+ * This character's FLAT WISH LIST (JOS-326) — the empty list when it has none, or when the stored
+ * value is unusable. A THIRD document rather than a field on either of the two above; the
+ * store-separation argument is stated once, at the key, in shared/progressState.ts.
+ *
+ * Whole-document reads and writes like the two above: the list is small (tens of lines), the
+ * renderer edits it as one document, and the two remembered facts that hang off it (the done
+ * strip's dismissals and the one-time seed flag) must move with it or not at all.
+ */
+export function getWishlist(charId: string): WishList {
+  return sanitizeWishlist(getProgress(charId).wishlist)
+}
+
+/** Replace the whole wish list for a character. Returns what was actually stored. */
+export function setWishlist(charId: string, list: WishList): WishList {
+  const next = sanitizeWishlist(list)
+  setProgress(charId, { ...getProgress(charId), wishlist: next })
   return next
 }

@@ -6,17 +6,37 @@
 // Both charts now take ONE `ChartScale` from the view (see ./zoneBands.ts `chartDomain`).
 // They used to compute their own, so a zone band or a range selection at the same pixel
 // meant two different instants on the two charts. The shared domain is the seam the band
-// strip and the drag selection hang off; nothing else about the drawing changed.
+// strip and the drag selection hang off.
+//
+// THE X DOMAIN IS SHARED; THE Y DOMAINS ARE NOT, and since JOS-339 neither of them is "the data,
+// exactly" either. Each chart derives its own vertical axis from levelChartGeometry — `paddedAxis`
+// for the AA total, `levelAxis` for the level bar — because they measure different kinds of thing
+// and a short window is where the difference stops being academic. That module carries the whole
+// argument; this file draws what it decides and states the two bounds beside the plot.
+//
+// AND NOTHING IN THIS FILE PUTS TEXT INSIDE AN SVG. The plots stretch
+// (`preserveAspectRatio="none"`), so a `<text>` node in one is a smeared label at any pane wider
+// than 720px. Both the range band's edge ticks and the y-axis marks are HTML overlays for that one
+// reason — see `AxisLabels` for why the alternatives were worse.
 
 import { useSyncExternalStore, type CSSProperties, type JSX } from 'react'
 import type { LevelSegment } from './levelSeries'
-import { CHART_H, CHART_W, xOf, type AaPoint, type ChartScale } from './levelChartGeometry'
+import {
+  CHART_H,
+  CHART_W,
+  levelAxis,
+  paddedAxis,
+  xOf,
+  yOf,
+  type AaPoint,
+  type ChartScale
+} from './levelChartGeometry'
 // THE FRACTIONAL CURVE (JOS-292) and the spans it refuses to draw. This file draws what that
 // one derives and adds no arithmetic of its own — the y mapping is the only maths left here.
 import { gapRect, runArea, runPolyline, type CurveRefusal, type LevelCurve } from './levelCurve'
 import { LevelHoverLayer } from './LevelHoverLayer'
 import { formatTime } from '../../lib/formatDate'
-import { BAND_H, BAND_PAD, PAD_X, bandRects, type ZoneBand, type ZoneLegend } from './zoneBands'
+import { BAND_PAD, PAD_X, bandRects, bandStripStyle, type ZoneBand, type ZoneLegend } from './zoneBands'
 import type { ChartSelection, SelectionPointerHandlers } from './useChartSelection'
 import type { DraftStore } from './selectionDraft'
 
@@ -54,6 +74,29 @@ export interface ChartChrome {
 const WRAP_STYLE: CSSProperties = { position: 'relative', touchAction: 'none', userSelect: 'none' }
 
 /**
+ * The AA chart's headroom rule (JOS-339, levelChartGeometry.paddedAxis).
+ *
+ * `minSpan: 1` is one AA point — the smallest domain a window can honestly have, and what stops a
+ * gainless window collapsing to a zero-height box. `minPad: 0.35` is the number that matters at
+ * the reported shape: a +2 AA window's 12% is a quarter of a point, so without a floor the padding
+ * would be invisible exactly where it was asked for. Snapping the domain to whole numbers instead
+ * would have doubled it and halved the staircase, which is the picture this is fixing.
+ */
+const AA_PAD = { minSpan: 1, padFrac: 0.12, minPad: 0.35, floor: 0 }
+
+/**
+ * Every stroke in these plots takes this.
+ *
+ * `preserveAspectRatio="none"` scales X and Y differently, and a scaled stroke is scaled with
+ * them: at a 970px pane a 2-unit line is 2px thick where it runs horizontally and 2.7px where it
+ * runs vertically. On a curve made of horizontal holds and vertical steps that is a stroke that
+ * changes weight as it turns a corner — part of what made the level curve read as a ragged
+ * hairline at short windows. `non-scaling-stroke` is 2 device pixels everywhere, which is the
+ * "curve weight at low vertical range" half of the ticket and costs nothing.
+ */
+const CRISP = 'non-scaling-stroke'
+
+/**
  * z-order reserved across the chart stack: 1 = range band, 2 = crosshair, 3 = tooltip.
  *
  * `overflow:hidden` is the timescale guard (JOS-71): the band is positioned in PERCENT of the
@@ -75,8 +118,12 @@ const TICK: CSSProperties = { position: 'absolute', bottom: 0, fontSize: 9, line
 function ZoneBandStrip({ bands, scale }: { bands: readonly ZoneBand[]; scale: ChartScale }): JSX.Element | null {
   const rects = bandRects(bands, scale)
   if (rects.length === 0) return null
+  // The strip's weight is a function of whether it is telling anything apart (JOS-339,
+  // zoneBands.bandStripStyle). Derived there, not here: it is geometry over the drawn rectangles,
+  // and this file's job is to draw what that one decides.
+  const strip = bandStripStyle(rects, scale)
   return (
-    <g data-testid="leveling-zone-bands">
+    <g data-testid="leveling-zone-bands" data-strip={strip.kind}>
       {rects.map((r, i) => (
         <rect
           key={`${r.key}-${i}`}
@@ -84,12 +131,64 @@ function ZoneBandStrip({ bands, scale }: { bands: readonly ZoneBand[]; scale: Ch
           x={r.x}
           y={0}
           width={r.w}
-          height={BAND_H}
+          height={strip.height}
           fill={r.color}
-          opacity={0.85}
+          opacity={strip.opacity}
         />
       ))}
     </g>
+  )
+}
+
+/**
+ * THE AXIS LABELS, AS HTML — the one thing in these plots that must NOT stretch (JOS-339).
+ *
+ * The owner's report named it: `444`/`442` and `23`/`22` come out horizontally smeared. The cause
+ * is structural, not a font bug — both plots draw at a fixed 720-unit viewBox with
+ * `preserveAspectRatio="none"` and are then scaled to the pane width, so at a 970px pane every
+ * glyph inside the SVG is 1.35x wide and the same height.
+ *
+ * WHY HTML AND NOT A COUNTER-TRANSFORM. A `scale(1/sx, 1)` on each `<text>` needs `sx`, and `sx`
+ * is the MEASURED element width — which would put a ResizeObserver into a component that sits
+ * directly under a pointermove path, to buy back something the DOM can do for free. And the fixed
+ * viewBox is not negotiable: it is the one time base (`pxToUser`, the hover inverse, the selection
+ * band) that JOS-290/291/331 all stand on, so the geometry has to keep stretching.
+ *
+ * `SelectionBand` above already made this exact argument for its edge tick labels and already
+ * solved it this way: percent offsets against the stretched viewBox land in the same place the SVG
+ * geometry would, and the text stays upright. This is that, for the y axis. Y needs no percent at
+ * all — the SVG's `height` attribute equals the viewBox height, so one user unit IS one CSS pixel
+ * vertically, which is the same 1:1 that lets the hover layer skip an inverse for Y.
+ */
+const AXIS_LAYER: CSSProperties = { position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0 }
+/** `translateY(-100%)` puts the box's BOTTOM on `top`, which is where an SVG `y` puts a baseline —
+ *  so a mark reads at the same height it did as a `<text>`, only unsmeared. */
+const AXIS_TEXT: CSSProperties = {
+  position: 'absolute',
+  left: `${(PAD_X / CHART_W) * 100}%`,
+  fontSize: 10,
+  lineHeight: '11px',
+  whiteSpace: 'nowrap',
+  opacity: 0.7,
+  transform: 'translateY(-100%)'
+}
+
+/** One value marked on the y axis: what it says, and the user unit (== CSS pixel) it says it at. */
+interface AxisMark {
+  text: string
+  y: number
+}
+
+function AxisLabels({ marks, color }: { marks: readonly AxisMark[]; color: string }): JSX.Element | null {
+  if (marks.length === 0) return null
+  return (
+    <div style={AXIS_LAYER} data-testid="leveling-axis-labels">
+      {marks.map((m) => (
+        <div key={m.text} data-testid="leveling-axis-label" style={{ ...AXIS_TEXT, top: m.y, color }}>
+          {m.text}
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -214,34 +313,34 @@ export function AreaChart({
   const first = points[0]
   const base = Math.max(0, first.y - (first.gain ?? first.y))
   const top = points[points.length - 1].y
-  const ySpan = Math.max(1, top - base)
+  // THE DOMAIN IS THE DATA PLUS AIR (JOS-339, levelChartGeometry.paddedAxis). It used to be the
+  // data exactly, so `top` mapped to `padTop` and the line was pinned flat against the top edge of
+  // an otherwise empty box — which at a short window is the whole picture. `floor: 0` keeps a
+  // cumulative total off negative ground, so full history still opens at zero.
+  const axis = paddedAxis(base, top, { top: padTop, bottom: H - pad }, AA_PAD)
   const x = (t: number): number => xOf(scale, t)
-  const y = (v: number): number => H - pad - ((v - base) / ySpan) * (H - pad - padTop)
+  const y = (v: number): number => yOf(axis, v)
   const line = points.map((p) => `${x(p.ts).toFixed(1)},${y(p.y).toFixed(1)}`).join(' ')
   // Hold the curve flat to the end of the shared domain. Cumulative AA is a STEP function
   // between gain lines (that is what `cumulativeAt` reads), so the plateau is what the
   // series actually says — and it is the same trailing-plateau rule the level chart uses.
   const tail = `${x(scale.t1).toFixed(1)},${y(points[points.length - 1].y).toFixed(1)}`
-  const area = `${x(points[0].ts).toFixed(1)},${H - pad} ${line} ${tail} ${x(scale.t1).toFixed(1)},${H - pad}`
+  const floor = axis.bottom
+  const area = `${x(points[0].ts).toFixed(1)},${floor} ${line} ${tail} ${x(scale.t1).toFixed(1)},${floor}`
   return (
     <div style={WRAP_STYLE} data-testid="leveling-aa-chart" {...chrome.pointer}>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none">
         <ZoneBandStrip bands={chrome.bands} scale={scale} />
         <polygon points={area} fill={color} opacity={0.18} />
-        <polyline points={`${line} ${tail}`} fill="none" stroke={color} strokeWidth={2} />
-        {/* Drawn exactly when the floor is NOT zero, which is exactly when it needs stating: a
-            windowed view whose baseline is the total you already had. */}
-        {base > 0 && (
-          <>
-            <text x={PAD_X} y={padTop} fill={color} fontSize={10} opacity={0.7}>
-              {top.toLocaleString()}
-            </text>
-            <text x={PAD_X} y={H - pad - 2} fill={color} fontSize={10} opacity={0.7}>
-              {base.toLocaleString()}
-            </text>
-          </>
-        )}
+        <polyline points={`${line} ${tail}`} fill="none" stroke={color} strokeWidth={2} vectorEffect={CRISP} />
       </svg>
+      {/* Drawn exactly when the floor is NOT zero, which is exactly when it needs stating: a
+          windowed view whose baseline is the total you already had. Marked at the values' OWN
+          heights now that the domain has air around them — the labels are the axis, not corners. */}
+      <AxisLabels
+        color={color}
+        marks={base > 0 ? [{ text: top.toLocaleString(), y: y(top) }, { text: base.toLocaleString(), y: y(base) }] : []}
+      />
       <SelectionBand scale={scale} committed={chrome.range} draft={chrome.draft} color={color} />
       <LevelHoverLayer
         scale={scale}
@@ -260,7 +359,13 @@ export function AreaChart({
 export const SWAP_COLOR = '#8fa3b8'
 
 const PAD_TOP = 14 + BAND_PAD
-const PAD_BOTTOM = 8
+/**
+ * 8 UNTIL JOS-339. The level axis now bottoms out on a whole level the curve genuinely reaches
+ * (`levelAxis`), so a window that opens exactly on a ding draws its first vertex AT the floor —
+ * six more units of inset is the "headroom below" half of the ticket, and it is also what keeps
+ * the bottom axis label off the frame.
+ */
+const PAD_BOTTOM = 14
 
 /**
  * The spans the curve refuses to draw (levelCurve.ts's four refusals), as bands over the plot.
@@ -304,6 +409,7 @@ function CurveGaps({ curve, scale }: { curve: LevelCurve; scale: ChartScale }): 
             strokeWidth={1.5}
             strokeDasharray="3 4"
             opacity={0.85}
+            vectorEffect={CRISP}
           />
         </g>
       ))}
@@ -353,14 +459,19 @@ export function LevelStepChart({
   const scale = chrome.scale
   const hi = all.reduce((m, p) => Math.max(m, p.level), all[0].level)
   const lo = all.reduce((m, p) => Math.min(m, p.level), all[0].level)
-  // Baseline one level under the lowest observed ding: the fill follows the curve rather than
-  // reaching an arbitrary zero, so a low post-swap segment doesn't look like a crater. The TOP
-  // is the level the current bar is filling toward — an axis bound, not a claim to have reached
-  // it — which is what gives the live bar's fraction somewhere to be drawn.
-  const base = lo - 1
-  const top = Math.max(hi, Math.ceil(curve.hiY))
-  const y = (v: number): number => H - PAD_BOTTOM - ((v - base) / Math.max(1, top - base)) * (H - PAD_TOP - PAD_BOTTOM)
-  const floor = H - PAD_BOTTOM
+  // THE AXIS IS THE BAR (JOS-339, levelChartGeometry.levelAxis): the whole level the curve sits in,
+  // and the one it is filling toward. It used to open at `lo - 1` — a whole level of dead space
+  // under a curve that never goes there — and ceil up from the top, so a twelve-minute window
+  // inside one level got the middle fifth of the plot and read as a hairline. The two integers the
+  // chart prints are unchanged; the bottom one is now where it says it is instead of a level high.
+  // An empty curve keeps its own extent out of it: `loY`/`hiY` are 0 there, not "level zero".
+  const drawn = curve.runs.length > 0 || curve.dings.length > 0
+  const axis = levelAxis(drawn ? Math.min(lo, curve.loY) : lo, drawn ? Math.max(hi, curve.hiY) : hi, {
+    top: PAD_TOP,
+    bottom: H - PAD_BOTTOM
+  })
+  const y = (v: number): number => yOf(axis, v)
+  const floor = axis.bottom
 
   return (
     <div style={WRAP_STYLE} data-testid="leveling-level-chart" {...chrome.pointer}>
@@ -377,6 +488,7 @@ export function LevelStepChart({
                 fill="none"
                 stroke={color}
                 strokeWidth={2}
+                vectorEffect={CRISP}
               />
             </g>
           ))}
@@ -397,6 +509,7 @@ export function LevelStepChart({
                   strokeWidth={1}
                   strokeDasharray="3 4"
                   opacity={0.9}
+                  vectorEffect={CRISP}
                 />
                 <circle
                   data-testid="leveling-level-swap"
@@ -413,17 +526,14 @@ export function LevelStepChart({
             )}
           </g>
         ))}
-        <text x={PAD_X} y={PAD_TOP} fill={color} fontSize={10} opacity={0.7}>
-          {top}
-        </text>
-        {/* One visible level means one label: a window that contains no ding is a plateau, and
-            printing the same number top and bottom would read as a range that isn't one. */}
-        {lo !== top && (
-          <text x={PAD_X} y={floor - 2} fill={color} fontSize={10} opacity={0.7}>
-            {lo}
-          </text>
-        )}
       </svg>
+      {/* BOTH ENDS, ALWAYS, since JOS-339. The old pair was `top` and — only when they differed —
+          `lo`, because with a `lo - 1` baseline a plateau window would have printed the same number
+          at both ends and claimed a range that wasn't one. The axis is now the level's own bar, so
+          the two bounds always differ by construction and both of them mean something: the level
+          you are in, and the one you are filling toward. Same integers, honest positions, and out
+          of the stretched SVG so they read as numbers rather than smears. */}
+      <AxisLabels color={color} marks={[{ text: String(axis.hi), y: y(axis.hi) }, { text: String(axis.lo), y: y(axis.lo) }]} />
       <SelectionBand scale={scale} committed={chrome.range} draft={chrome.draft} color={color} />
       <LevelHoverLayer
         scale={scale}

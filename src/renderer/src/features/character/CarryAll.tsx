@@ -28,6 +28,15 @@
 // stored lane DEGRADES rather than errors (JOS-105): a value naming a lane this dump has no rows
 // for simply reads as "All".
 //
+// …AND JOS-329 FOUND THE HOLE IN THAT SENTENCE, WITHOUT CHANGING WHAT IT ARGUES. "Persisted" and
+// "not persisted" were being treated as the only two options, so the query was thrown away by every
+// TAB SWITCH as well as by every launch — and the first of those was never the intent. The argument
+// above is about what a NEW SESSION should open on, and it survives intact; what it needed was a
+// second tier to be true in. The query is on the SESSION tier now (`gear/areaMemory.ts`, whose rule
+// this paragraph is the original statement of): it comes back when you step to another module and
+// return, and it is gone when you next launch the app, which is exactly what the sentence above
+// asks for. The lane is unchanged, on the restart tier, under its own key.
+//
 // THE LIST IS WINDOWED AND THE BOX IS BOUNDED — `useWindowedRows` over a `tableLayout: fixed`
 // table whose every row is exactly `ROW_HEIGHT` tall (the fixed-height contract, lootRows.tsx),
 // inside its own `overflow: auto` scroller that takes the height the sheet above it leaves. A
@@ -52,6 +61,7 @@ import type { CarryAll as CarryAllData, CarryRow } from '@shared/carryAll'
 import { EQ_ITEM_COLORS } from '../../lib/ItemWindow'
 import { normalizeQuery } from '../../lib/search'
 import { useWindowedRows } from '../../lib/useWindowedRows'
+import { useRememberedSearch } from '../gear/useAreaMemory'
 
 /** Where the chip choice is remembered. Renderer-only and machine-local, like `eq.view`. */
 const LANE_KEY = 'eq.character.carryLane'
@@ -163,7 +173,7 @@ function loadLane(lanes: CarryAllData['lanes']): string | null {
 
 export default function CarryAll({ carry }: { carry: CarryAllData }): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
-  const [text, setText] = useState('')
+  const [text, setText] = useRememberedSearch('eq.character.search')
   // The initializer runs once, on mount — which is once per character rebuild, since the whole tab
   // is keyed on it. A dump that changes under a mounted tab keeps whatever lane is on screen.
   const [lane, setLane] = useState<string | null>(() => loadLane(carry.lanes))

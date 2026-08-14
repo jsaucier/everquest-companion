@@ -58,6 +58,17 @@ export type RateBasis = (typeof RATE_BASES)[number]
 /** ABSENT MEANS THIS — see the header for the ruling behind it. */
 export const RATE_BASIS_DEFAULT: RateBasis = 'elapsed'
 
+/**
+ * WHAT THE EXP SURFACES OPEN ON, before anybody has touched the control (owner ruling, JOS-332).
+ *
+ * IT IS THE SAME VALUE AS THE MODEL DEFAULT TODAY, and it is still written down separately — for
+ * `zoneScope.ts ZONE_SCOPE_OPENING`'s reason, where the two genuinely differ. The pair of knobs is
+ * now ONE app-wide selection (`shared/scopeSelection.ts`), so its opening has to be composed from
+ * two constants of the same kind; spelling one of them as "the default, which happens to also be
+ * the opening" would leave the next ruling about the hour with nowhere to land but a call site.
+ */
+export const RATE_BASIS_OPENING: RateBasis = RATE_BASIS_DEFAULT
+
 /** Is `v` one of the bases this build knows? The store's gate. */
 export function isRateBasis(v: unknown): v is RateBasis {
   return typeof v === 'string' && (RATE_BASES as readonly string[]).includes(v)

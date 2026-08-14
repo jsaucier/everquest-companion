@@ -19,7 +19,7 @@
 
 import { useCallback, useState } from 'react'
 import type { GearSortKey } from './gearFilter'
-import { sanitizeColumns, sanitizeControls, type GearControl } from './gearPrefs'
+import { GEAR_CONTROLS, sanitizeColumns, sanitizeControls, type GearControl } from './gearPrefs'
 
 const COLUMNS_KEY = 'eq.gear.columns'
 const CONTROLS_KEY = 'eq.gear.controls'
@@ -66,9 +66,23 @@ export function useGearPrefs(): GearPrefs {
     writeJson(COLUMNS_KEY, next)
   }, [])
 
+  /**
+   * THE CONTROLS CHOICE IS WRITTEN WITH THE VOCABULARY IT WAS MADE FROM (2026-08-13, the owner's
+   * "all filter controls enabled by default" ruling — `gearPrefs.LEGACY_GEAR_CONTROLS` carries the
+   * whole argument).
+   *
+   * Storing only the SHOWN list made the value a closed statement about the controls that existed
+   * when it was saved, so every control added afterwards read as one the user had hidden — which is
+   * how the Weapon type picker went missing for everybody who had used this picker before JOS-302
+   * added it. Recording `vocab` is what lets the reader tell "they hid this" from "they were never
+   * asked", and writing it HERE is what heals a legacy key: one touch of the picker upgrades it.
+   *
+   * `next === null` still REMOVES the key, because no-choice and an empty choice are different
+   * statements (the header, and gearPrefs.ts's absent-is-not-empty law).
+   */
   const setControls = useCallback((next: GearControl[] | null) => {
     setControlsState(next)
-    writeJson(CONTROLS_KEY, next)
+    writeJson(CONTROLS_KEY, next === null ? null : { shown: next, vocab: [...GEAR_CONTROLS] })
   }, [])
 
   return { columns, setColumns, controls, setControls }

@@ -13,6 +13,7 @@ import type {
   OverlayKind
 } from '../shared/types'
 import { OVERLAY_KINDS } from '../shared/types'
+import type { ScopeSelection } from '../shared/scopeSelection'
 import type { ToastPayload } from '../shared/toast'
 
 export type { CombatSnapshot, SnapshotOpts, OverlayConfig, OverlayDrill, OverlayKind, MobKnowledge }
@@ -128,6 +129,25 @@ const overlayApi = {
     const listener = (_e: unknown, s: { fightId: string }): void => cb(s)
     ipcRenderer.on(IPC.onFightSelection, listener)
     return () => ipcRenderer.removeListener(IPC.onFightSelection, listener)
+  },
+
+  // ---- the app-wide SCOPE selection (JOS-332) ----
+  // THE SAME THREE MEMBERS, UNDER THE SAME NAMES, as the main app's bridge (preload/windows.ts) —
+  // the fight-selection trio's arrangement, applied to the second cross-window fact. That
+  // structural identity is what lets ONE renderer hook (`useScopeSelection`) drive the Leveling
+  // tab's tier/basis row and this window's footer buttons, and it is what the owner's report was
+  // about: `elapsed 27m` on the tab under a *this tier* the tab had never been told about.
+  //
+  // NOT the slice: `xpSlice` stays this window's own persisted business (shared/types.ts).
+  /** The membership + denominator in force everywhere. */
+  getScopeSelection: (): Promise<ScopeSelection> => ipcRenderer.invoke(IPC.scopeSelectionGet),
+  /** "The user moved one of these knobs." A PARTIAL — the half you do not mention does not move. */
+  setScopeSelection: (patch: Partial<ScopeSelection>): void => ipcRenderer.send(IPC.scopeSelectionSet, patch),
+  /** Subscribe to scope changes made in ANY window. Payload is the whole selection. */
+  onScopeSelection: (cb: (s: ScopeSelection) => void): (() => void) => {
+    const listener = (_e: unknown, s: ScopeSelection): void => cb(s)
+    ipcRenderer.on(IPC.onScopeSelection, listener)
+    return () => ipcRenderer.removeListener(IPC.onScopeSelection, listener)
   },
 
   /** Set locked (click-through) vs interactive for this kind. Persisted + applied to the window. */

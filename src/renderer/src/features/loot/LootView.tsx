@@ -37,7 +37,6 @@ import { useBackTarget } from '../../appBack'
 import { useWindowedRows } from '../../lib/useWindowedRows'
 import { itemCountKey } from '../../lib/itemName'
 import type { InventoryRow } from '../inventory/reconcile'
-import { useFavorites } from '../favorites/useFavorites'
 import { useProgress } from '../posky/useProgress'
 import { ItemDetailPane } from './ItemDetailPane'
 import { itemStats, questItemNames } from './lootItemData'
@@ -235,7 +234,6 @@ function LootLedgerBody({
 }
 
 export default function LootView(props: LootViewProps = {}): JSX.Element {
-  const { isFavorite, toggle: toggleFavorite } = useFavorites()
   // ONE subscription to the loot module: useProgress already owns it (and needs it for the
   // reconcile), so the merged view reads its history from there rather than holding a
   // second copy of the full loot snapshot.
@@ -274,8 +272,7 @@ export default function LootView(props: LootViewProps = {}): JSX.Element {
     query,
     questOnly,
     showInventoryOnly,
-    sort,
-    isFavorite
+    sort
   })
   const { events, grouped, groupRows, invOnlySource, invOnlyRows, invByKey } = rows
 
@@ -344,7 +341,7 @@ export default function LootView(props: LootViewProps = {}): JSX.Element {
         groupByItem={groupByItem}
         groupRows={groupRows}
         events={events}
-        ctx={{ isFavorite, knowledgeByKey, invByKey, onToggleFavorite: toggleFavorite, onSelect: detail.open }}
+        ctx={{ knowledgeByKey, invByKey, onSelect: detail.open }}
       />
 
       <Snackbar

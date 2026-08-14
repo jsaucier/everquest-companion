@@ -204,6 +204,31 @@ export const IPC = {
   // all overlay kinds; a window with no fight-scoped surface simply has no listener.
   onFightSelection: 'fightSelection:changed',
 
+  // ---- THE APP-WIDE SCOPE SELECTION (JOS-332) ----
+  // WHICH TIERS of the current camp count, and WHICH HOUR every rate divides by. One answer for the
+  // main window and the XP overlay together, because they are separate renderer processes showing
+  // the same two words to the same reader — the owner read `elapsed 27m` off the tab with *this
+  // tier* on screen and the two states were simply not the same state (shared/scopeSelection.ts
+  // carries the measured story). Main holds it EPHEMERALLY (src/main/scopeSelection.ts — the
+  // opening at every launch, never stored) and is the only process that can reach every window,
+  // which is the fight-selection argument above, verbatim, for the second fact to need it.
+  //
+  // THE SLICE IS NOT HERE, on purpose: which STRETCH a floating window measures stays its own
+  // persisted `xpSlice` (shared/types.ts states why). These two channels carry the pair that must
+  // agree, and nothing else.
+  //
+  // renderer(any window) -> main: read the current selection, for hydrating a window that mounted
+  // after the last change. Returns a whole `ScopeSelection`.
+  scopeSelectionGet: 'scopeSelection:get',
+  // renderer(any window) -> main, FIRE-AND-FORGET: "the user moved one of these knobs". The payload
+  // is a PARTIAL — each control sets one half and must not restate the other — and is REBUILT AT
+  // THE HANDLER against the shared model (`normalizeScopePatch`): an unknown key, a missing one or
+  // a value this build cannot name is dropped rather than fanned out.
+  scopeSelectionSet: 'scopeSelection:set',
+  // main -> EVERY window: the selection changed. Payload is the whole `ScopeSelection`. Sent to the
+  // main window and all overlay kinds; a window with no scoped surface simply has no listener.
+  onScopeSelection: 'scopeSelection:changed',
+
   // ---- cursor ring + overlay auto-hide (presence-driven settings) ----
   // Both blobs are main-owned (electron-store), so Preferences has no other door. The setters
   // are MERGE-PATCHES and every field is re-validated + clamped AT THE HANDLER through
@@ -346,8 +371,8 @@ export const IPC = {
   plannerInventory: 'planner:inventory',
 
   // ---- gear planner (JOS-283, phase 2) ----
-  // renderer -> main: the GEAR CANDIDATE INDEX — one row per equippable item (~6,858 of the
-  // corpus's 11,161 pages), carrying slots/classes/races/era/flags/effects, the weapon block and
+  // renderer -> main: the GEAR CANDIDATE INDEX — one row per equippable item (~6,884 of the
+  // corpus's 11,213 pages), carrying slots/classes/races/era/flags/effects, the weapon block and
   // the NUMERIC BASE stat vector. Returns GearIndexPayload (versioned; see shared/planner/gear.ts).
   // Built in main for the same reason the donor index is — items.json is already inlined here, so
   // shipping the corpus to the renderer would double it — LAZILY on first call and memoized for
@@ -379,6 +404,18 @@ export const IPC = {
   // the same validator runs on the way out, so the round trip is a fixed point.
   gearGetSets: 'gear:getSets',
   gearSetSets: 'gear:setSets',
+
+  // ---- the flat wish list (JOS-326) ----
+  // The active character's WISH LIST — a flat list of items they have decided they want, with no
+  // cell, socket or host structure at all (shared/planner/wishlist.ts), plus the two facts that
+  // hang off it: the done strip's dismissals and the one-time exaltation-plan seed flag. Read/write
+  // pair over `ProgressState.wishlist`, the same arrangement as the two documents above — the
+  // renderer is UNTRUSTED, so a written list is re-validated entry by entry
+  // (src/main/planner/validate.ts sanitizeWishlist) before a byte of it reaches the store, and the
+  // same validator runs on the way out, so the round trip is a fixed point. WHOLE-DOCUMENT, because
+  // the list and the two facts about it must move together or not at all.
+  wishlistGet: 'wishlist:get',
+  wishlistSet: 'wishlist:set',
 
   // ---- character sheet (JOS-45) ----
   // renderer -> main: the armory grid + the gear sum, built from the active character's newest

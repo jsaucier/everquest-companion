@@ -17,7 +17,7 @@
 //      pinned here token for token; the in/out claim is a MIRROR of `Template:PageEra` and is
 //      pinned key for key against the switch this file quotes.
 //
-// WHAT THE OVERRIDE DOES TO THE 11,351 COMMITTED ITEM KEYS is the sibling file's job:
+// WHAT THE OVERRIDE DOES TO THE 11,375 COMMITTED ITEM KEYS is the sibling file's job:
 // `tests/plannerEraCorpus.test.mts` sweeps the corpus, enumerates every verdict this rule changed,
 // and proves the change is one-directional. This file stays on the rules themselves.
 //

@@ -21,11 +21,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ClassAbbr } from '@shared/classCombo'
 import { resolvedClasses } from '@shared/classCombo'
-import { ITEM_UPGRADE_BASE, type ItemUpgradeState } from '@shared/itemUpgrade'
+import type { ItemUpgradeState } from '@shared/itemUpgrade'
 import { GEAR_INDEX_VERSION, type GearBuildStats, type GearRow } from '@shared/planner/gear'
 import { NO_OWNERSHIP, type OwnershipPayload } from '@shared/planner/ownership'
 import { useLootHistory } from '../loot/useLootHistory'
 import { useComboSnap } from '../profiles/ClassComboData'
+// JOS-338: the caller `features/planner/plannerInventory.ts` has been asking for since JOS-326 —
+// see `useGearCompare` for why this channel and not the ownership payload beside it.
+import { usePlannerInventory } from '../planner/plannerInventory'
+import { outputUpdatedMillis } from '../../lib/outputFreshness'
+import { equippedIndex, type EquippedIndex } from './gearCompare'
 // ONE era verdict for the whole app: the exaltation browser's, reached through the same three
 // witnesses (mob catalog ∪ the page's own drop list ∪ the era banner). A `GearRow` carries `key`,
 // `wikiSources` and `eraTag`, which is exactly what an `EraSubject` is — so this is a call, never
@@ -34,6 +39,9 @@ import { eraChip, eraHides, type EraChipInfo } from '../planner/plannerData'
 import { sourceIndex } from '../planner/sourceIndex'
 import { sameClasses } from '../planner/plannerClasses'
 import { gearOwnershipMap, ownershipFor, type GearOwnershipMap } from './gearOwnership'
+// JOS-329: the two pieces of state below survive a tab switch now — see each one's own comment.
+import { sanitizeGearClasses, sanitizeUpgrade } from './areaMemory'
+import { useRemembered } from './useAreaMemory'
 
 // ---- the fetch ----------------------------------------------------------------------
 
@@ -123,7 +131,7 @@ export function useEraHidden(): { eraHidden: (row: GearRow) => boolean } {
  * the push). The loot history is already in this window as a module snapshot and moves with every
  * kill. Both feed ONE memo, so the join is rebuilt when either witness moves and NEVER on a
  * keystroke, a sort, or a drag of the plus-state slider — ownership does not depend on any of
- * those, and a 6,766-row table would re-join on all three.
+ * those, and a 6,814-row table would re-join on all three.
  *
  * MAIN MEMOIZES ITS HALF ON THE FILE'S IDENTITY (ipc/planner.ts), so re-asking is a stat and not
  * a re-fold. The two caches answer different questions: main's says "the dump has not moved",
@@ -179,6 +187,66 @@ export function useGearOwnership(): GearOwnershipState {
   return { map, payload, readAt }
 }
 
+// ---- the comparison join (JOS-338) ------------------------------------------------------
+
+/**
+ * WHAT THE HOVER CARD IS HANDED: what you are WEARING, the corpus by key, and when you exported.
+ *
+ * THE SEAM IS `plannerInventory`, AND IT IS THE ONE THIS FEATURE WANTED. Two channels could have
+ * answered "what is in that slot": this one, and `gearOwnership`'s payload, whose `OwnershipRow`
+ * carries an equipped row's `slot` too. The ownership payload is keyed BY ITEM (itemKey → rows), so
+ * reading it by slot means inverting the whole index in the renderer — and it stops at the SLOT,
+ * deliberately ("cell assignment is `equippedHosts`' job and is not repeated here"), which is
+ * exactly the half this card needs: two ears are two comparisons. `plannerInventory` already
+ * answers in CELLS, already carries `itemKey` (main's definition, applied in the handler) and
+ * already carries the dump's mtime for the freshness line, so it is one call and no new rule.
+ *
+ * AND IT WAS CALLER-LESS. `features/planner/plannerInventory.ts` has said in writing since JOS-326
+ * that its whole channel — the hook, `IPC.plannerInventory`, the handler and the preload method —
+ * had no reader left and wanted either a caller or a four-file retirement. This is the caller.
+ *
+ * COST: one IPC per mount and one per `inventory:autoReloaded`, which is one parse of a ~300-line
+ * file in main (the handler declines to cache on purpose — its header says why). Nothing here is
+ * per row, per keystroke or per slider tick: the two maps are memos over data that moves only when
+ * the corpus arrives or the player re-exports.
+ */
+export interface GearCompareData {
+  /** cell → the item worn in it, from the newest dump; empty when there is no dump */
+  equipped: EquippedIndex
+  /** the whole corpus by `itemKey`, so a WORN item's numbers are read in the same vocabulary */
+  byKey: ReadonlyMap<string, GearRow>
+  /** the dump's own mtime in epoch ms — when the PLAYER exported. Absent when they never have */
+  exportedAt: number | undefined
+  /** this character has a dump at all. `false` is the run-the-command hint, never "wearing nothing" */
+  hasDump: boolean
+  /** false until the first read settles — the card draws neither half rather than guessing */
+  ready: boolean
+  /** the plus-state the TABLE is simulating, so the card can admit that its item half is one */
+  state: ItemUpgradeState
+}
+
+export function useGearCompare(rows: readonly GearRow[], state: ItemUpgradeState): GearCompareData {
+  const { inventory, ready } = usePlannerInventory()
+  // Keyed on the ARRAY identity, which `useGearIndex` holds stable for the life of the window (the
+  // fetch is cached), so this 6,766-entry map is built once per window and never per hover.
+  const byKey = useMemo(() => new Map(rows.map((row) => [row.key, row])), [rows])
+  const equipped = useMemo(() => equippedIndex(inventory?.hosts ?? []), [inventory])
+  // ONE OBJECT, MEMOIZED, because `GearLine` is `memo`'d and this is one of its props: a fresh
+  // literal per render would defeat the memo on every keystroke of the search box, across a whole
+  // screenful of rows (the `handlers` object in GearTable.tsx is the same bargain).
+  return useMemo(
+    () => ({
+      equipped,
+      byKey,
+      exportedAt: outputUpdatedMillis(inventory?.loadedAt),
+      hasDump: inventory !== null,
+      ready,
+      state
+    }),
+    [equipped, byKey, inventory, ready, state]
+  )
+}
+
 /**
  * The owned filter as the pure model wants it — the same injected-predicate shape `useEraHidden`
  * returns, and stable while the join is, so `filterGearRows`' memo can key on it.
@@ -206,21 +274,42 @@ export function gearEraChip(row: GearRow): EraChipInfo | null {
 // ---- the global plus-state ------------------------------------------------------------
 
 /**
- * THE UPGRADE SIMULATION'S STATE, and the one design decision in it: IT IS NOT PERSISTED.
+ * THE UPGRADE SIMULATION'S STATE — AND THE ONE DESIGN DECISION IN IT, NOW REVERSED BY THE OWNER.
  *
- * Every other planner preference is remembered machine-side (`eq.planner.*`) because every other
- * one is a way of READING the corpus. This one changes what the corpus SAYS — at `+5` the table
- * states numbers no item in your bags has — so a tab that silently reopened at +5 would be lying
- * quietly, and the lie would be invisible precisely because the slider is the thing you stopped
- * looking at. It resets to base on every mount, which is the state the data is actually in.
+ * THE OLD LAW (JOS-284, and it stood until 2026-08-13): IT IS NOT PERSISTED. Every other planner
+ * preference is remembered machine-side (`eq.planner.*`) because every other one is a way of
+ * READING the corpus. This one changes what the corpus SAYS — at `+5` the table states numbers no
+ * item in your bags has — so a tab that silently reopened at +5 would be lying quietly, and the lie
+ * would be invisible precisely because the slider is the thing you stopped looking at. It reset to
+ * base on every mount, which is the state the data is actually in.
+ *
+ * THE OWNER RULING OF 2026-08-13 (JOS-329) OVERRIDES THAT LAW. The report named the slider in the
+ * same breath as the filters and the sort — *we're losing everything right now* — and the slider
+ * was losing its position on every tab switch along with them, which is the half of the old law
+ * nobody had priced: the argument above is about what a NEW SESSION should open on, and it was
+ * being paid for by a control that also forgot itself when you glanced at the Loot tab.
+ *
+ * THE OLD ARGUMENT IS ANSWERED, NOT MERELY OUTVOTED, and it is worth writing down which premise
+ * failed: **the lie was never quiet.** `UpgradeSlider` renders a permanent label saying exactly what
+ * is being simulated, in the item window's own words — `Tier 2  3/4  +27.5%` — and it is on screen
+ * from the first paint of every mount (`gear-upgrade-label`, which the e2e reads). A restored
+ * plus-state ANNOUNCES itself. What the old law was really defending against was state you could
+ * not see, and this control is the opposite of that; the two remaining ways to be at a non-base
+ * plus without knowing are both closed already, because hiding the control via the JOS-297 filters
+ * picker puts the corpus back at base (`GearView`'s `visible.has('upgrade')` clamp) and the value
+ * is validated back to a legal state on every read.
+ *
+ * SO IT JOINS THE REST OF THE FORM, on the RESTART tier (`areaMemory.ts` states the split and
+ * `sanitizeUpgrade` states the validation, which is `normalizeUpgradeState` and never a second
+ * opinion).
  */
 export function useUpgradeState(): {
   state: ItemUpgradeState
   /** the value the CONTROL echoes — see GearView on why the table reads a deferred copy */
   set: (next: ItemUpgradeState) => void
 } {
-  const [state, setState] = useState<ItemUpgradeState>(ITEM_UPGRADE_BASE)
-  return { state, set: setState }
+  const [state, set] = useRemembered<ItemUpgradeState>('eq.gear.upgrade', sanitizeUpgrade)
+  return { state, set }
 }
 
 // ---- the class combo -------------------------------------------------------------------
@@ -246,6 +335,20 @@ export function useUpgradeState(): {
  * default, so an untouched Gear tab opens NARROWED to the classes the app infers you are running.
  * That is the reading a gear planner wants, and it is visible in three places at once — the chips
  * in the picker, the "N of 6,814 items" count line, and `GearView.emptyText` when it goes to zero.
+ *
+ * AND SINCE JOS-329 THE PIN SURVIVES THE TAB SWITCH THAT USED TO ERASE IT. `pinned` was `useState`,
+ * so every visit to another module handed the filter back to detection — silently, and looking
+ * exactly like the app changing its mind about your loadout. It is on the RESTART tier now
+ * (`eq.gear.classes`), and the THREE-VALUED shape is what needed the care: `null` is FOLLOWING and
+ * an empty list is PINNED TO NOTHING, which are different statements and are stored differently
+ * (the key is absent for the first). `sanitizeGearClasses` owns that distinction and the closed
+ * allowlist; this hook only decides what to write.
+ *
+ * IT IS DELIBERATELY *NOT* SHARED WITH `eq.planner.classes`, the Exaltations browser's own trio.
+ * Two surfaces, two questions: the browse filter is "who am I collecting exaltations for" and this
+ * one is "who am I reading the gear table for", and JOS-302 made this one NARROW the corpus while
+ * that one still only lights chips. Folding them onto one key would make a click on either tab
+ * silently re-filter the other.
  */
 export interface GearClasses {
   /** the classes the filter is reading for */
@@ -268,14 +371,19 @@ export function useGearClasses(): GearClasses {
   // An unresolved slot contributes nothing, so a half-known combo yields the classes it does know
   // and nothing it does not (law 1) — the same read PlannerView makes.
   const detected = useMemo(() => (current === null ? [] : resolvedClasses(current)), [current])
-  const [pinned, setPinned] = useState<ClassAbbr[] | null>(null)
+  const [pinned, setPinned] = useRemembered<ClassAbbr[] | null>('eq.gear.classes', sanitizeGearClasses)
 
-  const set = useCallback((next: ClassAbbr[]) => {
-    setPinned(next)
-  }, [])
+  const set = useCallback(
+    (next: ClassAbbr[]) => {
+      setPinned(next)
+    },
+    [setPinned]
+  )
+  // ADOPTING THE OFFER PINS, and always did: taking today's detection is accepting one answer, not
+  // handing the filter back to inference forever (the `useBrowseClasses.adopt` rule, stated there).
   const adopt = useCallback(() => {
     setPinned(detected)
-  }, [detected])
+  }, [detected, setPinned])
 
   const classes = pinned ?? detected
   const offer = pinned !== null && detected.length > 0 && !sameClasses(pinned, detected) ? detected : null

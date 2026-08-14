@@ -6,7 +6,7 @@
 // window positions, and no character progress — those are machine/character state and the
 // exporter never reads them.
 
-import { type JSX, useCallback, useEffect, useState } from 'react'
+import { type JSX, useCallback, useState } from 'react'
 import { Alert, Box, Button, Chip, Snackbar, Stack, Typography } from '@mui/material'
 import ContentCopyIcon from '@mui/icons-material/ContentCopy'
 import SaveAltIcon from '@mui/icons-material/SaveAlt'
@@ -14,6 +14,7 @@ import FileUploadIcon from '@mui/icons-material/FileUpload'
 import type { ShareApplyResult } from '@shared/profiles'
 import { copyText } from '../../lib/clipboard'
 import { readUiPrefs } from '../../lib/uiPrefs'
+import { usePrefsSeed } from '../preferences/prefsHydration'
 import ShareImportDialog from './ShareImportDialog'
 
 /** What a bundle contains, stated as fact so the user knows what they're handing over. */
@@ -21,19 +22,13 @@ const INCLUDES = ['alerts', 'alert volume + mute', 'overlay look', 'view prefere
 const EXCLUDES = ['EverQuest folder', 'window positions', 'character progress', 'sound pack files']
 
 export function ExportSettingsSetting(): JSX.Element {
-  const [alertCount, setAlertCount] = useState(0)
+  // SEEDED from the Preferences pane's hydration snapshot (JOS-340). It used to mount on ZERO and
+  // correct itself, so the sentence describing what a user is about to hand over began life
+  // saying they had no alerts. That is not a control, but it is a CLAIM ABOUT THEIR DATA, and a
+  // claim that is wrong for a frame is the same defect as a switch that is.
+  const alertCount = usePrefsSeed().alertCount
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState<{ severity: 'success' | 'warning'; text: string } | null>(null)
-
-  useEffect(() => {
-    let alive = true
-    void window.eq.listAlerts().then((a) => {
-      if (alive) setAlertCount(a.length)
-    })
-    return () => {
-      alive = false
-    }
-  }, [])
 
   const copy = useCallback(async () => {
     setBusy(true)

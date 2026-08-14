@@ -17,7 +17,8 @@
 // tab: *ALL stats should be there*). The derivation was a bet that asking about a stat is the only
 // way anyone says they want to see it, and the bet was wrong: a player comparing two breastplates
 // wants the seven attributes on screen without inventing seven thresholds to conjure them. So the
-// picker offers the WHOLE vocabulary (`PICKABLE_COLUMNS` — every `GearStatKey` plus `RATIO`) and
+// picker offers the WHOLE vocabulary (`PICKABLE_COLUMNS` — every `GearStatKey`, plus the DERIVED
+// `RATIO` and, since JOS-336, `EFF_HP`) and
 // an explicit choice WINS; absent a choice the derivation still runs, which is what keeps the tab's
 // first screen what it was. The distinction the storage layer has to preserve is therefore ABSENT
 // vs EMPTY: no stored key means "derive", a stored `[]` means "the user asked for no numeric
@@ -138,7 +139,16 @@ export interface GearColumn {
 
 const PERCENT_KEYS: ReadonlySet<string> = new Set<string>(GEAR_PERCENT_STAT_KEYS)
 
-/** `HP_REGEN` → `HP REGEN`, `RATIO` → `Ratio`. The underscore is a key's spelling, not a word. */
+/**
+ * `HP_REGEN` → `HP REGEN`, `RATIO` → `Ratio`. The underscore is a key's spelling, not a word.
+ *
+ * `EFF_HP` DELIBERATELY HAS NO ARM OF ITS OWN (JOS-336): the underscore rule already spells it
+ * `EFF HP`, which is the label the ticket asked for and the same shouted-abbreviation voice
+ * `SV MAGIC` and `HP REGEN` already speak. Adding a special case to produce a string the default
+ * already produces would be a second place to keep the same word. Six characters also clears the
+ * `MAX_NUMERIC_WIDTH` ceiling by a wide margin — it is shorter than the ten-character `SV DISEASE`
+ * this table has drawn since JOS-297, and the 8% ceiling was measured against a header that fits.
+ */
 export function columnLabel(key: GearSortKey): string {
   if (key === 'RATIO') return 'Ratio'
   if (key === 'name') return 'Item'
@@ -150,17 +160,28 @@ function column(key: GearSortKey): GearColumn {
 }
 
 /**
- * EVERY KEY THE PICKER OFFERS, in the corpus's own order with `RATIO` standing beside the two
- * numbers it is made of. Thirty-three: the thirty-two indexed stats — the seven attributes, the
+ * EVERY KEY THE PICKER OFFERS, in the corpus's own order with each DERIVED key standing beside the
+ * numbers it is made of. Thirty-four: the thirty-two indexed stats — the seven attributes, the
  * pools, the regens, Attack, Haste, the ten saves, the weapon block and weight — plus the derived
- * ratio. `name` is NOT in it: the item column is not optional, it is what a row IS.
+ * ratio (after DELAY, the second of its two inputs) and the derived effective HP (after HP, likewise
+ * the second of its two — STA leads the attribute run and HP closes the gap to the pools, so `EFF HP`
+ * lands directly under both halves of its own sum). `name` is NOT in it: the item column is not
+ * optional, it is what a row IS.
+ *
+ * PLACEMENT IS THE ONLY DOCUMENTATION A CHECKBOX LIST GETS. A picker is a flat column of labels with
+ * no room to explain that `EFF HP` is not a stat the wiki prints, so sitting it against `STA` and
+ * `HP` is how a reader is told what it is made of — the same argument that put `Ratio` after `DELAY`
+ * rather than at the end of the list, and the reason both toggles and both column orders follow
+ * this array (`toggleColumn` filters through it).
  *
  * DERIVED FROM `GEAR_STAT_KEYS`, never re-typed. A rescrape that widens the vector widens the
  * picker in the same commit, which is the only way "all stats" can stay true.
  */
-export const PICKABLE_COLUMNS: readonly GearSortKey[] = GEAR_STAT_KEYS.flatMap<GearSortKey>((key) =>
-  key === 'DELAY' ? [key, 'RATIO'] : [key]
-)
+export const PICKABLE_COLUMNS: readonly GearSortKey[] = GEAR_STAT_KEYS.flatMap<GearSortKey>((key) => {
+  if (key === 'DELAY') return [key, 'RATIO']
+  if (key === 'HP') return [key, 'EFF_HP']
+  return [key]
+})
 
 /**
  * The numeric columns for this sort: the core, then the sort key if it is not already one of them.
@@ -265,6 +286,12 @@ export function gearTableLayout(count: number, hasOwned: boolean): GearTableLayo
  * A cell's text. ABSENT RENDERS BLANK, never `0` and never a dash: the vector omits a key the item
  * never stated (law 1), and printing `0` would be this table inventing a stat line the wiki does
  * not have. A blank cell in a dense numeric grid reads as "states none", which is what it means.
+ *
+ * `EFF_HP` TAKES THE PLAIN-INTEGER DEFAULT ON PURPOSE (JOS-336) — no arm, no rounding, no unit. Both
+ * of its inputs are `primary`-class stats whose scaled values are whole numbers by construction
+ * (`scalePrimary` ends in a `Math.floor`), so their sum is a whole number too and a `toFixed` would
+ * only add a decimal point nothing behind it can move. The two arms that DO exist are the two keys
+ * whose values are not integers at all: a ratio is a quotient and a weight is stated to a tenth.
  */
 export function statText(value: number | undefined, key: GearSortKey): string {
   if (value === undefined) return ''
@@ -274,7 +301,14 @@ export function statText(value: number | undefined, key: GearSortKey): string {
   return String(value)
 }
 
-/** The stat keys a column list draws, for a caller that only needs the vector keys. */
+/**
+ * The stat keys a column list draws, for a caller that only needs the vector keys.
+ *
+ * EVERY DERIVED KEY DROPS OUT, and the compiler is what enforces it: `GearSortKey` carries `RATIO`
+ * and `EFF_HP` alongside the vector's own keys, neither of them is a field of `GearStats`, and the
+ * return type is `GearStatKey[]` — so a derived key added to the vocabulary without a line here
+ * fails to typecheck rather than quietly asking the vector for a field it does not have.
+ */
 export function statKeysOf(columns: readonly GearColumn[]): GearStatKey[] {
-  return columns.flatMap((c) => (c.key === 'name' || c.key === 'RATIO' ? [] : [c.key]))
+  return columns.flatMap((c) => (c.key === 'name' || c.key === 'RATIO' || c.key === 'EFF_HP' ? [] : [c.key]))
 }

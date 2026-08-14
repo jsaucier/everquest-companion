@@ -152,7 +152,9 @@ export const DEFAULT_GEAR_TAB: View = 'gear'
  * above, no edit down here, and no window in which the bar offered a tab that mounts nothing.
  */
 export const GEAR_AREA_VIEWS: readonly View[] = (
-  ['gear', 'planner', 'wishlist', 'character'] as const
+  // Character sits LEFT of Wish list, in the run with everything else (owner ruling 2026-08-13:
+  // the right-pushed placement hid the tab well enough that the owner reported it missing).
+  ['gear', 'planner', 'character', 'wishlist'] as const
 ).filter((v) => (KNOWN_VIEWS as readonly View[]).includes(v))
 
 /** Is this view drawn inside the gear area? (⇒ the nav row reads selected, the tab bar is up.) */

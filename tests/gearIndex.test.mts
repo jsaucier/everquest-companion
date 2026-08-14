@@ -1,18 +1,18 @@
 // GEAR PLANNER — the candidate index, asserted against the REAL committed corpus
-// (src/main/data/items.json, the 2026-08-05 scrape: 11,247 records / 11,351 keys / 11,161 pages).
-// JOS-283, phase 2. Nothing skips, nothing is mocked, no Electron: `gearIndex.ts` is
-// Electron-free on purpose (the effectIndex precedent) and this runs the SHIPPED builder over the
-// SHIPPED bytes, because "the gear table is empty" and "every weapon lost its ratio" are failures
-// of this function that no hand-written fixture could see.
+// (src/main/data/items.json, the 2026-08-13T20:39 scrape: 11,288 records / 11,375 keys / 11,213
+// pages the builder walks). JOS-283, phase 2. Nothing skips, nothing is mocked, no Electron:
+// `gearIndex.ts` is Electron-free on purpose (the effectIndex precedent) and this runs the SHIPPED
+// builder over the SHIPPED bytes, because "the gear table is empty" and "every weapon lost its
+// ratio" are failures of this function that no hand-written fixture could see.
 //
-// WHAT THE 2026-08-13 BUILD MEASURED (printed on every run — a wave that halves it should be able
-// to watch itself do that):
+// WHAT THE 2026-08-13 (JOS-328 rescrape) BUILD MEASURED (printed on every run — a wave that halves
+// it should be able to watch itself do that):
 //
-//     6,766 rows from 11,161 pages — 4,300 placed in no slot, 95 pages collapsed into another
-//     page's item key, 190 `|itemname` alias keys skipped
-//     1,709 weapons · 1,228 effect-bearing rows · 3,255 rows that gain the synthetic SV VOID
-//     16,235 integer stat values · 64 percents (HASTE, and only HASTE) · 30 range triples kept
-//     as text · 5 stat values no parse could read · 0 unknown slot tokens
+//     6,814 rows from 11,213 pages — 4,329 placed in no slot, 70 pages collapsed into another
+//     page's item key, 162 `|itemname` alias keys skipped
+//     1,709 weapons · 1,229 effect-bearing rows · 3,268 rows that gain the synthetic SV VOID
+//     16,321 integer stat values · 64 percents (HASTE, and only HASTE) · 30 range triples kept
+//     as text · 6 stat values no parse could read · 0 unknown slot tokens
 //
 // The COUNTS are floors and identities (AGENTS.md "frozen numbers rot" — the wiki gains item pages
 // and a rescrape must be able to grow this file without turning it red). The CENSUSES are
@@ -21,7 +21,7 @@
 // leaving the gear table, and it should stop the suite instead.
 //
 // THE LOAD-BEARING TEST IS `scaling a row is a pure map` BELOW. The whole feature rests on being
-// able to answer "what does this item read at +N" for 6,766 rows without rebuilding anything, so
+// able to answer "what does this item read at +N" for 6,814 rows without rebuilding anything, so
 // that test re-derives the answer the SLOW way — `scaleStatBlock` over the item's own parsed stat
 // block, phase 0's own API — for every equippable item in the corpus at four states, and demands
 // the vector agree on every key it carries. It is the reason the row shape is allowed to exist.

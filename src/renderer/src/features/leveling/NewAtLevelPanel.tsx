@@ -33,8 +33,16 @@
 // AND THE LISTS BELOW ARE AS TALL AS THEY NEED TO BE (JOS-289). `UnlockList` was a 120px windowed
 // porthole — the surface the owner named as cramped — and is now plain rows at their honest
 // height, with the full `SpellTooltip` card behind every spell name.
+//
+// A TOAST'S DEEP LINK NOW LANDS ON THIS PANEL RATHER THAN NEAR IT (JOS-330). The two consequences
+// of the layout above met here: the page is one tall scroller and this panel is the BOTTOM of the
+// left column, so a link that mounted the tab and set the level left the reader at the top of a
+// screen of charts with the answer a screen and a half below the fold. `useFocusLanding` (its own
+// file, and its header carries the reasoning) scrolls this Paper fully into the app's one scroller
+// and pulses its edge for two seconds on arrival — on EVERY link, including a repeat of the same
+// level, and on no plain tab switch at all.
 
-import { type JSX, useEffect, useRef, useState } from 'react'
+import { type JSX, useState } from 'react'
 import { Box, IconButton, Paper, Stack, Typography, Chip } from '@mui/material'
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'
 import ChevronRightIcon from '@mui/icons-material/ChevronRight'
@@ -43,6 +51,7 @@ import { Tooltip } from '../../lib/Tooltip'
 import { ProvenanceChip } from '../profiles/ClassComboChips'
 import { useComboSnap } from '../profiles/ClassComboData'
 import { UnlockList } from './UnlockList'
+import { LANDING_PULSE_SX, useFocusLanding } from './useFocusLanding'
 import { useCurrentComboClasses, useLevelUnlocks } from './useLevelUnlocks'
 
 /** The band the stepper walks. 1..63 is what the DB states; the ceiling leaves room to grow. */
@@ -149,18 +158,17 @@ export function NewAtLevelPanel({
   const [picked, setPicked] = useState<number | null>(null)
   const level = clampLevel(picked ?? currentLevel ?? LEVEL_MIN)
 
-  // The deep link (appRouting `openLeveling`). Keyed on the NONCE, and consumed the moment it is
-  // applied, so returning to this tab later does not re-jump to a level the user has stepped off.
-  // It SCROLLS ITSELF INTO VIEW too: the panel lives under the charts, and a toast click that
-  // landed you on the tab without showing you the thing you clicked for would be a broken link.
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (focusLevel === null) return
-    setPicked(clampLevel(focusLevel))
-    ref.current?.scrollIntoView({ block: 'nearest' })
+  // THE DEEP LINK (appRouting `openLeveling`), and the whole arrival lives in `useFocusLanding`.
+  // Keyed on the NONCE and consumed the moment it is applied, so returning to this tab later does
+  // not re-jump to a level the user has stepped off — and so the same level asked for twice
+  // arrives twice. The hook adds the two halves JOS-330 was about: it SCROLLS the panel into the
+  // app's one scroller (this panel is the bottom of the left column since JOS-300, so a link that
+  // only switched tabs left the reader looking at charts) and LIGHTS it briefly on arrival. Read
+  // that file for why the scroll rides React's commits rather than `requestAnimationFrame`.
+  const landing = useFocusLanding(focusLevel !== null, focusNonce, () => {
+    if (focusLevel !== null) setPicked(clampLevel(focusLevel))
     onFocusConsumed()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusNonce])
+  })
 
   const unlocks = unlocksAtLevel(data, combo, level)
   const classes = comboClassSet(combo)
@@ -168,7 +176,19 @@ export function NewAtLevelPanel({
   const known = classes.length > 0
 
   return (
-    <Paper variant="outlined" ref={ref} sx={{ p: 1.5, flex: '0 0 auto' }} data-testid="new-at-level">
+    // `position: relative` is the pulse's anchor and nothing else; `data-highlighted` states the
+    // landing in the DOM so a spec can assert the CUE rather than a colour (tests/e2e/toast.e2e).
+    // It is always present, "false" included, because "this panel is not lit" is also a claim.
+    <Paper
+      variant="outlined"
+      ref={landing.ref}
+      sx={{ p: 1.5, flex: '0 0 auto', position: 'relative' }}
+      data-testid="new-at-level"
+      data-highlighted={landing.seq === null ? 'false' : 'true'}
+    >
+      {/* THE ARRIVAL PULSE, keyed on the nonce so a repeat link restarts it (see useFocusLanding).
+          A sibling of the content rather than a style on the Paper, and inert to the pointer. */}
+      {landing.seq !== null && <Box key={landing.seq} aria-hidden sx={LANDING_PULSE_SX} />}
       <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 0.75 }}>
         <Typography variant="subtitle2">New at this level</Typography>
         <LevelStepper level={level} onChange={(n) => setPicked(n)} />

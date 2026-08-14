@@ -25,6 +25,13 @@
  * transform/opacity; what is checked here is that the card, its title and — for a Sky
  * completion — its reward block with the item's name are actually rendered.
  *
+ * WHERE THE DEEP LINKS WENT (JOS-330). The two steps that follow a card's CLICK — the level-up
+ * link's landing on the "New at this level" panel, and the same level asked for twice — live in
+ * tests/e2e/toastDeepLinkSteps.mts, with the geometry instruments they need. The split is the
+ * 400-code-line factoring ceiling doing its job; the claims are unchanged apart from the arrival
+ * measurements the ticket added. `DING_LEVEL` comes from there too, because the payload this spec
+ * sends and the level that step expects to land on are one number.
+ *
  * Run: `npm run test:e2e` (or `node --import tsx tests/e2e/toast.e2e.mts`).
  */
 import type { ElectronApplication, Page } from 'playwright-core'
@@ -41,12 +48,10 @@ import {
 } from './appHarness.mjs'
 import { mainWindow } from './appWindow.mjs'
 import { launchOnFixture } from './logFixture.mjs'
+import { DING_LEVEL, stepDeepLinkRoundtrip, stepRepeatDeepLink } from './toastDeepLinkSteps.mjs'
 
 /** A Sky reward that exists in the committed item DB, so the card resolves with NO network. */
 const REWARD = 'Shining Metallic Robes'
-
-/** The level a synthetic ding celebrates, and the level its click must anchor the panel at. */
-const DING_LEVEL = 24
 
 /** A quest key that exists in the committed Plane of Sky dataset (`Class::Name`, the app's own). */
 const QUEST_KEY = 'Paladin::Paladin Test of Spirit'
@@ -210,6 +215,13 @@ async function stepBossToast(main: Page, toast: Page): Promise<void> {
     (await countOf(toast, '[data-testid="toast-source-label"]')) === 1 &&
       (await countOf(toast, '[data-testid="toast-close"]')) === 1
   )
+  // …AND NO CALL TO ACTION (JOS-334). A boss kill names no destination, so the card offers
+  // nothing: the action is derived from the FOCUS that makes a card clickable, and the negative
+  // is what keeps it from degenerating into decoration every card wears.
+  check(
+    '…and NO action button, because this card goes nowhere',
+    (await countOf(toast, '[data-testid="toast-action"]')) === 0
+  )
 }
 
 /** A refused payload must reach no window at all — the validator is main's, not the overlay's. */
@@ -260,6 +272,11 @@ async function stepQuestToast(main: Page, toast: Page): Promise<void> {
 /**
  * A LEVEL-UP: the third kind (docs/plans/levelup-whats-new.md §2), and the first with no reward
  * block — so the CARD itself is the click target, which the next step exercises.
+ *
+ * AND SINCE JOS-334 IT SAYS SO OUT LOUD. What this step adds is the DISCOVERABILITY half: the
+ * card carries a visible action naming the level it leads to, so the promise is legible before
+ * anybody hovers it. Whether that button actually goes anywhere is the deep-link step's job —
+ * this one only asserts the card makes the offer.
  */
 async function stepLevelUpToast(mainPage: Page, toast: Page): Promise<void> {
   const cards = await sendAndSettle(
@@ -280,50 +297,31 @@ async function stepLevelUpToast(mainPage: Page, toast: Page): Promise<void> {
     return
   }
   check('…subtitled with what the ding unlocked', (card ?? '').includes('new spells'), card ?? '')
+
+  // The action's own text, read from INSIDE the level-up card rather than from the window: the
+  // stack holds three cards by now and "some button exists somewhere" is not the claim.
+  const action = await toast.evaluate((needle) => {
+    const el = [...document.querySelectorAll('[data-testid="toast-card"]')].find((e) =>
+      (e as HTMLElement).innerText.includes(needle)
+    )
+    const cta = el?.querySelector('[data-testid="toast-action"]')
+    return cta ? (cta as HTMLElement).innerText.replace(/\s+/g, ' ').trim() : ''
+  }, `Level ${String(DING_LEVEL)}!`)
+  if (!check('…and carrying a VISIBLE call to action, not just a pointer cursor (JOS-334)', !!action, action)) {
+    return
+  }
+  check('…that NAMES the level it will take you to', action.includes(String(DING_LEVEL)), action)
+  check(
+    '…in the app’s own voice for "go read the thing that changed" (WhatsNewTeaser’s words)',
+    /^See what.s new at/.test(action),
+    action
+  )
 }
 
 /** Does the app have character logs at all? Without them no feature view mounts (App's gate). */
 async function hasFeatureViews(page: Page): Promise<boolean> {
   const text = await page.evaluate(() => (document.querySelector('main') as HTMLElement | null)?.innerText ?? '')
   return !text.includes('No EverQuest logs found')
-}
-
-/**
- * THE DEEP-LINK ROUNDTRIP, end to end and through the REAL plumbing: a click on the toast card in
- * the overlay window → `eqOverlay.focusApp` → main's `focusView` handler (which re-validates the
- * view AND the anchor) → the app renderer's `applyDeepLink` → the Leveling tab, with the "New at
- * this level" panel opened ON THE LEVEL THAT DINGED.
- *
- * The click is dispatched inside the page rather than with the mouse because the overlay is
- * always-on-top and NEVER SHOWN under EQ_E2E — it has no pointer to move. `el.click()` is a real
- * DOM click event and React's delegated listener handles it exactly as it handles the user's.
- */
-async function stepDeepLinkRoundtrip(mainPage: Page, toast: Page): Promise<void> {
-  const clicked = await toast.evaluate((needle) => {
-    const el = [...document.querySelectorAll('[data-testid="toast-card"]')].find((e) =>
-      (e as HTMLElement).innerText.includes(needle)
-    )
-    if (!el) return false
-    ;(el as HTMLElement).click()
-    return true
-  }, `Level ${String(DING_LEVEL)}!`)
-  if (!check('the level-up card is a click target (no reward block ⇒ the card itself)', clicked)) return
-
-  const landed = await mainPage
-    .waitForSelector('[data-testid="new-at-level"]', { timeout: 20_000 })
-    .then(
-      () => true,
-      () => false
-    )
-  if (!check('…and the click lands the app on the Leveling tab’s "New at this level" panel', landed)) return
-  const value = await mainPage.evaluate(
-    () => (document.querySelector('[data-testid="new-at-level-value"]') as HTMLElement | null)?.innerText ?? ''
-  )
-  check('…anchored at the level that dinged, not at the character’s own', value.includes(String(DING_LEVEL)), value)
-  check(
-    '…with the level stepper mounted (the panel is browsable, not just historical)',
-    (await countOf(mainPage, '[data-testid="new-at-level-next"]')) === 1
-  )
 }
 
 /**
@@ -395,6 +393,7 @@ async function main(): Promise<void> {
       // CORRECT behaviour and not something these steps can assert through.
       if (await hasFeatureViews(page)) {
         await stepDeepLinkRoundtrip(page, t)
+        await stepRepeatDeepLink(app, page, t)
         await stepQuestAnchor(page, t)
       } else {
         note('no character logs on this machine — the deep-link roundtrips need a mounted feature view, so they are skipped')

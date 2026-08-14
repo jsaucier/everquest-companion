@@ -93,11 +93,58 @@ export const GEAR_CONTROL_LABEL: Record<GearControl, string> = {
 
 const CONTROLS: ReadonlySet<string> = new Set<string>(GEAR_CONTROLS)
 
-/** A stored toolbar choice, or `null` when there is none. Same degradation rules as the columns. */
-export function sanitizeControls(raw: unknown): GearControl[] | null {
-  if (!Array.isArray(raw)) return null
+/**
+ * EVERY CONTROL A BARE-ARRAY CHOICE COULD HAVE BEEN CHOOSING FROM — the JOS-297 vocabulary, kept
+ * verbatim after JOS-302 changed it. This list is HISTORY and must never be "tidied up".
+ *
+ * It exists because of a bug the owner reported on 2026-08-13 and a fix that was not what the
+ * report asked for. The ask was *ALL filter controls on the equipment tab are ENABLED by default*,
+ * on the belief that the picker "derives a default subset". IT DOES NOT, and never did:
+ * `controlsVisible(null)` has always returned the whole of `GEAR_CONTROLS`, so a user who has never
+ * touched the picker has always had every control. The DEFAULT was never the problem.
+ *
+ * THE ACTUAL DEFECT IS THAT A STORED CHOICE CANNOT SPEAK FOR A CONTROL THAT DID NOT EXIST YET.
+ * The choice is stored as the list of controls to SHOW, so it is a closed statement about a
+ * vocabulary frozen at the moment it was written. JOS-302 then changed that vocabulary: it deleted
+ * `classOnly`, `ratio` and `thresholds` and ADDED `weapon`. Anyone who had used the picker before
+ * JOS-302 — which includes the owner — therefore has a stored list that cannot contain `weapon`,
+ * and no amount of re-reading it will ever draw the Weapon type picker for them. It is not hidden
+ * because they hid it; it is hidden because they were never asked.
+ *
+ * SO THE RULE IS: A CONTROL THE USER NEVER HAD THE CHANCE TO RULE ON IS ON. That is the owner's
+ * ruling, applied to the mechanism that was actually broken, and it satisfies both halves of it at
+ * once — every control draws unless the user explicitly hid it, and a user with a stored choice
+ * keeps the hides they actually made.
+ */
+export const LEGACY_GEAR_CONTROLS: readonly string[] = [
+  'slot',
+  'effect',
+  'classes',
+  'classOnly',
+  'era',
+  'owned',
+  'upgrade',
+  'ratio',
+  'thresholds'
+]
+
+/**
+ * A stored toolbar choice as `{shown, vocab}` — what the user picked, and what they picked it FROM.
+ *
+ * The second field is the whole fix (see `LEGACY_GEAR_CONTROLS`): recording the vocabulary is what
+ * lets a later build tell "they hid this" apart from "this did not exist yet". `useGearPrefs`
+ * writes this shape; a bare array is the pre-2026-08-13 spelling and still reads.
+ */
+export interface StoredControlChoice {
+  shown: readonly string[]
+  vocab: readonly string[]
+}
+
+/** The stored list, dropping unknown keys and repeats and preserving the stored order. */
+function knownControls(raw: unknown): GearControl[] {
+  if (!Array.isArray(raw)) return []
   const out: GearControl[] = []
-  for (const value of raw) {
+  for (const value of raw as unknown[]) {
     if (typeof value !== 'string' || !CONTROLS.has(value)) continue
     const key = value as GearControl
     if (!out.includes(key)) out.push(key)
@@ -105,7 +152,45 @@ export function sanitizeControls(raw: unknown): GearControl[] | null {
   return out
 }
 
-/** Which controls the bar draws: the user's list, or all of them when they have not said. */
+/**
+ * A stored toolbar choice, RESOLVED AGAINST TODAY'S VOCABULARY, or `null` when there is none.
+ *
+ * The return type is unchanged — the effective list of controls to draw — so `controlsVisible`,
+ * `toggleControl`, the picker and the view are all untouched by this. What changed is what the
+ * list MEANS on the way out: it is the user's own picks PLUS every control that has been added
+ * since they made them, in the bar's own order.
+ *
+ * A BARE ARRAY IS THE LEGACY SPELLING and is read against `LEGACY_GEAR_CONTROLS`, which is why the
+ * Weapon type picker comes back for everybody who chose before JOS-302. The `{shown, vocab}` shape
+ * needs no such guess, and the moment anybody touches the picker their key is rewritten into it —
+ * so this migration heals itself and the next control the bar grows is on for everyone by
+ * construction rather than by anybody remembering this file.
+ *
+ * `[]` IS STILL A STATEMENT (the header's absent-is-not-empty law): a NEW-shape choice with an
+ * empty `shown` and today's vocabulary resolves to an empty toolbar, exactly as it always did.
+ */
+export function sanitizeControls(raw: unknown): GearControl[] | null {
+  if (Array.isArray(raw)) return resolveChoice(knownControls(raw), LEGACY_GEAR_CONTROLS)
+  if (typeof raw !== 'object' || raw === null) return null
+  const stored = raw as Partial<StoredControlChoice>
+  if (!Array.isArray(stored.shown)) return null
+  const vocab = Array.isArray(stored.vocab) ? stored.vocab.filter((v): v is string => typeof v === 'string') : []
+  return resolveChoice(knownControls(stored.shown), vocab)
+}
+
+/** The picks, plus everything today's bar offers that the chooser was never shown. */
+function resolveChoice(shown: readonly GearControl[], vocab: readonly string[]): GearControl[] {
+  const on = new Set<string>(shown)
+  for (const control of GEAR_CONTROLS) if (!vocab.includes(control)) on.add(control)
+  return GEAR_CONTROLS.filter((c) => on.has(c))
+}
+
+/**
+ * Which controls the bar draws: the user's resolved list, or ALL OF THEM when they have not said.
+ *
+ * The `?? GEAR_CONTROLS` arm is the "enabled by default" the owner asked for and has been here
+ * since JOS-297; `sanitizeControls` above is where the ruling actually bit.
+ */
 export function controlsVisible(chosen: readonly GearControl[] | null): ReadonlySet<GearControl> {
   return new Set<GearControl>(chosen ?? GEAR_CONTROLS)
 }

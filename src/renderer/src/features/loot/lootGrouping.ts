@@ -86,15 +86,16 @@ function tallyGroups(events: KeyedLoot[]): Map<string, Group> {
 }
 
 /**
- * One row per item, in the reader's chosen order (lootSort.ts), favorites pinned on top.
+ * One row per item, in the reader's chosen order (lootSort.ts) — and in nothing else.
  *
- * The pin is a SECOND pass on purpose: Array#sort is stable, so favorites keep the chosen order
- * among themselves and so does everything below them. Swapping sort keys therefore re-orders
- * both blocks and moves nothing between them.
+ * IT USED TO CARRY A SECOND PASS (JOS-345). Favorited items were re-sorted into a block on top,
+ * stably, so the chosen order survived inside each block. The star that set the flag has left this
+ * window on the owner's ruling, and the pin left with it: an order the reader has no control over
+ * is an order the reader cannot account for. One comparator, one order, and every comparator in
+ * lootSort.ts is total — so the list is deterministic without the pass that used to follow it.
  */
 export function groupLootRows(
   events: KeyedLoot[],
-  isFavorite: (name: string) => boolean,
   sort: LootSortKey = DEFAULT_LOOT_SORT
 ): GroupRow[] {
   const list: GroupRow[] = [...tallyGroups(events).entries()].map(([key, g]) => {
@@ -113,9 +114,7 @@ export function groupLootRows(
       disposition
     }
   })
-  const sorted = sortLootRows(list, sort)
-  // Pin favorites to the top (stable).
-  return sorted.sort((a, b) => Number(isFavorite(b.item)) - Number(isFavorite(a.item)))
+  return sortLootRows(list, sort)
 }
 
 /**
@@ -130,13 +129,11 @@ export function groupLootRows(
 export function buildInvOnlyRows({
   source,
   questOnly,
-  q,
-  isFavorite
+  q
 }: {
   source: InventoryRow[]
   questOnly: boolean
   q: string
-  isFavorite: (name: string) => boolean
 }): GroupRow[] {
-  return buildOwnedRows({ source, questOnly, q, isFavorite, isQuestItem: (k) => questItemNames.has(k) })
+  return buildOwnedRows({ source, questOnly, q, isQuestItem: (k) => questItemNames.has(k) })
 }

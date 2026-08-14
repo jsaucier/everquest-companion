@@ -111,6 +111,12 @@ export const UI_PREF_SPECS: readonly UiPrefSpec[] = [
   { key: 'eq.countSource', label: 'Item count source', merge: 'replace' },
   { key: 'eq.profile', label: 'Game profile (server ruleset)', merge: 'replace' },
   { key: 'eq.selectedClasses', label: 'Plane of Sky class filter', merge: 'union' },
+  // ITEM favorites. The loot ledger stopped drawing them in JOS-345 (the owner ruled the star
+  // column out of that window), but the Plane of Sky tab still stars items and still reads this
+  // key, so the pref is a LIVE feature and keeps riding bundles in both directions. Even if the
+  // last surface ever went away, this row would STAY: a bundle written by another install carries
+  // whatever that install's UI knew about, and the parser's job is to accept and preserve the
+  // field, never to strip it because this build has nothing to render it with.
   { key: 'eq.favorites', label: 'Favorited items', merge: 'union' }
 ] as const
 

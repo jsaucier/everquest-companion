@@ -166,7 +166,7 @@ test('JOS-160 acceptance: searching the item name returns it, spelled the way th
   for (const source of SOURCES) {
     const owned = selectInvOnly(rowsFor(source).rows, new Set<string>())
     for (const q of ['ivory sky diamond', 'ivory', 'sky diamond']) {
-      const hits = buildOwnedRows({ source: owned, questOnly: false, q, isFavorite: () => false, isQuestItem })
+      const hits = buildOwnedRows({ source: owned, questOnly: false, q, isQuestItem })
       const row = hits.find((r) => r.countKey === KEY)
       assert.ok(row, `query "${q}" finds it, source=${source}`)
       // The export's key is LOWERCASED by `heldCountsFromDump`, so without reconcile's quest-name
@@ -182,7 +182,6 @@ test('JOS-160 acceptance: searching the item name returns it, spelled the way th
       source: owned,
       questOnly: true,
       q: 'ivory sky diamond',
-      isFavorite: () => false,
       isQuestItem
     })
     assert.equal(questFiltered.length, 1)
@@ -196,7 +195,6 @@ test('the search does not go fishing: a name nobody holds still returns nothing'
     source: owned,
     questOnly: false,
     q: 'large sky diamond',
-    isFavorite: () => false,
     isQuestItem
   })
   assert.deepEqual(hits, [], 'an item the player does not have is absent, not a zero row')

@@ -51,8 +51,37 @@ import { zoneKey } from './zones'
 export const ZONE_SCOPES = ['allTiers', 'exactTier'] as const
 export type ZoneScope = (typeof ZONE_SCOPES)[number]
 
-/** ABSENT MEANS THIS — the behaviour every surface had before this option existed. */
+/**
+ * ABSENT MEANS THIS — the behaviour every surface had before this option existed.
+ *
+ * IT IS NOT WHAT THE SURFACES OPEN ON ANY MORE (see `ZONE_SCOPE_OPENING`), and the two must not be
+ * collapsed into one constant. This one answers a MODEL question — "a caller handed me no
+ * membership, what did they mean?" — and its answer has to stay `allTiers` forever, because that is
+ * what makes `resolveSlice({…})` and `rangeStats({…})` byte-identical to the reads this app gave
+ * before JOS-291. Dozens of call sites and golden windows lean on that identity.
+ */
 export const ZONE_SCOPE_DEFAULT: ZoneScope = 'allTiers'
+
+/**
+ * WHAT THE EXP SURFACES OPEN ON, before anybody has touched the control (owner ruling, JOS-332).
+ *
+ * A PRODUCT ruling, not a model default, which is exactly why it is a second constant. The owner's
+ * reproduced scenario is the argument in one sentence: he logged in to open-world `Befallen`, moved
+ * to `Befallen 2 (Adaptive)` and asked how the tier he was standing in was paying — and the honest
+ * answer to that question is the tier, not the camp. Opening on `allTiers` made the FIRST read a
+ * reader ever sees the wrong one, and the only way to the right one was a two-word toggle he had to
+ * know to look for.
+ *
+ * IT DEGRADES TO NOTHING WHEN THERE IS NOTHING TO NARROW, and that is why it is safe as an opening:
+ *   • a slice with no zone in it (`All`, `Session`, a rung, a custom range) resolves to `allTiers`
+ *     with a null exact key whatever is picked — `timeslice.zoneHalfOf` enforces it — so the
+ *     opening cannot change a single number on those slices, and no control is drawn for it;
+ *   • a camp the record spells exactly ONE way admits the same intervals under either membership,
+ *     because `zoneIdKey(n) === exact` and `zoneKey(n) === key` then select the same rows. The
+ *     numbers are identical; only the caption's clause differs, and it is TRUE either way.
+ * So the degenerate cases are quiet by construction rather than by a special case.
+ */
+export const ZONE_SCOPE_OPENING: ZoneScope = 'exactTier'
 
 /** Is `v` one of the memberships this build knows? The store's gate. */
 export function isZoneScope(v: unknown): v is ZoneScope {

@@ -16,13 +16,13 @@
 //
 // ONE BORDER: PreferencesView wraps each item in an outlined Paper, so this renders bare Stacks.
 
-import { type JSX, useCallback, useEffect, useState } from 'react'
+import { type JSX, useCallback, useState } from 'react'
 import { FormControlLabel, Slider, Stack, Switch, Typography } from '@mui/material'
 import AdjustIcon from '@mui/icons-material/Adjust'
 import type { PrefSection } from './PreferencesView'
+import { recordPref, usePrefsSeed } from './prefsHydration'
 import {
   type CursorRingPrefs,
-  DEFAULT_CURSOR_RING,
   MAX_RING_SIZE_PX,
   MAX_RING_THICKNESS_PX,
   MIN_RING_SIZE_PX,
@@ -30,24 +30,26 @@ import {
   ringStrokeColor
 } from '@shared/presencePrefs'
 
-/** Hydrate once from main, write back on every change; main's reply is authoritative (every
- *  field is re-clamped there, so a slider at the cap visibly stops instead of drifting). */
+/**
+ * SEEDED from the pane's hydration snapshot, written back on every change; main's reply is
+ * authoritative (every field is re-clamped there, so a slider at the cap visibly stops instead of
+ * drifting).
+ *
+ * IT USED TO MOUNT ON `DEFAULT_CURSOR_RING` AND CORRECT ITSELF (JOS-340). This is the card that
+ * proves the defect was never only about switches: the ring's SIZE and THICKNESS are sliders and
+ * its colour is a picker, so a user with a fat red ring opened this section, saw a thin white one
+ * with the handles parked at the shipped numbers, and watched all three jump. Nothing here paints
+ * until the snapshot has the values (./prefsHydration.tsx).
+ */
 function useCursorRing(): [CursorRingPrefs, (patch: Partial<CursorRingPrefs>) => void] {
-  const [prefs, setPrefs] = useState<CursorRingPrefs>(DEFAULT_CURSOR_RING)
-
-  useEffect(() => {
-    let alive = true
-    void window.eq.getCursorRing().then((stored) => {
-      if (alive) setPrefs(stored)
-    })
-    return () => {
-      alive = false
-    }
-  }, [])
+  const [prefs, setPrefs] = useState<CursorRingPrefs>(usePrefsSeed().cursorRing)
 
   const update = useCallback((patch: Partial<CursorRingPrefs>) => {
     setPrefs((cur) => ({ ...cur, ...patch }))
-    void window.eq.setCursorRing(patch).then(setPrefs)
+    void window.eq.setCursorRing(patch).then((stored) => {
+      setPrefs(stored)
+      recordPref('cursorRing', stored)
+    })
   }, [])
 
   return [prefs, update]

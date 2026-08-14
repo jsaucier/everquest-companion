@@ -137,10 +137,13 @@ function PlainView({
           character contract and every item name links OUT to that item's Loot drill-down — which
           is where the per-item tier block is drawn. */}
       {view === 'gear' && <GearView key={viewKey} onOpenLoot={routing.openLoot} />}
-      {/* WISH LIST (JOS-324) — the gear area's third tab, and today a placeholder that says so.
-          It is keyed like the rest so JOS-326 inherits the character contract already wired: a
-          wish list is a character's, and the rebuild counter is how this app says that. */}
-      {view === 'wishlist' && <WishlistView key={viewKey} />}
+      {/* WISH LIST (JOS-324's tab, JOS-326's feature) — one flat list of items this character has
+          decided they want, grouped by where to go and get them. Keyed like the rest because a
+          wish list is a CHARACTER's: the rebuild counter is how this app says that, and the
+          remount is what re-reads the store under the new one. The one prop is the app's router —
+          every wish name links OUT to that item's Loot drill-down, the same contract the
+          Exaltations tab's donor names use, so the drill's Back arrow comes home here. */}
+      {view === 'wishlist' && <WishlistView key={viewKey} onOpenLoot={routing.openLoot} />}
       {view === 'buffs' && <BuffsView key={viewKey} />}
       {/* Respawn clocks (JOS-194). Character-scoped like the rest: the remount `key` is the
           whole contract, since the watch list lives in the store and the clocks are re-derived

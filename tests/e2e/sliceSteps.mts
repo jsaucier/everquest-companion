@@ -25,6 +25,12 @@ import { check, countOf, note, settle } from './appHarness.mjs'
 const TS_WINDOW = '[data-testid="leveling-slice-window"]'
 /** The ONE caption line under the row of controls (JOS-301) — both clauses live inside it. */
 const CAPTION = '[data-testid="leveling-scope-caption"]'
+/** The two toggle groups of the scope row, read for the pick in force (JOS-332). */
+const TIER = '[data-testid="leveling-tier"]'
+const BASIS = '[data-testid="leveling-basis"]'
+/** The elapsed span the panel says its numbers cover — `RangeStats.durationMs`, which under a zone
+ *  slice is Σ of the ADMITTED VISITS. The number the owner's bug report was about. */
+const DURATION = '[data-testid="leveling-range-duration"]'
 const LOOT_SLICE = '[data-testid="loot-slice"]'
 const LOOT_SUMMARY = '[data-testid="loot-summary"]'
 const LOOT_RATES = '[data-testid="loot-rates"]'
@@ -145,6 +151,93 @@ async function checkToggleTitles(page: Page): Promise<void> {
   )
 }
 
+/** An element's attribute, or '' when the node is not mounted at all. */
+function attrOf(page: Page, sel: string, attr: string): Promise<string> {
+  return page.evaluate(
+    ([s, a]) => document.querySelector(s)?.getAttribute(a) ?? '',
+    [sel, attr] as const
+  )
+}
+
+/**
+ * 5d. THE SURFACES OPEN ON THIS TIER AND ELAPSED (owner ruling, JOS-332) — read before any control
+ * on the tab has been touched.
+ *
+ * `tests/scopeSelection.test.mts` pins the OPENING as a value and `tests/zoneScope.test.mts` pins
+ * what it does to the numbers. Neither can see what the tab actually comes up on: the opening has
+ * to survive `useScopeSelection`'s hydrate from main, and a hydrate that arrived with the OLD
+ * default would repaint the row a frame after mount and be invisible to every unit test in the
+ * suite.
+ *
+ * The BASIS group is always drawn, so its default is asserted unconditionally. The TIER group is
+ * drawn exactly while the slice carries a zone (`ZoneScopeBar`'s rule), which depends on whether
+ * this log can define `Zone + Session` at all — so it is asserted here when it is up, and again
+ * inside `stepZoneSlice` at the moment picking `Zone` brings it out, which no log can skip.
+ */
+export async function stepScopeDefaults(page: Page): Promise<void> {
+  const basis = await settle(() => attrOf(page, BASIS, 'data-basis'), (b) => b !== '', { timeoutMs: 8000 })
+  check('the tab opens on the ELAPSED hour', basis === 'elapsed', basis)
+  const tier = await attrOf(page, TIER, 'data-scope')
+  if (tier === '') {
+    note('this log defines no zoned slice to open on, so the tier toggle is not drawn yet')
+    return
+  }
+  check('…and on THIS TIER, the tier you are standing in', tier === 'exactTier', tier)
+  const words = (await textOf(page, CAPTION)).replace(/\s+/g, ' ')
+  check('…and the caption says so, over the numbers it is about', words.includes('this tier only'), words)
+}
+
+/**
+ * 5e. THIS TIER NARROWS THE ELAPSED TIME, NOT JUST THE ROWS (JOS-332, the owner's bug report).
+ *
+ * *logged in to base Befallen open world, killed a while, switched to Befallen D2, killed ~5m; the
+ * panel reads elapsed time 27m across all tiers despite this-tier being selected.*
+ *
+ * The arithmetic is pinned over that exact scenario in `tests/zoneScope.test.mts`. What only the
+ * real app can show is that the toggle on this row reaches it: that pressing `every tier` widens
+ * the span the panel prints and pressing `this tier` narrows it back, byte for byte, on a fixture
+ * whose current camp the log genuinely spells more than one way.
+ *
+ * AND THAT THE ROW FOLLOWS A CHANGE MADE SOMEWHERE ELSE. The last two checks write through the
+ * app's own bridge instead of clicking — that is the path the XP overlay's footer button takes, so
+ * this is the main window proving it obeys a flip it did not make. `xp-overlay.e2e.mts` proves the
+ * mirror direction with the overlay's own rendered button.
+ *
+ * e2e-leveling.log is the right fixture by accident of the owner's own play: its last zone line is
+ * plain `Nagafen's Lair`, and the same camp appears as `- Solo`, `- Solo 1 (Awakened)`,
+ * `- Solo 2 (Adaptive)` and `- Solo 3 (Fused)` earlier in the record. So the two memberships have
+ * genuinely different answers here, and `exactTier` is the strictly narrower one.
+ */
+async function checkTierScopedElapsed(page: Page): Promise<void> {
+  const exact = await settle(() => textOf(page, DURATION), (t) => t !== '', { timeoutMs: 8000 })
+  check('the panel states the elapsed span its numbers cover', exact !== '', exact)
+  check('…on THIS TIER, which is what the tab opened on', (await attrOf(page, TIER, 'data-scope')) === 'exactTier')
+
+  await page.click('[data-testid="leveling-tier-allTiers"]', { timeout: 10_000 })
+  const every = await settle(() => textOf(page, DURATION), (t) => t !== exact, { timeoutMs: 8000 })
+  check(
+    'pressing "every tier" WIDENS the elapsed span — the other tiers of the camp are back in',
+    every !== exact,
+    `this tier ${exact} → every tier ${every}`
+  )
+  const captionEvery = (await textOf(page, CAPTION)).replace(/\s+/g, ' ')
+  check('…and the caption says which membership the span belongs to', captionEvery.includes('every tier'), captionEvery)
+
+  // THE BROADCAST PATH, not the click path: this is exactly what the overlay's footer button does.
+  await page.evaluate(() =>
+    (window as unknown as { eq: { setScopeSelection: (p: unknown) => void } }).eq.setScopeSelection({
+      zoneScope: 'exactTier'
+    })
+  )
+  const back = await settle(() => textOf(page, DURATION), (t) => t === exact, { timeoutMs: 8000 })
+  check(
+    'a flip made OUTSIDE this row moves it, and restores the narrowed span byte for byte',
+    back === exact,
+    `${every} → ${back}`
+  )
+  check('…including the buttons themselves', (await attrOf(page, TIER, 'data-scope')) === 'exactTier')
+}
+
 /**
  * 5c. Pick `Zone`, prove the window stayed and the numbers moved, then come back to `All`.
  *
@@ -172,8 +265,19 @@ export async function stepZoneSlice(page: Page, readDashboard: () => Promise<str
     (await settle(() => readDashboard(), (t) => t !== allReadout, { timeoutMs: 8000 })) !== allReadout
   )
 
+  // THE OPENING, at the one moment no log can skip: the tier group has just been drawn for the
+  // first time and nothing has pressed it (JOS-332). `stepScopeDefaults` says the same thing at
+  // mount, when the log can define a zoned slice to open on.
+  check(
+    '…and the membership it comes out on is THIS TIER, the owner ruled opening',
+    (await attrOf(page, TIER, 'data-scope')) === 'exactTier',
+    await attrOf(page, TIER, 'data-scope')
+  )
+
   // Measured HERE because this is the one moment all three controls are on the tab at once.
   await checkScopeRow(page)
+  // …and so is this: the tier toggle only means something while the slice carries a zone.
+  await checkTierScopedElapsed(page)
 
   await page.click('[data-testid="leveling-slice-all"]', { timeout: 10_000 })
   const restored = await settle(() => readDashboard(), (t) => t === allReadout, { timeoutMs: 8000 })

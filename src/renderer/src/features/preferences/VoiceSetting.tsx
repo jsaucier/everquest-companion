@@ -51,13 +51,13 @@ import {
 import {
   applyVoicePrefs,
   clearSpeechEngineFault,
-  currentVoicePrefs,
   forgetSystemVoices,
   speak,
   SPEECH_SETUP_NOTES
 } from '../../lib/speech'
 import { useSpeechEngineFault, useVoiceOptions } from '../../lib/useVoices'
 import { trackFeature } from '../../lib/telemetry'
+import { recordPref, usePrefsSeed } from './prefsHydration'
 
 /** What each tier is, in one line. The size lives on the download button, where it is actionable. */
 const ENGINE_LABELS: Record<SpeechEngine, string> = {
@@ -78,19 +78,21 @@ const PREVIEW_TEXT = 'Charm break'
  * no reload, no focus round-trip.
  */
 function useVoicePrefs(): [VoicePrefs, (next: VoicePrefs) => void] {
-  const [prefs, setPrefs] = useState<VoicePrefs>(currentVoicePrefs)
+  // SEEDED from the pane's hydration snapshot (JOS-340), not from `currentVoicePrefs()`. That
+  // module cache is USUALLY warm by the time anyone reaches this section — AlertPlayer is mounted
+  // for the app's whole life and calls `loadVoicePrefs()` at its own mount — but "usually" is a
+  // race, and it loses exactly when the app opens straight onto Preferences. The snapshot is the
+  // same value with the race taken out: four controls (an engine picker, a voice picker and two
+  // sliders) that can no longer paint the shipped defaults for a frame.
+  const seed = usePrefsSeed().voice
+  const [prefs, setPrefs] = useState<VoicePrefs>(seed)
 
+  // The speech engine reads its settings from that module cache on every firing, so the seed is
+  // pushed into it too. This is a side effect on a shared module, not a second hydration: the
+  // paint above already used the same value.
   useEffect(() => {
-    let alive = true
-    void window.eq.getVoicePrefs().then((stored) => {
-      if (!alive) return
-      applyVoicePrefs(stored)
-      setPrefs(stored)
-    })
-    return () => {
-      alive = false
-    }
-  }, [])
+    applyVoicePrefs(seed)
+  }, [seed])
 
   const update = useCallback((next: VoicePrefs) => {
     // Optimistic locally (a slider must not lag an IPC round trip), authoritative from main.
@@ -100,6 +102,7 @@ function useVoicePrefs(): [VoicePrefs, (next: VoicePrefs) => void] {
     void window.eq.setVoicePrefs(normalized).then((stored) => {
       applyVoicePrefs(stored)
       setPrefs(stored)
+      recordPref('voice', stored)
     })
   }, [])
 

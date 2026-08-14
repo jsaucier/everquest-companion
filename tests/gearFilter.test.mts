@@ -540,4 +540,12 @@ test('a cell states what the item states - blank is "states none", never a zero'
   assert.equal(columnLabel('RATIO'), 'Ratio')
   assert.equal(columnLabel('name'), 'Item')
   assert.equal(columnLabel('MANA_REGEN'), 'MANA REGEN')
+  // EFFECTIVE HP (JOS-336): a PLAIN INTEGER, and a label short enough for the 8% column ceiling
+  // (JOS-299). Both come from the defaults rather than from arms of their own — the sum of two
+  // integer-valued primary stats is an integer, and the underscore rule already spells `EFF HP`.
+  assert.equal(statText(66, 'EFF_HP'), '66', 'no decimal point, no unit')
+  assert.equal(statText(0, 'EFF_HP'), '0', 'a stated zero IS a zero here too')
+  assert.equal(statText(undefined, 'EFF_HP'), '', 'and states-neither is blank, like every other key')
+  assert.equal(columnLabel('EFF_HP'), 'EFF HP')
+  assert.ok(columnLabel('EFF_HP').length < columnLabel('SV_DISEASE').length, 'shorter than a header this table already draws')
 })

@@ -18,11 +18,11 @@ import { FlatRow, GroupedRow } from './lootRows'
  *
  * Percentages, not pixels, so the columns always add up to the pane the user actually has: a fixed
  * table whose stated widths exceed its box grows past it and hands the ledger a horizontal
- * scrollbar. The one exception is the star, which is an icon and has no reason to grow.
+ * scrollbar. Every stated width is a percentage now — the one pixel exception was the favorite
+ * star's 44 px column, which left with the star (JOS-345); the unstated Item column simply
+ * absorbed it, since it is the column that takes whatever the others leave.
  */
 const FIXED_TABLE = { tableLayout: 'fixed' } as const
-/** The favourite star's column: an icon, sized for the icon. */
-const STAR_COL = { width: 44 } as const
 
 // The spacer rows (top/bottom) that reserve the full scroll height so only the visible
 // slice of MUI rows is ever mounted — see useWindowedRows.
@@ -38,10 +38,8 @@ function PadRow({ height, colSpan }: { height: number; colSpan: number }): JSX.E
 /** What both tables need from the view to draw a row. */
 export interface LootTableContext {
   win: WindowedRows
-  isFavorite: (name: string) => boolean
   knowledgeByKey: Map<string, ItemKnowledge>
   invByKey: Map<string, InventoryRow>
-  onToggleFavorite: (name: string) => void
   onSelect: (item: string) => void
 }
 
@@ -65,10 +63,8 @@ export function LootTable({
       <GroupedLootTable
         rows={rows}
         win={ctx.win}
-        isFavorite={ctx.isFavorite}
         knowledgeByKey={ctx.knowledgeByKey}
         invByKey={ctx.invByKey}
-        onToggleFavorite={ctx.onToggleFavorite}
         onSelect={ctx.onSelect}
       />
     )
@@ -77,9 +73,7 @@ export function LootTable({
     <FlatLootTable
       events={events}
       win={ctx.win}
-      isFavorite={ctx.isFavorite}
       knowledgeByKey={ctx.knowledgeByKey}
-      onToggleFavorite={ctx.onToggleFavorite}
       onSelect={ctx.onSelect}
     />
   )
@@ -88,25 +82,20 @@ export function LootTable({
 export function GroupedLootTable({
   rows,
   win,
-  isFavorite,
   knowledgeByKey,
   invByKey,
-  onToggleFavorite,
   onSelect
 }: {
   rows: GroupRow[]
   win: WindowedRows
-  isFavorite: (name: string) => boolean
   knowledgeByKey: Map<string, ItemKnowledge>
   invByKey: Map<string, InventoryRow>
-  onToggleFavorite: (name: string) => void
   onSelect: (item: string) => void
 }): JSX.Element {
   return (
     <Table size="small" stickyHeader sx={FIXED_TABLE}>
       <TableHead>
         <TableRow>
-          <TableCell padding="checkbox" sx={STAR_COL} />
           {/* No width: the item NAME takes whatever the stated columns leave. */}
           <TableCell>Item</TableCell>
           <TableCell align="right" sx={{ width: '11%' }}>Times looted</TableCell>
@@ -119,19 +108,17 @@ export function GroupedLootTable({
         </TableRow>
       </TableHead>
       <TableBody>
-        <PadRow height={win.topPad} colSpan={7} />
+        <PadRow height={win.topPad} colSpan={6} />
         {rows.slice(win.start, win.end).map((g) => (
           <GroupedRow
             key={g.key}
             g={g}
-            favorited={isFavorite(g.item)}
             knowledge={knowledgeByKey.get(g.countKey)}
             inv={invByKey.get(g.countKey)}
-            onToggleFavorite={onToggleFavorite}
             onSelect={onSelect}
           />
         ))}
-        <PadRow height={win.bottomPad} colSpan={7} />
+        <PadRow height={win.bottomPad} colSpan={6} />
       </TableBody>
     </Table>
   )
@@ -140,23 +127,18 @@ export function GroupedLootTable({
 export function FlatLootTable({
   events,
   win,
-  isFavorite,
   knowledgeByKey,
-  onToggleFavorite,
   onSelect
 }: {
   events: KeyedLoot[]
   win: WindowedRows
-  isFavorite: (name: string) => boolean
   knowledgeByKey: Map<string, ItemKnowledge>
-  onToggleFavorite: (name: string) => void
   onSelect: (item: string) => void
 }): JSX.Element {
   return (
     <Table size="small" stickyHeader sx={FIXED_TABLE}>
       <TableHead>
         <TableRow>
-          <TableCell padding="checkbox" sx={STAR_COL} />
           <TableCell sx={{ width: '15%' }}>Time</TableCell>
           {/* No width: the item NAME takes whatever the stated columns leave. */}
           <TableCell>Item</TableCell>
@@ -165,18 +147,16 @@ export function FlatLootTable({
         </TableRow>
       </TableHead>
       <TableBody>
-        <PadRow height={win.topPad} colSpan={5} />
+        <PadRow height={win.topPad} colSpan={4} />
         {events.slice(win.start, win.end).map((e, i) => (
           <FlatRow
             key={`${e.ts}-${e.item}-${win.start + i}`}
             e={e}
-            favorited={isFavorite(e.item)}
             knowledge={knowledgeByKey.get(e.countKey)}
-            onToggleFavorite={onToggleFavorite}
             onSelect={onSelect}
           />
         ))}
-        <PadRow height={win.bottomPad} colSpan={5} />
+        <PadRow height={win.bottomPad} colSpan={4} />
       </TableBody>
     </Table>
   )

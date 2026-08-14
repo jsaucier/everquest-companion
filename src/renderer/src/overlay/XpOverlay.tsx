@@ -33,6 +33,16 @@
 // ETA has ALWAYS divided by the wall rate while the pace row above it showed the active one, so
 // until now those two lines were measured over different hours.
 //
+// THE TIER AND THE HOUR ARE NOT THIS WINDOW'S TO REMEMBER ANY MORE (JOS-332). They used to be two
+// more persisted per-kind knobs beside the row checklist, on the argument that an overlay remembers
+// everything about itself — and the owner's bug report is what that argument cost: he had *this
+// tier* on screen over the game and read `elapsed 27m` off the Leveling tab, which is the every-tier
+// number, because the two windows kept two states behind one label. So both knobs now read and
+// write the ONE app-wide selection main holds (`shared/scopeSelection.ts`), the footer buttons flip
+// it for every window at once, and the tab's toggle row flips it for this one. The SLICE is
+// untouched and still remembered here: which stretch a floating window measures is genuinely its
+// own business (`shared/types.ts xpSlice` states why), and it is not a knob the tab also shows.
+//
 // IT TICKS ITSELF, for the same reason the timer bars do: deltas arrive when the LOG moves, and a
 // slice that ends at the live edge keeps meaning something while the log is silent. The clock is
 // SLOW here (30 s, not 1 s) because nothing in this window is a countdown — a rate over an hour
@@ -60,9 +70,13 @@ import {
   type Timeslice
 } from '@shared/timeslice'
 import { toggleXpRow, XP_ROW_IDS, xpRowVisible, type XpRowId } from '@shared/xpOverlay'
-import { resolveRateBasis, toggleRateBasis, type RateBasis } from '@shared/rateBasis'
-import { ZONE_SCOPE_LABEL, resolveZoneScope, toggleZoneScope, type ZoneScope } from '@shared/zoneScope'
+import { toggleRateBasis, type RateBasis } from '@shared/rateBasis'
+import { ZONE_SCOPE_LABEL, toggleZoneScope, type ZoneScope } from '@shared/zoneScope'
 import { EMPTY_PROGRESSION, applyProgressionDelta } from '../features/leveling/progressionDelta'
+// THE APP-WIDE SCOPE SELECTION (JOS-332) — the same hook the Leveling tab's toggle row calls, over
+// this window's own bridge. MUI-free by that file's own law, which is what lets this bundle import
+// a module that lives under `features/`.
+import { useScopeSelection } from '../features/timeslice/useScopeSelection'
 import { dataBounds } from '../features/leveling/zoneBands'
 // The two definitions of the two hours, imported and never re-worded (JOS-249 / JOS-261).
 import { BASIS_TITLE } from '../features/leveling/rangeStatsRows'
@@ -287,8 +301,16 @@ function TierToggle({
   )
 }
 
-/** Footer — interactive mode only: the bg-alpha slider, the ROW CHECKLIST, the ZONE MEMBERSHIP and
- *  DENOMINATOR toggles, and the text size. */
+/**
+ * Footer — interactive mode only: the bg-alpha slider, the ROW CHECKLIST, the ZONE MEMBERSHIP and
+ * DENOMINATOR toggles, and the text size.
+ *
+ * TWO KINDS OF KNOB SIT ON THIS ONE ROW, and since JOS-332 they are written through two different
+ * doors on purpose. The alpha, the rows and the text size are about THIS WINDOW and go through
+ * `patch` into its persisted per-kind config. The membership and the denominator are about the
+ * NUMBERS, are shared with the Leveling tab, and go through the app-wide selection main holds. The
+ * row looks identical either way; the difference is who else has to hear about the press.
+ */
 function XpFooter({
   bgAlpha,
   textScale,
@@ -296,6 +318,8 @@ function XpFooter({
   basis,
   slice,
   patch,
+  setZoneScope,
+  setBasis,
   noDrag
 }: {
   bgAlpha: number
@@ -306,6 +330,9 @@ function XpFooter({
    *  the camp is called on its hover. */
   slice: Timeslice
   patch: OverlayChrome['patch']
+  /** The app-wide setters (`useScopeSelection`) — NOT `patch`: these two move every window. */
+  setZoneScope: (next: ZoneScope) => void
+  setBasis: (next: RateBasis) => void
   noDrag: React.CSSProperties
 }): JSX.Element {
   return (
@@ -344,23 +371,25 @@ function XpFooter({
           noDrag={noDrag}
         />
       ))}
-      {/* WHICH TIERS, beside WHICH ROWS — the same persisted per-kind config, the same one press.
-          Drawn only while the slice names a zone (the `ZoneScopeBar` rule, in a floating window). */}
+      {/* WHICH TIERS, beside WHICH ROWS — but through the APP-WIDE selection, not this window's
+          config (JOS-332): pressing it moves the Leveling tab's toggle too, which is the whole
+          point of the ticket. Drawn only while the slice names a zone (the `ZoneScopeBar` rule, in
+          a floating window). */}
       {slice.zoneName !== null && (
         <TierToggle
           scope={slice.zoneScope}
           zoneName={slice.zoneName}
           onClick={() => {
-            patch({ xpZoneScope: toggleZoneScope(slice.zoneScope) })
+            setZoneScope(toggleZoneScope(slice.zoneScope))
           }}
           noDrag={noDrag}
         />
       )}
-      {/* WHICH HOUR, beside WHICH ROWS — the same persisted per-kind config, the same one press. */}
+      {/* WHICH HOUR, beside WHICH ROWS — the same app-wide selection, the same one press. */}
       <BasisToggle
         basis={basis}
         onClick={() => {
-          patch({ xpBasis: toggleRateBasis(basis) })
+          setBasis(toggleRateBasis(basis))
         }}
         noDrag={noDrag}
       />
@@ -405,19 +434,19 @@ function sliceRows(
 function useXpSlice(
   prog: ProgressionSnap,
   bounds: ReturnType<typeof dataBounds>,
-  config: OverlayConfig | null
-): { id: SliceId; slice: Timeslice; zoneScope: ZoneScope } {
+  config: OverlayConfig | null,
+  zoneScope: ZoneScope
+): { id: SliceId; slice: Timeslice } {
   // ABSENT means `zoneSession` — and `resolveSliceId` then degrades it to `All` on a record that
-  // cannot define one, which is the same fallback the tab's control performs.
+  // cannot define one, which is the same fallback the tab's control performs. The SLICE is still
+  // this window's own persisted knob (shared/types.ts states why); the MEMBERSHIP is not, since
+  // JOS-332 — it arrives as an argument, out of the one selection main holds for every window.
   const id = resolveSliceId(config?.xpSlice ?? 'zoneSession', prog, bounds)
-  // ABSENT means `allTiers` (shared/zoneScope.ts owns the ruling) — every tier of the camp, which
-  // is what this window measured before the knob existed.
-  const zoneScope = resolveZoneScope(config?.xpZoneScope)
   const slice = useMemo(
     () => resolveSlice({ snap: prog, bounds, id, zoneScope }),
     [prog, bounds, id, zoneScope]
   )
-  return { id, slice, zoneScope }
+  return { id, slice }
 }
 
 export default function XpOverlay(): JSX.Element {
@@ -438,14 +467,18 @@ export default function XpOverlay(): JSX.Element {
     useOverlayChrome()
   useSlowClock()
 
+  // THE TWO KNOBS THIS WINDOW SHARES WITH THE APP (JOS-332) — which tiers count, and which hour
+  // the rates divide by. They come from main through the SAME hook the Leveling tab's toggle row
+  // uses, over the same three bridge members under the same names, so a flip in either place moves
+  // both. The window's own persisted config still owns everything that is genuinely about THIS
+  // window: its bounds, its lock, its alpha, its text size, its row checklist and its slice.
+  const { zoneScope, basis, setZoneScope, setBasis } = useScopeSelection(window.eqOverlay)
   const bounds = useMemo(() => dataBounds(prog, NO_EXTRA), [prog])
   const available = useMemo(() => availableSlices(prog, bounds), [prog, bounds])
   // The scope both knobs describe, resolved together (see `useXpSlice`) — so the caption and every
   // number below travel with the same slice AND the same membership by construction.
-  const { id, slice, zoneScope } = useXpSlice(prog, bounds, config)
+  const { id, slice } = useXpSlice(prog, bounds, config, zoneScope)
   const visible = config?.xpRows
-  // ABSENT means `elapsed` (shared/rateBasis.ts owns the ruling).
-  const basis = resolveRateBasis(config?.xpBasis)
   const view = useMemo(
     () => xpOverlayView({ snap: prog, loot, slice, visible, level: who.level, basis }),
     [prog, loot, slice, visible, who.level, basis]
@@ -524,6 +557,8 @@ export default function XpOverlay(): JSX.Element {
           basis={basis}
           slice={slice}
           patch={patch}
+          setZoneScope={setZoneScope}
+          setBasis={setBasis}
           noDrag={noDrag}
         />
       )}

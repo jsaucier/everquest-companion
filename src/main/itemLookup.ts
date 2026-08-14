@@ -8,7 +8,7 @@
 //
 // DESIGN (per AGENTS.md "Data sources & scrapers" + the Task #34 spell-DB precedent):
 //   0. THE COMMITTED ITEM DATABASE IS THE PRIMARY SOURCE (`src/main/data/items.json`,
-//      scripts/scrape-items.ts — every item page on the wiki, 11,247 of them, parsed by the
+//      scripts/scrape-items.ts — every item page on the wiki, 11,288 of them, parsed by the
 //      very same `parseItemWikitext` the live path below uses). It answers instantly,
 //      offline, identically for every user, and it is what makes the wiki fallback a
 //      fallback: the network is now touched only for an item whose page was created since

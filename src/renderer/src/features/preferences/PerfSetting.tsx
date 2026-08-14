@@ -17,19 +17,19 @@
 // ONE BORDER: PreferencesView already wraps each item in an outlined Paper, so this renders bare
 // Stacks.
 
-import { type JSX, useCallback, useEffect, useState } from 'react'
+import { type JSX, useCallback, useState } from 'react'
 import { Box, Button, Chip, FormControlLabel, Stack, Switch, Typography } from '@mui/material'
 import SpeedIcon from '@mui/icons-material/Speed'
 import RestartAltIcon from '@mui/icons-material/RestartAlt'
 import { DEV_TOOLS } from '../../devFlags'
 import {
-  DEFAULT_PERF_HUD_PREFS,
   formatMs,
   type PerfHudPrefs,
   type StartupPhase,
   type StartupProfile
 } from '@shared/perf'
 import { formatDateTime } from '../../lib/formatDate'
+import { recordPref, usePrefsSeed } from './prefsHydration'
 import type { PrefSection } from './PreferencesView'
 
 /** What each phase is called in front of a person. The enum names are the code's vocabulary;
@@ -45,25 +45,21 @@ const PHASE_LABEL: Record<StartupPhase, string> = {
   rendererHydrated: 'Interface drawn'
 }
 
-/** The switch, hydrated from main and written back on change — the VoiceSetting pattern. The
- *  reply is authoritative (it is what was actually stored), the local set is optimistic so the
- *  toggle never lags an IPC round trip. */
+/** The switch, SEEDED from the pane's hydration snapshot and written back on change. The reply is
+ *  authoritative (it is what was actually stored), the local set is optimistic so the toggle never
+ *  lags an IPC round trip.
+ *
+ *  It used to mount on `DEFAULT_PERF_HUD_PREFS` — off — and correct itself (JOS-340), so anyone
+ *  running with the HUD on watched this switch rise every time they opened the section. */
 function usePerfHudPrefs(): [PerfHudPrefs, (enabled: boolean) => void] {
-  const [prefs, setPrefs] = useState<PerfHudPrefs>(DEFAULT_PERF_HUD_PREFS)
-
-  useEffect(() => {
-    let alive = true
-    void window.eq.getPerfPrefs().then((stored) => {
-      if (alive) setPrefs(stored)
-    })
-    return () => {
-      alive = false
-    }
-  }, [])
+  const [prefs, setPrefs] = useState<PerfHudPrefs>(usePrefsSeed().perfHud)
 
   const setEnabled = useCallback((enabled: boolean) => {
     setPrefs({ enabled })
-    void window.eq.setPerfHudEnabled(enabled).then(setPrefs)
+    void window.eq.setPerfHudEnabled(enabled).then((stored) => {
+      setPrefs(stored)
+      recordPref('perfHud', stored)
+    })
   }, [])
 
   return [prefs, setEnabled]
@@ -249,17 +245,11 @@ export function perfSection(): PrefSection {
 
 export function PerfSetting(): JSX.Element {
   const [prefs, setEnabled] = usePerfHudPrefs()
-  const [profile, setProfile] = useState<StartupProfile | null>(null)
-
-  useEffect(() => {
-    let alive = true
-    void window.eq.getStartupProfile().then((p) => {
-      if (alive) setProfile(p)
-    })
-    return () => {
-      alive = false
-    }
-  }, [])
+  // The breakdown comes out of the same snapshot (JOS-340). It carries no control, but its empty
+  // state is a SENTENCE — "No startup breakdown recorded yet." — and that sentence was false for a
+  // frame on every launch that had one. A caption that is wrong for a frame is the same defect as
+  // a switch that is.
+  const profile: StartupProfile = usePrefsSeed().startup
 
   return (
     <Stack spacing={2} data-testid="pref-perf">
@@ -282,7 +272,7 @@ export function PerfSetting(): JSX.Element {
         </Typography>
       </Stack>
 
-      {profile && profile.phases.length > 0 ? (
+      {profile.phases.length > 0 ? (
         <StartupBreakdown profile={profile} />
       ) : (
         <Typography variant="caption" color="text.secondary">

@@ -59,7 +59,6 @@ export interface OwnedRowsInput {
   questOnly: boolean
   /** Already normalized (trimmed + lowercased) by `normalizeQuery`. */
   q: string
-  isFavorite: (name: string) => boolean
   /** Is this COUNTING KEY required by a Sky quest? Injected so this module stays node-loadable. */
   isQuestItem: (countKey: string) => boolean
 }
@@ -72,19 +71,21 @@ export interface OwnedRowsInput {
  * of the item. `owned` carries the export's count, which is the only witness the row has: `net`
  * would read 0 under the `log` source and the whole row would be dashes.
  *
- * Already net-desc from reconcile, so only the favorites pin re-sorts it.
+ * THE ORDER IS RECONCILE'S, UNTOUCHED (JOS-345). `source` arrives net-descending — most-held
+ * first — and the only thing that ever re-sorted it here was the favorites pin, a second pass that
+ * lifted starred names to the top. The star column left the loot window with the owner's ruling,
+ * so this tail is handed back in the order it came in: no pass, nothing to explain.
  */
 export function buildOwnedRows({
   source,
   questOnly,
   q,
-  isFavorite,
   isQuestItem
 }: OwnedRowsInput): GroupRow[] {
   let list: readonly InventoryRow[] = source
   if (questOnly) list = list.filter((r) => isQuestItem(r.key))
   if (q) list = list.filter((r) => r.name.toLowerCase().includes(q))
-  const rows: GroupRow[] = list.map((r) => ({
+  return list.map((r) => ({
     key: `inv:${r.key}`,
     countKey: r.key,
     item: r.name,
@@ -94,5 +95,4 @@ export function buildOwnedRows({
     invOnly: true,
     owned: r.inv
   }))
-  return rows.sort((a, b) => Number(isFavorite(b.item)) - Number(isFavorite(a.item)))
 }

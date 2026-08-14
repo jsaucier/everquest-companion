@@ -13,6 +13,7 @@
 import { ipcRenderer } from 'electron'
 import { IPC } from '../shared/ipc'
 import type { ToastRequest } from '../shared/toast'
+import type { ScopeSelection } from '../shared/scopeSelection'
 import type { OverlayConfig, OverlayKind } from '../shared/types'
 
 export const windowsApi = {
@@ -57,6 +58,25 @@ export const windowsApi = {
     const listener = (_e: unknown, s: { fightId: string }): void => cb(s)
     ipcRenderer.on(IPC.onFightSelection, listener)
     return () => ipcRenderer.removeListener(IPC.onFightSelection, listener)
+  },
+
+  // ---- the app-wide SCOPE selection (JOS-332) ----
+  // WHICH TIERS of the current camp count and WHICH HOUR the rates divide by — one answer for this
+  // window and the XP overlay together. It lives in THIS slice for the fight selection's reason
+  // above: it is a CROSS-WINDOW fact, main holds it precisely so two renderer processes can agree,
+  // and the overlay bridge carries the same three members under the same names so ONE renderer
+  // hook (`useScopeSelection`) drives the tab's toggle row and the overlay's footer buttons alike.
+  // Pinned by tests/scopeSelection.test.mts.
+  /** The membership + denominator in force everywhere. */
+  getScopeSelection: (): Promise<ScopeSelection> => ipcRenderer.invoke(IPC.scopeSelectionGet),
+  /** "The user moved one of these knobs." A PARTIAL — the half you do not mention does not move.
+   *  Fire-and-forget; main rebuilds the patch and fans the result out. */
+  setScopeSelection: (patch: Partial<ScopeSelection>): void => ipcRenderer.send(IPC.scopeSelectionSet, patch),
+  /** Subscribe to scope changes made in ANY window. Payload is the whole selection. */
+  onScopeSelection: (cb: (s: ScopeSelection) => void): (() => void) => {
+    const listener = (_e: unknown, s: ScopeSelection): void => cb(s)
+    ipcRenderer.on(IPC.onScopeSelection, listener)
+    return () => ipcRenderer.removeListener(IPC.onScopeSelection, listener)
   },
 
   // ---- celebration toasts (docs/plans/celebration-toasts.md) ----

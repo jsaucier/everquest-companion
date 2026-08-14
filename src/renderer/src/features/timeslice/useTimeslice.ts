@@ -25,16 +25,20 @@
 // who never touches the control sees each surface's own honest opening, which is what they saw
 // before this existed on both of them.
 //
-// THE ZONE MEMBERSHIP LIVES HERE TOO (JOS-291), and for the header's own reasons. It is the same
-// KIND of thing as the pick — a dimension of "which stretch of play am I looking at" — so it is
-// app-wide (a reader who narrows to this tier and then looks at what dropped there is asking ONE
-// question, and the answer follows them) and session-lifetime (a membership is a thing you choose
-// while you are looking, not a preference; the XP overlay's copy IS persisted, and `useRateBasis`'s
-// header states why a floating window and a tab differ). Its default is `ZONE_SCOPE_DEFAULT` —
-// every tier, which is what every surface answered before the option existed.
+// THE ZONE MEMBERSHIP IS APPLIED HERE AND NO LONGER KEPT HERE (JOS-291, moved by JOS-332). It is
+// the same KIND of thing as the pick — a dimension of "which stretch of play am I looking at" — so
+// it is app-wide (a reader who narrows to this tier and then looks at what dropped there is asking
+// ONE question, and the answer follows them) and session-lifetime (a membership is a thing you
+// choose while you are looking, not a preference). What changed is HOW FAR "app-wide" reaches: it
+// used to be a module variable in this file, which meant the XP overlay — a separate renderer
+// process — kept its own second copy, and the owner read `elapsed 27m` off this tab with *this
+// tier* showing in a window that had never told this one. So the value moved to MAIN, which is the
+// only process that can reach every window, and this file now reads it through `useScopeSelection`
+// like every other surface does. `shared/scopeSelection.ts` carries the whole argument and the
+// measurement behind it; the OPENING is `exactTier` (owner ruling), not the model's `allTiers`.
 //
-// The store is a five-line external store rather than a context: every consumer is a leaf, the
-// value is three scalars, and `useSyncExternalStore` over a VERSION counter is the whole thing (a
+// The store below is a five-line external store rather than a context: every consumer is a leaf,
+// the value is two scalars, and `useSyncExternalStore` over a VERSION counter is the whole thing (a
 // getSnapshot returning a fresh object would re-render forever).
 
 import { useCallback, useMemo, useSyncExternalStore } from 'react'
@@ -47,18 +51,16 @@ import {
   type SliceRange,
   type Timeslice
 } from '@shared/timeslice'
-import { ZONE_SCOPE_DEFAULT, type ZoneScope } from '@shared/zoneScope'
+import type { ZoneScope } from '@shared/zoneScope'
 import { useModule } from '../../lib/useModule'
 import { EMPTY_PROGRESSION, applyProgressionDelta } from '../leveling/progressionDelta'
 import { dataBounds, type DataBounds } from '../leveling/zoneBands'
+import { resetScopeSelection, useScopeSelection } from './useScopeSelection'
 
 /** NULL means nobody has pressed the control yet — each surface then opens on its own
  *  `initialId`. See the header for why that is not a second control. */
 let pickedId: SliceId | null = null
 let pickedCustom: SliceRange | null = null
-/** NOT nullable, unlike the pick: every surface's opening membership is the same one, so there is
- *  no "nobody has chosen yet" state for a surface to answer differently. */
-let pickedZoneScope: ZoneScope = ZONE_SCOPE_DEFAULT
 let version = 0
 const listeners = new Set<() => void>()
 
@@ -78,11 +80,15 @@ function emit(): void {
 
 /** Reset to the default. Exported for tests and for a character rebuild that wants a clean slate;
  *  nothing in the app calls it today, and a slice surviving a character switch is fine because
- *  `resolveSliceId` degrades a pick the new record cannot define. */
+ *  `resolveSliceId` degrades a pick the new record cannot define.
+ *
+ *  IT STILL CLEARS EVERY DIMENSION OF THE PICK, including the membership — which now lives one file
+ *  over, so this delegates rather than assigns. A reset that left a membership behind for the next
+ *  test is the bug this line has always been about; the value moving to main did not retire it. */
 export function resetTimeslice(): void {
   pickedId = null
   pickedCustom = null
-  pickedZoneScope = ZONE_SCOPE_DEFAULT
+  resetScopeSelection()
   emit()
 }
 
@@ -109,16 +115,16 @@ export interface TimesliceState {
  * Its OWN hook, exactly like `useRateBasis` is its own beside this file: the control that renders
  * it (`ZoneScopeBar`) is a leaf that needs the membership and nothing else, and making it a member
  * of `TimesliceState` would mean every surface hauling two more props through its layout to reach
- * one button. The value lives in THIS module's store because it is a dimension of the slice —
- * `useTimeslice` applies it, so a reader can never see a membership the numbers did not use.
+ * one button.
+ *
+ * SINCE JOS-332 IT IS A NAMED VIEW OF THE APP-WIDE SCOPE SELECTION rather than a store of its own.
+ * `useTimeslice` reads the SAME hook to resolve the slice, so a reader can never see a membership
+ * the numbers did not use — and now neither can they see one the XP overlay did not use, because
+ * both windows read the value main holds.
  */
 export function useZoneScope(): { zoneScope: ZoneScope; setZoneScope: (next: ZoneScope) => void } {
-  useSyncExternalStore(subscribe, getVersion, getVersion)
-  const setZoneScope = useCallback((next: ZoneScope) => {
-    pickedZoneScope = next
-    emit()
-  }, [])
-  return { zoneScope: pickedZoneScope, setZoneScope }
+  const { zoneScope, setZoneScope } = useScopeSelection(window.eq)
+  return { zoneScope, setZoneScope }
 }
 
 const NO_EXTRA: readonly number[] = []
@@ -135,6 +141,9 @@ const NO_EXTRA: readonly number[] = []
 export function useTimeslice(extraTs: readonly number[] = NO_EXTRA, initialId: SliceId = 'all'): TimesliceState {
   const prog = useModule<ProgressionSnap, ProgressionDelta>('progression', applyProgressionDelta) ?? EMPTY_PROGRESSION
   useSyncExternalStore(subscribe, getVersion, getVersion)
+  // THE MEMBERSHIP IS READ, NEVER KEPT (JOS-332). One value per app, held in main, so the tab and
+  // the floating window cannot be on different tiers while both say `this tier`.
+  const { zoneScope } = useScopeSelection(window.eq)
 
   const bounds = useMemo(() => dataBounds(prog, extraTs), [prog, extraTs])
   const available = useMemo(() => availableSlices(prog, bounds), [prog, bounds])
@@ -144,7 +153,6 @@ export function useTimeslice(extraTs: readonly number[] = NO_EXTRA, initialId: S
   // Leveling tab on a `Zone + Session` this record could not define.
   const id = resolveSliceId(pickedId ?? initialId, prog, bounds)
   const custom = pickedCustom
-  const zoneScope = pickedZoneScope
   const slice = useMemo(
     () => resolveSlice({ snap: prog, bounds, id, custom, zoneScope }),
     [prog, bounds, id, custom, zoneScope]

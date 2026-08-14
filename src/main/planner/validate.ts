@@ -1,5 +1,6 @@
 // planner/validate.ts — the one place a stored PLAN is proven to be a plan: exaltation sets
-// (`sanitizeExaltPlans`) and, since JOS-286, gear sets (`sanitizeGearSets`).
+// (`sanitizeExaltPlans`), gear sets since JOS-286 (`sanitizeGearSets`), and the flat wish list
+// since JOS-326 (`sanitizeWishlist`).
 //
 // TWO CALLERS, ONE ANSWER (the ipc/knowledge + presencePrefs arrangement):
 //   * `IPC.plannerSetPlans` runs it on the way IN. Renderer input is never trusted here, exactly
@@ -20,6 +21,7 @@
 import { isClassAbbr, MAX_COMBO_SLOTS, type ClassAbbr } from '../../shared/classCombo'
 import { normalizeUpgradeState } from '../../shared/itemUpgrade'
 import type { GearAssignment, GearSet } from '../../shared/planner/gearSet'
+import { MAX_WISHES, type WishEntry, type WishList } from '../../shared/planner/wishlist'
 import {
   PLAN_SLOTS,
   SOCKET_TYPES,
@@ -231,4 +233,103 @@ export function sanitizeGearSets(raw: unknown, now: number = Date.now()): GearSe
     out.push(set)
   }
   return out
+}
+
+// ---- the flat wish list (JOS-326) -----------------------------------------------------------
+//
+// THE SAME DOOR AND THE SAME DISCIPLINE, A THIRD TIME. `IPC.wishlistSet` runs this on the way IN
+// because the renderer is not the authority on what may be stored, and `storePlans.getWishlist`
+// runs it on the way OUT so a hand-edited progress file cannot hand the renderer a shape it will
+// crash on. Both directions ⇒ one definition ⇒ the round trip is a fixed point
+// (tests/wishlistStore.test.mts).
+//
+// IT STRIPS RATHER THAN REJECTS: an entry with no item key, a `kind` that is not one of the two,
+// a `socket` outside the closed four, a source string nobody writes — each is dropped or
+// defaulted and everything else is kept. Losing a user's other forty wishes to one bad line is
+// the failure mode.
+//
+// TWO DEFAULTS ARE DELIBERATE RATHER THAN DROPS. An entry with an unreadable `kind` reads as
+// `gear`, which is the shape that claims the LEAST — a gear wish states nothing about an effect —
+// and an unreadable `source` reads as `user`, because the only thing `planImport` earns a row is
+// a label saying the app put it there, and the app must not claim that about a line it cannot
+// account for.
+//
+// THE DEDUPE IS THE MODEL'S, NOT A NEW RULE. `itemKey` is a wish's whole identity
+// (shared/planner/wishlist.ts), so duplicate keys keep the FIRST occurrence — the same choice the
+// two lists above make about duplicate ids, and the same reason: the renderer's order is the
+// user's order.
+
+/** The four socket types, as the closed allowlist a stored effect context is checked against. */
+function wishSocket(v: unknown): SocketType | undefined {
+  return typeof v === 'string' && SOCKET_SET.has(v) ? (v as SocketType) : undefined
+}
+
+/** One wish, or `undefined` when it names no item — a wish with no item is not a wish. */
+function wishEntry(v: unknown, now: number): WishEntry | undefined {
+  if (!isRecord(v)) return undefined
+  const key = text(v.itemKey, MAX_ID_CHARS)
+  if (!key) return undefined
+  const entry: WishEntry = {
+    itemKey: key,
+    name: text(v.name, MAX_NAME_CHARS) ?? key,
+    kind: v.kind === 'donor' ? 'donor' : 'gear',
+    addedAt: stamp(v.addedAt, now),
+    source: v.source === 'planImport' ? 'planImport' : 'user'
+  }
+  // The effect context is DONOR-ONLY and is dropped wholesale on a gear wish: an effect name on a
+  // row that says it is not about an effect is a contradiction, not extra information. Each half
+  // is assigned rather than spread so an absent one stays absent instead of becoming `undefined`.
+  if (entry.kind === 'donor') {
+    const effect = text(v.effect, MAX_NAME_CHARS)
+    const socket = wishSocket(v.socket)
+    if (effect !== undefined) entry.effect = effect
+    if (socket !== undefined) entry.socket = socket
+  }
+  return entry
+}
+
+/**
+ * Whatever the renderer (or the store file) offered → the wish list this app will actually keep.
+ * Never throws, never rejects the batch; a value that is not a wish-list object at all reads as
+ * the empty list, which is what a character who has never opened the tab has.
+ */
+function wishEntries(raw: unknown, now: number): WishEntry[] {
+  const out: WishEntry[] = []
+  const seen = new Set<string>()
+  for (const value of Array.isArray(raw) ? raw : []) {
+    if (out.length >= MAX_WISHES) break
+    const entry = wishEntry(value, now)
+    if (!entry || seen.has(entry.itemKey)) continue
+    seen.add(entry.itemKey)
+    out.push(entry)
+  }
+  return out
+}
+
+/**
+ * The done strip's dismissals, filtered to the entries that survived.
+ *
+ * A dismissal for a wish that is no longer in the list is DROPPED, not kept: it is a statement
+ * about a row, and a tombstone outliving its row would swallow the wish if it were ever added
+ * again (shared/planner/wishlist.ts `removeWish` makes the same argument from the other side).
+ */
+function wishDismissals(raw: unknown, entries: readonly WishEntry[]): string[] {
+  const live = new Set(entries.map((e) => e.itemKey))
+  const out: string[] = []
+  for (const value of Array.isArray(raw) ? raw : []) {
+    const key = text(value, MAX_ID_CHARS)
+    if (key && live.has(key) && !out.includes(key)) out.push(key)
+  }
+  return out
+}
+
+export function sanitizeWishlist(raw: unknown, now: number = Date.now()): WishList {
+  if (!isRecord(raw)) return { entries: [], clearedDone: [] }
+  const entries = wishEntries(raw.entries, now)
+  const list: WishList = { entries, clearedDone: wishDismissals(raw.clearedDone, entries) }
+  // Assigned rather than spread, the `classesProvenance` argument exactly: absent already means
+  // "never seeded" to every reader, so writing `false` in would change a stored file's bytes for
+  // no change in meaning — and this function is the READ path too.
+  if (raw.seededFromPlans === true) list.seededFromPlans = true
+  return list
 }

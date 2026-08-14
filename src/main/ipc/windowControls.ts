@@ -7,6 +7,7 @@ import { IPC } from '../../shared/ipc'
 import { E2E } from '../e2e'
 import { logError } from '../errorLog'
 import { getFightSelection, setFightSelection } from '../fightSelection'
+import { getScopeSelection, setScopeSelection } from '../scopeSelection'
 import { getOverlayConfig, setOverlayConfig } from '../store'
 import { noteCurrentView } from '../telemetry/errorReports'
 
@@ -151,6 +152,18 @@ export function registerWindowIpc(): void {
   ipcMain.handle(IPC.fightSelectionGet, () => getFightSelection())
   ipcMain.on(IPC.fightSelectionSet, (_e, id: unknown) => {
     setFightSelection(id)
+  })
+
+  // ---- the app-wide SCOPE selection (JOS-332) ----
+  // The same two-call shape as the fight selection above, for the same reason and by the same
+  // argument: a read for a window that mounted after the last change, and a fire-and-forget PATCH
+  // that fans out to every window. The patch is renderer input and is rebuilt inside
+  // `setScopeSelection` (shared/scopeSelection.ts) — an unknown membership or a denominator this
+  // build cannot name is dropped there, never broadcast, and the half a patch does not mention
+  // never moves. Nothing here can touch a surface's SLICE.
+  ipcMain.handle(IPC.scopeSelectionGet, () => getScopeSelection())
+  ipcMain.on(IPC.scopeSelectionSet, (_e, patch: unknown) => {
+    setScopeSelection(patch)
   })
 
   // Fire-and-forget renderer error reports (window.onerror / unhandledrejection /

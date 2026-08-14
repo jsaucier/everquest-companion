@@ -25,20 +25,27 @@
 //   4. A MEMBERSHIP WITH NO SUBJECT IS NOT A SETTING. On `All`, a rung or a custom range the pick
 //      changes nothing and says nothing, and no control is drawn for it.
 //
-//   5. THE TWO SURFACES KEEP THE CHOICE IN TWO DIFFERENT PLACES, ON PURPOSE — and a copy-paste in
-//      either direction would be invisible to every other test in the suite:
-//        • IN-APP (`ScopeBar`) — SESSION-LIFETIME AND UNPERSISTED, in `useTimeslice`'s own
-//          module-scope store, exactly like the slice pick and the rate basis beside it. A
-//          membership is a thing you choose while you are looking; a store key would mean a reader
-//          who once narrowed to one tier comes back tomorrow to a tab hiding most of their camp.
-//        • THE XP OVERLAY — PERSISTED per window beside `xpRows` / `xpSlice` / `xpBasis`, and
-//          REBUILT RATHER THAN TRUSTED on the way in. An overlay remembers everything about itself
-//          because it is a window you set up once and leave floating over the game
-//          (useRateBasis.ts's header states the distinction at length).
+//   5. THE TWO SURFACES READ ONE VALUE, AND NEITHER OF THEM KEEPS IT (JOS-332). This rule said the
+//      exact opposite until the owner's report proved the old arrangement unreadable: the tab kept
+//      the membership in a module variable and the XP overlay — a separate renderer process — kept
+//      its own PERSISTED copy, so `this tier` over the game and `every tier` on the tab were two
+//      true statements about two states behind one label, and the reader had no way to tell which
+//      one the numbers obeyed. The value now lives in MAIN (`src/main/scopeSelection.ts`),
+//      ephemeral, fanned out to every window, read through ONE renderer hook over the SAME three
+//      bridge members in both preloads. These pins protect the thing that would silently regress:
+//      either surface growing a private copy back.
 //
-// Rules 1–4 are pure model over hand-built snapshots, so they never skip. Rule 5 is a source pin in
-// tests/fightSelection.test.mts' technique — comments stripped first, because this repo explains
-// itself in prose that would otherwise satisfy its own greps.
+//   6. AND THE SURFACES OPEN ON `exactTier` WITHOUT THE MODEL DEFAULT MOVING (owner ruling,
+//      JOS-332). `ZONE_SCOPE_OPENING` and `ZONE_SCOPE_DEFAULT` answer different questions —
+//      "what does a reader see first" and "what did a caller who said nothing mean" — and
+//      collapsing them into one constant would re-scope every call site that passes no membership,
+//      which is most of the golden windows.
+//
+// Rules 1–4 are pure model over hand-built snapshots, so they never skip. Rules 5–6 are source pins
+// in tests/fightSelection.test.mts' technique — comments stripped first, because this repo explains
+// itself in prose that would otherwise satisfy its own greps. The SEAM itself (the channels, the
+// normalizer, main's ownership, the bridge identity) is pinned next door in
+// tests/scopeSelection.test.mts; these are about the two surfaces that consume it.
 //
 // Imported RELATIVELY: node tests run through tsx with no `@shared` alias.
 
@@ -47,10 +54,12 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { rangeStats } from '../src/shared/progressionStats'
 import { windowItemRows } from '../src/shared/lootRates'
-import { TAIL_MS, inSlice, resolveSlice, type SliceId } from '../src/shared/timeslice'
+import { TAIL_MS, availableSlices, inSlice, resolveSlice, type SliceId } from '../src/shared/timeslice'
+import { basisMs } from '../src/shared/rateBasis'
 import {
   ZONE_SCOPES,
   ZONE_SCOPE_DEFAULT,
+  ZONE_SCOPE_OPENING,
   ZONE_SCOPE_TITLE,
   isZoneScope,
   normalizeZoneScope,
@@ -107,18 +116,28 @@ const code = (rel: string): string =>
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|[^:])\/\/.*$/gm, '$1')
 
-// ── 5a. the in-app knob: session-lifetime, app-wide, unpersisted ──────────────────────
+// ── 5a. the in-app knob: read from the one app-wide selection, never kept here ─────────
 
-test('the in-app membership lives in the timeslice store and never reaches disk', () => {
+test('the in-app membership is READ from the shared selection and kept nowhere else', () => {
   const mod = code('../src/renderer/src/features/timeslice/useTimeslice.ts')
-  // Module scope IS the reset: the initializer is the default and there is nothing to go stale
-  // across launches. The same shape `pickedId` and `pickedCustom` have had since JOS-130.
-  assert.match(mod, /let pickedZoneScope: ZoneScope = ZONE_SCOPE_DEFAULT/)
+  // The hook that owns the value is `useScopeSelection`, over the MAIN window's bridge. A module
+  // variable here is what made the overlay's copy invisible, so the shape of the regression is a
+  // `let picked…ZoneScope` coming back.
+  assert.match(mod, /useScopeSelection\(window\.eq\)/, 'the membership is read from the shared hook')
+  assert.doesNotMatch(mod, /let picked\w*(Zone)?Scope/, 'the membership grew a second home in this file')
   assert.match(mod, /resolveSlice\(\{[^}]*zoneScope[^}]*\}\)/, 'the pick is applied to the slice here')
-  assert.doesNotMatch(mod, /eqOverlay|setConfig|electron-store|localStorage/, 'the pick grew a persisted home')
-  // `resetTimeslice` clears every dimension of the pick, or a test that resets the slice would
-  // leave a membership behind for the next one.
-  assert.match(mod, /resetTimeslice[\s\S]*?pickedZoneScope = ZONE_SCOPE_DEFAULT/)
+  assert.doesNotMatch(mod, /electron-store|localStorage/, 'the pick grew a persisted home')
+  // `resetTimeslice` still clears every dimension of the pick — it just delegates the one that
+  // moved. A reset that left a membership behind for the next test is the bug this line is about.
+  assert.match(mod, /resetTimeslice[\s\S]*?resetScopeSelection\(\)/)
+})
+
+test('the in-app DENOMINATOR reads the same one value, so the pair cannot split', () => {
+  const mod = code('../src/renderer/src/features/timeslice/useRateBasis.ts')
+  assert.match(mod, /useScopeSelection\(window\.eq\)/)
+  // The old store, gone: a `let basis` here would be the tier defect again, one knob over.
+  assert.doesNotMatch(mod, /let basis/, 'the denominator grew a second home in this file')
+  assert.match(mod, /resetRateBasis[\s\S]*?resetScopeSelection\(\)/)
 })
 
 test('the in-app control is mounted only while the slice carries a zone', () => {
@@ -179,34 +198,37 @@ test('the slice caption is what reads the membership back on the in-app surfaces
   assert.doesNotMatch(bar, /slice\.zoneName/)
 })
 
-// ── 5b. the overlay knob: persisted per window, rebuilt on the way in ─────────────────
+// ── 5b. the overlay knob: the SAME value, over the overlay's own bridge ───────────────
 
-test('the XP overlay persists its membership beside its slice and its denominator', () => {
+test('the XP overlay reads and writes the app-wide selection, not a config key of its own', () => {
   const overlay = code('../src/renderer/src/overlay/XpOverlay.tsx')
-  // Written through the SAME per-kind config patch the row checklist and the basis toggle use.
-  assert.match(overlay, /patch\(\{ xpZoneScope: toggleZoneScope\(slice\.zoneScope\) \}\)/)
-  // Read back with ABSENT meaning the default, never a second opinion about what the default is.
-  assert.match(overlay, /resolveZoneScope\(config\?\.xpZoneScope\)/)
+  // The same hook the tab uses, over THIS window's bridge — the structural identity that makes the
+  // two surfaces one answer.
+  assert.match(overlay, /useScopeSelection\(window\.eqOverlay\)/)
+  // The toggle writes the shared setter. `patch(…)` here would be the retired per-window key, and
+  // it is precisely what the owner's report was about.
+  assert.match(overlay, /setZoneScope\(toggleZoneScope\(slice\.zoneScope\)\)/)
+  assert.match(overlay, /setBasis\(toggleRateBasis\(basis\)\)/)
+  assert.doesNotMatch(overlay, /xpZoneScope|xpBasis/, 'the overlay grew its persisted copy back')
   // And applied through `resolveSlice`, so the caption, the rates and the mote rows cannot end up
   // on different memberships.
   assert.match(overlay, /resolveSlice\(\{ snap: prog, bounds, id, zoneScope \}\)/)
   // Drawn only while the slice names a zone — the same rule as the in-app control.
   assert.match(overlay, /slice\.zoneName !== null && \(\s*<TierToggle/)
+  // The SLICE is still this window's own persisted business, and that is deliberate, not an
+  // oversight — a slice chosen on the Loot tab has no business re-scoping a window over the game.
+  assert.match(overlay, /patch\(\{ xpSlice: v as SliceId \}\)/)
 })
 
-test('main REBUILDS the stored membership rather than trusting the renderer', () => {
+test('the store no longer keeps EITHER retired knob, whatever an older build wrote', () => {
   const store = code('../src/main/store.ts')
-  assert.match(store, /const xpZoneScope = normalizeZoneScope\(next\.xpZoneScope\)/)
-  // Present only on the 'xp' kind, deleted everywhere else — a malformed patch cannot grow a zone
-  // membership on a damage meter (the `xpRows` / `xpBasis` rule, applied to the fourth knob).
-  assert.match(store, /if \(xpZoneScope && kind === 'xp'\) next\.xpZoneScope = xpZoneScope\s*\n\s*else delete next\.xpZoneScope/)
-})
-
-test('the DEFAULT is never written out, on either surface', () => {
-  // Absent means `allTiers` everywhere, so nothing seeds it into the store's own defaults — the
-  // same argument the xp window's other three knobs are held to (src/main/store.ts's comment).
-  const store = code('../src/main/store.ts')
-  assert.doesNotMatch(store, /xp: \{[^}]*xpZoneScope/, 'the default was spelled into the shipped config')
+  // Both are deleted unconditionally — an existing store carries them and nothing reads them, so
+  // preserving them would leave a dead choice on disk that silently disagrees with the live one.
+  assert.match(store, /delete retired\.xpBasis/)
+  assert.match(store, /delete retired\.xpZoneScope/)
+  assert.doesNotMatch(store, /normalizeZoneScope|normalizeRateBasis/, 'the retired validators came back')
+  // And nothing seeds either one into the shipped defaults.
+  assert.doesNotMatch(store, /xp: \{[^}]*xpZoneScope/, 'the membership was spelled into the shipped config')
   assert.doesNotMatch(store, /xpZoneScope: 'allTiers'/)
 })
 // ── 1-4. the model: the folds, the default, the caption, and the setting with no subject
@@ -331,7 +353,134 @@ test('a slice with no zone in it has no membership to state, whatever was picked
   }
 })
 
-test('the membership is a CLOSED union, because it is persisted', () => {
+// ── 6. the owner's own scenario: the DENOMINATOR narrows with the membership (JOS-332) ──
+
+/**
+ * THE BUG REPORT, AS A FIXTURE — the owner's reproduced scenario, instant for instant.
+ *
+ * *logged in to base Befallen open world, killed a while, switched to Befallen D2, killed ~5m; the
+ * panel reads elapsed time 27m across all tiers despite this-tier being selected.*
+ *
+ * So: an earlier visit to the same camp, a stated logout, the login that ends it (which is what
+ * `Zone + Session` measures from), twenty-five minutes of plain `Befallen`, then the tiered one.
+ * The earlier visit is what makes this more than a two-row test — it is inside the RECORD and
+ * outside the SESSION, so a slice that took its range from the zone family rather than from the
+ * login would show up here as six extra hours.
+ *
+ * `Befallen` pays 1% a pull and `Befallen 2 (Adaptive)` pays 5%: the tiers do not pay alike, which
+ * is the whole reason a reader wants them apart and the reason a family-wide denominator is not a
+ * cosmetic complaint.
+ */
+function ownerScenarioSnap(): { snap: ProgressionSnap; lo: number; hi: number; login: number } {
+  const snap = emptySnap()
+  addZone(snap, T0, 'Befallen')
+  for (let m = 0; m < 30; m++) addPull(snap, T0 + m * MIN, 1)
+  // The logout the log STATED, and the login that ended it. `sessionStartOf` reads the newest
+  // `offlineEnd`, so this instant is where `Session` and `Zone + Session` begin.
+  const login = T0 + 6 * HOUR
+  snap.offlineStart.push(T0 + 30 * MIN)
+  snap.offlineEnd.push(login)
+  snap.offlineCamped.push(1)
+  addZone(snap, login, 'Befallen')
+  for (let m = 0; m < 25; m++) addPull(snap, login + m * MIN, 1)
+  addZone(snap, login + 25 * MIN, 'Befallen 2 (Adaptive)')
+  for (let m = 0; m < 5; m++) addPull(snap, login + (25 + m) * MIN, 5)
+  return { snap, lo: T0, hi: snap.lastTs, login }
+}
+
+test('THIS TIER narrows the elapsed denominator, not just the row memberships', () => {
+  const { snap, lo, hi, login } = ownerScenarioSnap()
+  const bounds = { lo, hi }
+  assert.ok(availableSlices(snap, bounds).includes('zoneSession'), 'the fixture defines the slice the owner was on')
+
+  const every = resolveSlice({ snap, bounds, id: 'zoneSession', zoneScope: 'allTiers' })
+  const only = resolveSlice({ snap, bounds, id: 'zoneSession', zoneScope: 'exactTier' })
+  // BOTH RANGES ARE THE SESSION'S. The membership is a different dimension from the range (a zone
+  // is a place, not a stretch of time), so the drawn window does not move — which is exactly why
+  // the narrowing has to happen in the DENOMINATOR and not in `range`.
+  assert.deepEqual(every.range, only.range)
+  assert.equal(every.range.t0, login, 'the range starts at the login, not at the first visit to the camp')
+
+  const stats = (s: ReturnType<typeof resolveSlice>): ReturnType<typeof rangeStats> =>
+    rangeStats({ snap, range: s.range, zoneKey: s.zoneKey, zoneExactKey: s.zoneExactKey })
+  const everyStats = stats(every)
+  const onlyStats = stats(only)
+
+  // 25 minutes of open-world Befallen + the four the tiered visit has been running (the fifth pull
+  // is the newest event, at `hi`, and the range's TAIL_MS is what holds it).
+  assert.equal(everyStats.durationMs, 29 * MIN + TAIL_MS, 'every tier: the whole camp, this session')
+  assert.equal(onlyStats.durationMs, 4 * MIN + TAIL_MS, 'this tier: the tiered visit alone')
+  // …and the same narrowing reaches the two numbers a reader actually reads: the panel's header
+  // duration is `durationMs`, and the `over 27m elapsed` clause is `basisMs('elapsed', …)`.
+  assert.equal(basisMs('elapsed', everyStats), 29 * MIN + TAIL_MS)
+  assert.equal(basisMs('elapsed', onlyStats), 4 * MIN + TAIL_MS)
+  assert.equal(basisMs('active', onlyStats), 4 * MIN + TAIL_MS, 'no qualifying gap in four minutes of pulls')
+
+  // THE NARROWED DENOMINATOR IS EXACTLY THE TIER'S OWN VISITS — not a re-derivation that happens to
+  // be smaller. The row `allTiers` already computed for the tiered spelling is the same number.
+  const tieredRow = everyStats.zones.find((z) => z.zone === 'Befallen 2 (Adaptive)')
+  assert.ok(tieredRow)
+  assert.equal(onlyStats.durationMs, tieredRow.spanMs)
+  assert.equal(everyStats.zones.length, 2, 'two spellings of one camp, two rows')
+  assert.equal(onlyStats.zones.length, 1, 'one admitted, one row')
+
+  // The rate follows the denominator, which is the point: 5 pulls at 5% over four minutes is a very
+  // different claim from 30 pulls averaged over twenty-nine.
+  assert.ok((onlyStats.levelsPerHourWall ?? 0) > (everyStats.levelsPerHourWall ?? 0))
+
+  // AND THE CAPTION SAYS WHICH ONE IT IS (JOS-288's honesty rule — the span line IS the
+  // denominator). The number moved, so the sentence over it has to move too.
+  assert.equal(every.caption, 'Befallen 2 (Adaptive) this session, every tier')
+  assert.equal(only.caption, 'Befallen 2 (Adaptive) this session, this tier only')
+})
+
+test('THE SURFACES OPEN ON THIS TIER, and the model default does not move with them', () => {
+  // Two constants, two questions. The opening is what a reader sees first (owner ruling); the
+  // default is what a CALLER who passed nothing meant, and it has to stay `allTiers` forever or
+  // every golden window that omits the argument silently re-scopes.
+  assert.equal(ZONE_SCOPE_OPENING, 'exactTier')
+  assert.equal(ZONE_SCOPE_DEFAULT, 'allTiers')
+  assert.equal(resolveZoneScope(undefined), 'allTiers')
+  assert.equal(resolveZoneScope(null), 'allTiers')
+  const { snap, lo, hi } = ownerScenarioSnap()
+  const bounds = { lo, hi }
+  assert.deepEqual(
+    resolveSlice({ snap, bounds, id: 'zoneSession' }),
+    resolveSlice({ snap, bounds, id: 'zoneSession', zoneScope: 'allTiers' }),
+    'saying nothing is still the unfiltered read, whatever the surfaces open on'
+  )
+})
+
+/**
+ * THE DEGENERATE CASE, WHICH IS WHY `exactTier` IS SAFE AS AN OPENING (JOS-332).
+ *
+ * Most camps have no tier variants in the record at all, and the owner ruling would be reckless if
+ * opening on `exactTier` could hide anything there. It cannot, and not by a special case: for a
+ * camp the log spells exactly ONE way, the place fold and the row fold admit the same intervals, so
+ * the two memberships are the same query. The numbers come back field for field identical and only
+ * the caption's clause differs — and it is TRUE either way.
+ */
+test('a camp the record spells ONE way answers identically under either membership', () => {
+  const snap = emptySnap()
+  addZone(snap, T0, 'Lower Guk')
+  for (let m = 0; m < 40; m++) addPull(snap, T0 + m * MIN, 2)
+  const bounds = { lo: T0, hi: snap.lastTs }
+  const every = resolveSlice({ snap, bounds, id: 'zone', zoneScope: 'allTiers' })
+  const only = resolveSlice({ snap, bounds, id: 'zone', zoneScope: 'exactTier' })
+  assert.deepEqual(
+    rangeStats({ snap, range: every.range, zoneKey: every.zoneKey, zoneExactKey: every.zoneExactKey }),
+    rangeStats({ snap, range: only.range, zoneKey: only.zoneKey, zoneExactKey: only.zoneExactKey }),
+    'the opening cannot hide a thing on a camp with no tiers'
+  )
+  // The clause still differs, and both readings are honest: there IS only this tier here.
+  assert.equal(every.caption, 'Lower Guk, every tier')
+  assert.equal(only.caption, 'Lower Guk, this tier only')
+})
+
+// The union was closed "because it is persisted" (JOS-291); it stopped being persisted in JOS-332
+// and the closure is load-bearing for a NEW reason — it now crosses an `ipcMain` channel, so every
+// value arriving from a renderer is rebuilt against exactly this list.
+test('the membership is a CLOSED union, because it crosses a trust boundary', () => {
   assert.deepEqual([...ZONE_SCOPES], ['allTiers', 'exactTier'])
   assert.ok(isZoneScope('exactTier'))
   assert.ok(!isZoneScope('everyTier'), 'a spelling this build does not know is not a membership')

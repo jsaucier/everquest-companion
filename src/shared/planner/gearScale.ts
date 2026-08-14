@@ -3,7 +3,7 @@
 // THE LOAD-BEARING RULE. The gear table sorts and filters on numbers that change with the upgrade
 // slider, so the renderer needs `rows.map((r) => scaleGearRow(r, state))` to be the whole cost of
 // moving that slider — no index rebuild, no corpus walk, no re-parse. Measured over the shipped
-// index (tests/gearIndex.test.mts prints it every run): all 6,858 rows at one state in a couple of
+// index (tests/gearIndex.test.mts prints it every run): all 6,814 rows at one state in a couple of
 // milliseconds, which is well inside a frame.
 //
 // EVERY RULE HERE IS PHASE 0'S (src/shared/itemUpgrade.ts), CALLED — none is restated. This file
@@ -92,4 +92,35 @@ export function scaleGearRow(row: GearRow, state: ItemUpgradeState): GearRow {
  */
 export function gearRatio(stats: GearStats): number | undefined {
   return damageRatio(stats.DMG, stats.DELAY)
+}
+
+/**
+ * EFFECTIVE HP (JOS-336) — raw HP plus raw STA, from a (base or scaled) vector.
+ *
+ * WHY IT IS A DERIVED KEY RATHER THAN A COLUMN THAT ADDS TWO CELLS UP. It is `gearRatio`'s twin in
+ * every structural respect: a number the corpus never states, made of two numbers it does, and
+ * therefore the one shape the table can carry that the SLIDER MOVES for a reason a reader has to be
+ * shown. Both halves are `primary`-class stats (itemUpgrade.ts), so an upgrade grows them at
+ * different rates depending on where each one sits against the ≤10 rule — which means a plus-state
+ * can genuinely re-rank two items that tie at base. Living here, on the SCALED vector, is what makes
+ * that automatic: the caller hands in `scaleGearRow(row, state).stats` and the sum is already at
+ * that plus, exactly as the ratio is.
+ *
+ * NO SOFT CAP IS MODELLED — owner ruling, 2026-08-13, verbatim in the ticket: compute it *as if
+ * there were NO soft cap*, taking the stated values raw. EverQuest discounts stamina above a
+ * level-dependent cap and converts it to hitpoints at a ratio this repo has no measurement for;
+ * inventing either number would be exactly the fuzzy join law 12 refuses. So the arithmetic is the
+ * plainest sum there is, and its honesty is that it does not pretend to be the game's answer.
+ *
+ * ABSENT IS NOT ZERO, AND A STATED VALUE IS A VALUE (law 1, both directions). An item that states
+ * NEITHER has no effective HP at all — `undefined`, which sorts LAST in both directions and renders
+ * BLANK, the same treatment a non-weapon gets from `gearRatio`. An item that states exactly ONE of
+ * them has an effective HP equal to that one: the silence of the other key is not a claim that the
+ * item carries zero stamina, it is the wiki declining to say, and folding a stated 40 HP into
+ * `undefined` because no STA line sits beside it would delete a number the corpus DID print.
+ */
+export function gearEffectiveHp(stats: GearStats): number | undefined {
+  const { HP, STA } = stats
+  if (HP === undefined && STA === undefined) return undefined
+  return (HP ?? 0) + (STA ?? 0)
 }

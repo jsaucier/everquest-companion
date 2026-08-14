@@ -24,7 +24,7 @@ import { EpochDetector } from './log/epochDetector'
 import { SessionDetector } from './log/sessionDetector'
 import { baselineOverlay, loadUserSources } from './data/overlayPersistence'
 import { BASELINE_SOURCE } from './data/messageOverlay'
-import { spellCorrectionsReport } from './data/spellDb'
+import { spellCorrectionsReport, spellPlaceholdersReport, spellRemovalsReport } from './data/spellDb'
 import { CombatEngine } from './combat/engine'
 import { ModuleRegistry } from './modules/registry'
 import { createModules } from './modules/wiring'
@@ -196,6 +196,33 @@ logInfo(
   if (c) {
     logInfo(
       `[everquest-companion] Spell corrections: ${c.applied} applied, ${c.satisfied} already correct upstream, ${c.stale.length} stale.`
+    )
+  }
+}
+// The REMOVALS layer (JOS-337), counted on its own line rather than folded into the corrections
+// numbers — the two answer different questions and adding them would misreport both. `removed`
+// counts DB rows dropped for spells EQ Legends does not have; a `satisfied` entry is a TOMBSTONE,
+// an entry whose page a re-scrape already dropped, and it is NAMED rather than counted so a dead
+// entry is visible in a boot log instead of merely cheap.
+{
+  const r = spellRemovalsReport()
+  if (r) {
+    const tombstones = r.satisfied.length > 0 ? ` Tombstones: ${r.satisfied.join(', ')}.` : ''
+    logInfo(
+      `[everquest-companion] Spell removals: ${r.removed} row${r.removed === 1 ? '' : 's'} dropped (absent from EQ Legends), ${r.satisfied.length} already absent upstream.${tombstones}`
+    )
+  }
+}
+// The PLACEHOLDER pass (JOS-342) — the scrape's stub messages (`You .`, `Someone .`, `N/A`) blanked
+// so the absent-field rules downstream read them as the nothing they are. NAMED rather than
+// counted, like the tombstones above: this pass DELETES text, so a boot log that only said "10"
+// would give a reader no way to notice it had started deleting something else.
+{
+  const p = spellPlaceholdersReport()
+  if (p) {
+    const which = p.rows.map((r) => `${r.spell}/${r.field}`).join(', ')
+    logInfo(
+      `[everquest-companion] Spell placeholders: ${p.nulled} stub message${p.nulled === 1 ? '' : 's'} read as absent${which ? ` (${which})` : ''}.`
     )
   }
 }

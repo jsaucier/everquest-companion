@@ -19,6 +19,7 @@ import type { ComboProgress } from './classCombo'
 import type { InventorySource } from './outputs/baseline'
 import type { ExaltPlan } from './planner/types'
 import type { GearSet } from './planner/gearSet'
+import type { WishList } from './planner/wishlist'
 
 /** Held-item counts keyed by lowercased item name. */
 export type HeldCounts = Record<string, number>
@@ -134,6 +135,34 @@ export interface ProgressState {
    * build that predates the gear planner (`tests/gearSetStore.test.mts` pins both halves).
    */
   gearSets?: GearSet[]
+  /**
+   * THE FLAT WISH LIST (JOS-326) — the things this character has decided they want, as one flat
+   * list of items with no cell, socket or host structure at all
+   * (`shared/planner/wishlist.ts`). Character-scoped for the same reason the two keys above are:
+   * a wish is something one character wants.
+   *
+   * A THIRD KEY RATHER THAN A FIELD ON EITHER OF THEM — THE STORE-SEPARATION LAW, RESTATED. The
+   * three planner documents answer three different questions, are edited on different tabs by
+   * different code, and must be able to be empty independently:
+   *   * `exaltPlans` — which EFFECT goes in which socket of which cell, and which donor supplies
+   *     it. Still on disk and still served over its own IPC pair after JOS-326 removed the board
+   *     that drew it; the wish list's one-time seed is what reads it now.
+   *   * `gearSets`   — which ITEM goes in which cell, and at what +N. Retired from the UI in the
+   *     same wave (JOS-325) and kept on disk for the reason its own block above argues.
+   *   * `wishlist`   — which items are WANTED. No cell, no socket, no host, on an owner ruling:
+   *     host targeting is an explicitly later addition, and a wish list that grew a cell map
+   *     would be the plan board again under a friendlier name.
+   * Folding any one into another would make every document of the host kind carry an empty copy
+   * of the guest's shape, and a user who only ever opens one tab would still be writing the
+   * other's.
+   *
+   * ADDITIVE and OPTIONAL — no schema bump and no migration, the `exaltPlans`/`gearSets`
+   * precedent exactly: every reader defaults on a missing key and electron-store rewrites the
+   * whole parsed object, so a store written by any older build loads unchanged and one written
+   * here still opens in a build that predates the wish list (`tests/wishlistStore.test.mts` pins
+   * both halves).
+   */
+  wishlist?: WishList
   /**
    * GROUP-ROSTER user edits (docs/plans/group-model.md §3). Character-scoped, like everything
    * else here. The roster itself is re-derived from the log on every replay; an edit is the one

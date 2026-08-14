@@ -219,7 +219,14 @@ test('the SHIPPED index is keyed by canon key, so rank variants collapse', () =>
   // The design's table counts raw entries; what ships is keyed by spellCanonKey, which
   // folds "Clarity I…X" into one key. ENC therefore holds 176 exclusive KEYS, not 184
   // exclusive ENTRIES — both numbers are correct, at different granularities.
-  assert.equal(spellClassIndex().size, 1412)
+  //
+  // 1412 -> 1411 (JOS-337): the shipped index is built through the REMOVALS layer now, and
+  // `Invigor` is the first spell EQ Legends does not have (src/main/data/spellRemovalsList.ts).
+  // The RAW tallies above are untouched and still measure 1,926 scrape entries, which is the
+  // point of the split — the wiki dataset stays pristine and only the EFFECTIVE index shrinks.
+  // No per-class exclusive count moves with it: Invigor was placed for six classes, so it was
+  // exclusive to none of them.
+  assert.equal(spellClassIndex().size, 1411)
   assert.equal(CANON.get('ENC')?.excl, 176)
   assert.equal(RAW.get('ENC')?.excl, 184)
   assert.deepEqual(classesForSpell('Clarity II'), classesForSpell('Clarity'))

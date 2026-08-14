@@ -2,7 +2,6 @@ import { type JSX, memo } from 'react'
 import { Box, Chip, Stack, TableCell, TableRow, Typography } from '@mui/material'
 import type { ItemKnowledge, LootDisposition, LootEvent } from '@shared/types'
 import { formatDateTime } from '../../lib/formatDate'
-import { FavoriteStar } from '../favorites/FavoriteStar'
 import type { InventoryRow } from '../inventory/reconcile'
 import { isQuestItem } from './lootItemData'
 import { KnowledgeBadge } from './KnowledgeBadge'
@@ -88,19 +87,30 @@ const InventoryEstimate = memo(function InventoryEstimate({ n }: { n: number }):
 
 // Memoized rows (React.memo + stable props) so a re-render that doesn't touch a
 // given row's data skips it entirely (precedent: #17's combat work).
+//
+// WHAT A ROW IS, AFTER JOS-345. Both kinds used to open with a `padding="checkbox"` cell holding a
+// favorite star, and the props to drive it (`favorited`, `onToggleFavorite`) rode down from the
+// view through LootTables to get here. The owner ruled the star out of this window during the
+// 0.27.0 test pass — it was pre-board (it dates to the initial public commit), it was never asked
+// for, and it rendered misaligned at the head of every row, which is what a reader actually saw.
+// So a grouped row is now Item · Times looted · In inventory (est.) · Top source · Zones · Last
+// looted, and a flat row is Time · Item · From · Zone. The whole row is still ONE control — click
+// it and the drill-down takes the pane — and with the star gone there is no longer a click target
+// inside a row that means something else, which is the second thing that was wrong with it.
+//
+// The stars themselves are NOT gone from the app: the same `eq.favorites` store still drives the
+// item stars on the Plane of Sky tab (favorites/FavoriteStar is that tab's control now), so
+// nothing was deleted from disk and nothing stopped being shared. This window simply stopped
+// showing a column it never wanted.
 export const GroupedRow = memo(function GroupedRow({
   g,
-  favorited,
   knowledge,
   inv,
-  onToggleFavorite,
   onSelect
 }: {
   g: GroupRow
-  favorited: boolean
   knowledge?: ItemKnowledge
   inv?: InventoryRow
-  onToggleFavorite: (name: string) => void
   onSelect: (item: string) => void
 }): JSX.Element {
   const posky = isQuestItem(g.item)
@@ -113,9 +123,6 @@ export const GroupedRow = memo(function GroupedRow({
       sx={{ ...FIXED_ROW, cursor: 'pointer', opacity: g.invOnly ? 0.7 : 1 }}
       onClick={() => onSelect(g.item)}
     >
-      <TableCell padding="checkbox">
-        <FavoriteStar name={g.item} favorited={favorited} onToggle={onToggleFavorite} />
-      </TableCell>
       <TableCell>
         <Stack direction="row" spacing={1} alignItems="center">
           {/* The NAME is plain text (JOS-127). It used to anchor a `placement="top"`, interactive
@@ -148,15 +155,11 @@ export const GroupedRow = memo(function GroupedRow({
 
 export const FlatRow = memo(function FlatRow({
   e,
-  favorited,
   knowledge,
-  onToggleFavorite,
   onSelect
 }: {
   e: LootEvent
-  favorited: boolean
   knowledge?: ItemKnowledge
-  onToggleFavorite: (name: string) => void
   onSelect: (item: string) => void
 }): JSX.Element {
   const posky = isQuestItem(e.item)
@@ -167,9 +170,6 @@ export const FlatRow = memo(function FlatRow({
       sx={{ ...FIXED_ROW, cursor: 'pointer' }}
       onClick={() => onSelect(e.item)}
     >
-      <TableCell padding="checkbox">
-        <FavoriteStar name={e.item} favorited={favorited} onToggle={onToggleFavorite} />
-      </TableCell>
       <TableCell sx={{ color: 'text.secondary' }}>{fmtTime(e.ts)}</TableCell>
       <TableCell>
         <Stack direction="row" spacing={1} alignItems="center">

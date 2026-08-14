@@ -20,6 +20,7 @@
     "scrape:respawns": "tsx scripts/scrape-respawns.ts",
     "scrape:spells": "tsx scripts/scrape-spells.ts",
     "scrape:items": "tsx scripts/scrape-items.ts",
+    "scrape:page-era": "tsx scripts/scrape-page-era.ts",
     "fetch:images": "tsx scripts/fetch-wiki-images.mts",
     "fetch:packs": "tsx scripts/fetch-packs.mts",
     "gen:icon": "tsx scripts/gen-icon.mts",

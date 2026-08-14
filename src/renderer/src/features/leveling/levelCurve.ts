@@ -44,7 +44,8 @@
 //              date it, and every exp line in that span might belong to either bar. This is
 //              the same `swap-gap` arm `levelAt` already reports and the same discontinuity
 //              `drawSegments` already refused to draw a stroke across — now it refuses to
-//              accumulate through it too.
+//              accumulate through it too. It covers the swap that lands on the level you were
+//              ALREADY at as well, which no upstream flag can see (`isUnannouncedRestart`).
 //
 // A refused span is DRAWN AS ITS OWN THING (an uncertainty band), never as a dashed
 // interpolation: "make the span visibly uncertain" and "never interpolate through it" are one
@@ -198,6 +199,42 @@ function clippedAt(snap: ExpColumns, dingTs: number): boolean {
 }
 
 /**
+ * Is the ding that closes this bar a BAR THAT FILLED, or a level the game merely RE-REPORTED?
+ *
+ * `buildLevelSegments` splits the ding series only on a STRICT decrease, because that is the
+ * shape a loadout swap usually takes (…50, then 11 — levelSeries.ts's world model). It is blind
+ * to the swap that lands on the level you were ALREADY at, and the owner's log contains exactly
+ * one: `You have gained a level! Welcome to level 11!` at Tue Jul 28 2026 15:51:40, and again at
+ * 16:46:22 (the log's own local stamps — 22:51:40Z and 23:46:22Z) — 95.302% of a bar stated in
+ * between, and the series carrying on to 12 afterwards. No level was gained at the second one.
+ * The number was re-announced.
+ *
+ * Before JOS-331 every `next` that was not flagged `afterSwap` was taken for a bar filling and
+ * appended as the run's closing vertex, so that run rose to 11.95302 and then DROPPED to 11 in
+ * one stroke — a pixel claiming the bar EMPTIED, which is the precise lie the header's honesty
+ * rule exists to forbid, and which nothing in the log states.
+ *
+ * It is also what turned the down-sample tripwire red, and only in August: the column collapse
+ * keeps the FIRST and LAST vertex of each pixel column, which is lossless exactly while a run
+ * never descends. While the peak (23:44:15Z) and the re-report (23:46:22Z) sat in different
+ * columns the descent cost nothing visible; the day the log grew to Aug 13 the `All` window
+ * re-scaled, both fell into column 15, and the collapse dropped that column's real maximum. The
+ * defect was three weeks old — the grid moved, not the arithmetic.
+ *
+ * So: a ding that does not RAISE the level is not evidence that a bar filled. It is the same
+ * unannounced discontinuity `afterSwap` names, it refuses in the same word, and every exp line
+ * in the span might belong to either bar for the same reason WL44's does.
+ *
+ * BOTH ARMS ARE KEPT because neither subsumes the other. An equal-level re-report lives inside
+ * one segment and is never flagged. And `visibleSegments` can drop whole segments when the
+ * window is narrow, which can leave a HIGHER post-swap ding sitting after a lower surviving
+ * anchor — flagged, but not a decrease.
+ */
+function isUnannouncedRestart(ding: CurveDing, next: CurveDing): boolean {
+  return next.afterSwap || next.level <= ding.level
+}
+
+/**
  * One bar's contribution: a run, or the gap that stands in for it.
  *
  * The three refusals that kill the WHOLE bar are tested before a single percent is summed
@@ -213,7 +250,7 @@ function foldBar(o: {
 }): void {
   const { snap, ding, next, domainEnd, out } = o
   const barEnd = next ? next.ts : domainEnd
-  if (next?.afterSwap === true) {
+  if (next !== undefined && isUnannouncedRestart(ding, next)) {
     out.gaps.push({ kind: 'swapped', t0: ding.ts, t1: next.ts, level: ding.level })
     return
   }
@@ -230,6 +267,13 @@ function foldBar(o: {
   if (next) {
     // The ding is a POINT OF THE RUN, which is what makes the step-after render hold flat to it
     // and then jump: the bar filled at an instant the log stated, so the vertical is evidence.
+    //
+    // The vertical is always UPWARD here, and that is a guarantee rather than a hope:
+    // `isUnannouncedRestart` has already sent every `next.level <= ding.level` away as a refusal,
+    // so `next.level >= ding.level + 1`, while `walkBar` returns `overfull` the moment `equiv`
+    // reaches 1 — so the last accumulated vertex is strictly below `ding.level + 1`. That is the
+    // non-decreasing precondition `downsamplePoints` is exact under, established HERE, at the
+    // only place in this file that can append a vertex below the one before it.
     out.runs.push({ points: [...walk.points, { ts: next.ts, y: next.level }], endTs: next.ts })
     return
   }
@@ -296,10 +340,20 @@ export function levelCurveFull(args: LevelCurveArgs): LevelCurve {
  * PER-PIXEL DOWN-SAMPLING, and why keeping the first and last of each column is EXACT.
  *
  * Inside one run the curve is monotonically NON-DECREASING (a stated percent is positive and a
- * ding raises the level), so within any x-column the first point carries that column's minimum
- * and the last carries its maximum. Rendering the pair reproduces the column's whole vertical
- * extent, and every retained vertex is a REAL sample — nothing is averaged, nothing is invented,
- * and the reduced path is the full-resolution path at the resolution the chart can show.
+ * closing ding always RAISES the level), so within any x-column the first point carries that
+ * column's minimum and the last carries its maximum. Rendering the pair reproduces the column's
+ * whole vertical extent, and every retained vertex is a REAL sample — nothing is averaged,
+ * nothing is invented, and the reduced path is the full-resolution path at the resolution the
+ * chart can show.
+ *
+ * THAT PRECONDITION IS A CONTRACT, NOT AN OBSERVATION, and JOS-331 is the scar: a run that
+ * descends breaks first+last silently — the column holding the descent reports the wrong maximum
+ * and nothing else complains. `foldBar` is what establishes it (see the note on its closing-ding
+ * arm), and tests/levelCurve.test.mts asserts it directly over the fixtures and the real log so
+ * the next data shape that breaks it fails by NAME rather than as a mystery column mismatch.
+ * Do not relax it here by widening the collapse to four vertices per column: two per column is
+ * the budget the whole reduction exists for, and a descending run is a lie upstream regardless
+ * of whether the collapse happens to preserve it.
  *
  * `colW` is in viewBox user units; the default 1 is one pixel at the 720u reference width. The
  * charts stretch (`preserveAspectRatio="none"`), so an exact device-pixel column would need the

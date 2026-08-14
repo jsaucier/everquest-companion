@@ -27,17 +27,17 @@
 // ONE BORDER: PreferencesView already wraps each item in an outlined Paper, so this renders bare
 // Stacks.
 
-import { type JSX, useCallback, useEffect, useState } from 'react'
+import { type JSX, useCallback, useState } from 'react'
 import { FormControlLabel, Stack, Switch, Typography } from '@mui/material'
 import MonitorIcon from '@mui/icons-material/Monitor'
 import {
-  DEFAULT_GRAPHICS_PREFS,
   resolveGraphics,
   type GraphicsPrefs,
   type ResolvedGraphics,
   type ResolvedSwitch
 } from '@shared/graphicsPrefs'
-import { NO_GRAPHICS_ENVIRONMENT, type GraphicsEnvironment } from '@shared/wineDetect'
+import type { GraphicsEnvironment } from '@shared/wineDetect'
+import { recordPref, usePrefsSeed } from './prefsHydration'
 import type { PrefSection } from './PreferencesView'
 
 interface GraphicsState {
@@ -49,34 +49,32 @@ interface GraphicsState {
 }
 
 /**
- * The blob, hydrated once from main and written back on every change — the OverlayAutoHide /
- * VoiceSetting pattern exactly. The local write is optimistic (a switch must not lag an IPC round
- * trip) and main's reply is authoritative, being what was actually stored.
+ * The blob, SEEDED from the pane's hydration snapshot and written back on every change. The local
+ * write is optimistic (a switch must not lag an IPC round trip) and main's reply is authoritative,
+ * being what was actually stored.
  *
- * The ENVIRONMENT is hydrated beside it and never again: it is a fact about this launch (whether
- * this process is running inside a Wine prefix), and nothing the user does in Preferences can
- * change it.
+ * IT USED TO MOUNT ON `DEFAULT_GRAPHICS_PREFS` PLUS `NO_GRAPHICS_ENVIRONMENT` AND CORRECT BOTH
+ * (JOS-340), which made this card the loudest flicker in the pane: on a Wine machine the two
+ * switches painted OFF with an "off, your graphics card draws it" caption, and a moment later
+ * flipped ON with the "Wine detected" one. Two reads, two corrections, one card that appeared to
+ * change its mind about the machine it was running on. Both now arrive in the gate's snapshot
+ * (./prefsHydration.tsx), so the first painted frame is the resolved truth.
+ *
+ * The ENVIRONMENT is still read once and never again: it is a fact about this launch (whether this
+ * process is running inside a Wine prefix), and nothing the user does in Preferences can change it
+ * — which is exactly why it belongs in a load-time snapshot.
  */
 function useGraphicsPrefs(): [GraphicsState, (patch: Partial<GraphicsPrefs>) => void] {
-  const [prefs, setPrefs] = useState<GraphicsPrefs>(DEFAULT_GRAPHICS_PREFS)
-  const [env, setEnv] = useState<GraphicsEnvironment>(NO_GRAPHICS_ENVIRONMENT)
-
-  useEffect(() => {
-    let alive = true
-    void window.eq.getGraphicsPrefs().then((stored) => {
-      if (alive) setPrefs(stored)
-    })
-    void window.eq.getGraphicsEnvironment().then((found) => {
-      if (alive) setEnv(found)
-    })
-    return () => {
-      alive = false
-    }
-  }, [])
+  const seed = usePrefsSeed()
+  const [prefs, setPrefs] = useState<GraphicsPrefs>(seed.graphics)
+  const env: GraphicsEnvironment = seed.graphicsEnv
 
   const update = useCallback((patch: Partial<GraphicsPrefs>) => {
     setPrefs((cur) => ({ ...cur, ...patch }))
-    void window.eq.setGraphicsPrefs(patch).then(setPrefs)
+    void window.eq.setGraphicsPrefs(patch).then((stored) => {
+      setPrefs(stored)
+      recordPref('graphics', stored)
+    })
   }, [])
 
   return [{ prefs, env, resolved: resolveGraphics(prefs, env.auto) }, update]

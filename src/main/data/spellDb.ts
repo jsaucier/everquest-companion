@@ -35,6 +35,11 @@ import { POISON_PROCS } from '../../shared/poisons'
 // the name class it produces are security-relevant, and a second copy would drift out of the
 // threat model that argues for them.
 import { subjectCapturePattern } from '../../shared/alertCaptures'
+// THE APOSTROPHE FOLD (JOS-342), imported from the module that owns the search vocabulary rather
+// than restated here. `searchTextFor` below builds the surface and `parseToken` over there folds
+// the query; if the two ever used different character classes the search would go quietly deaf in
+// one direction, so there is exactly one function and both sides call it.
+import { foldApostrophes } from '../../shared/spellSearch'
 // THE crowd-control roster, imported rather than restated (JOS-161). It is what decides whether a
 // `Your <X> spell has worn off of <mob>.` line becomes a `cc` event at all, so it is also what
 // decides whether the `breaks` template can fire. rulesets.ts's only reference back here is an
@@ -44,7 +49,17 @@ import { CC_STEMS, CHARM_STEMS } from '../log/rulesets'
 // derived, so the suffix index, the wears-off map, the suggestion catalog and every search string
 // all see one corrected text. Read that file's header before adding one: it carries the evidence
 // bar, and the reason the fixes live beside the scrape instead of inside it.
-import { applySpellCorrections, type CorrectionsReport } from './spellCorrections'
+import {
+  applySpellCorrections,
+  type CorrectionsReport,
+  type SpellMessageField
+} from './spellCorrections'
+// …and the layer BEFORE them (JOS-337): spells the wiki carries that EQ Legends does not have. It
+// runs first because a spell that is not in the game cannot also have a corrected message, and
+// because every table below is derived from whatever list survives it. Its header carries an
+// evidence bar of its own — absence cannot be log-measured, so the bar is a dated owner
+// verification per entry — and it is not the corrections bar. Read it before adding a removal.
+import { applySpellRemovals, type RemovalsReport } from './spellRemovals'
 // The wiki's own duration strings, read by the SAME function the scrape uses (JOS-189). See
 // `fillDerivedDurations` below for why the load path reads them at all.
 import { parseDurationMs } from '../../shared/spellDuration'
@@ -578,13 +593,24 @@ function suggestionTemplates(s: SpellEntry): SpellCatalogEntry['templates'] {
  * search box answer "slow", "root", "dispel" from the game's own words instead of from an
  * invented effect taxonomy. Lowercased HERE so the renderer's per-keystroke work is a plain
  * substring test — see the field's doc comment in shared/buffTypes.ts.
+ *
+ * AND APOSTROPHE-FOLDED HERE, for the same reason and at the same moment (JOS-342). The fold has
+ * to happen on the surface, once at build time, rather than on 1,900 rows per keystroke — which is
+ * the whole design of this field. `shared/spellSearch.ts foldApostrophes` folds the query to match;
+ * that module's header carries the report and the census.
+ *
+ * A PLACEHOLDER MESSAGE NEVER REACHES HERE. `applyPlaceholderMessages` blanks the scrape's stub
+ * fields at load, so `You .` and `Someone .` are absent by the time the parts are joined and the
+ * `!!p` filter drops them exactly as it drops a field the wiki never stated.
  */
 export function searchTextFor(s: SpellEntry, rankNames: readonly string[] | undefined): string {
   const parts = [s.name, ...(rankNames ?? []), s.msgCastOnYou, s.msgCastOnOther, s.msgWearsOff]
-  return parts
-    .filter((p): p is string => !!p)
-    .join(' ')
-    .toLowerCase()
+  return foldApostrophes(
+    parts
+      .filter((p): p is string => !!p)
+      .join(' ')
+      .toLowerCase()
+  )
 }
 
 /**
@@ -706,8 +732,131 @@ export function applyDerivedDurations(spells: readonly SpellEntry[]): {
   return { spells: out, report }
 }
 
+// ------------------------------------------------------------- the scrape's placeholder messages
+
+/** What one placeholder pass did, for the boot line and the audit test that pins its census. */
+export interface PlaceholderReport {
+  /** Fields blanked, counted per (spell, field) pair. */
+  nulled: number
+  /**
+   * Every one of them, NAMED. The census IS the contract here — the whole risk of this pass is
+   * swallowing a short real sentence — so the rows are listed rather than counted, and
+   * `tests/spellCatalogTemplates.test.mts` pins the list verbatim. A pass that grew a row nobody
+   * argued for fails the suite instead of quietly deleting a message.
+   */
+  rows: { spell: string; field: SpellMessageField; text: string }[]
+}
+
+/** The three fields a placeholder can occupy, in the order the entry states them. */
+const MESSAGE_FIELDS: readonly SpellMessageField[] = [
+  'msgCastOnYou',
+  'msgCastOnOther',
+  'msgWearsOff'
+]
+
+/**
+ * The subject words a message can consist ENTIRELY of, lowercased.
+ *
+ * NOT the same list as `alertCaptures.SUBJECT_TOKENS`, and not a copy of it, because the two answer
+ * different questions. That one asks "which leading placeholder can be turned into a name capture"
+ * and is therefore third-person only (`Someone`, `Target`, `Player`, `Soandso`) — a `You` line
+ * names nobody to capture. This one asks "is there a subject here and NOTHING ELSE", which the
+ * self-voice column can be just as guilty of, and the measured stub is in fact `You .`.
+ */
+const BARE_SUBJECTS: ReadonlySet<string> = new Set([
+  'you',
+  'your',
+  'someone',
+  'target',
+  'player',
+  'soandso'
+])
+
+/**
+ * Is this message a SCRAPE PLACEHOLDER rather than a sentence the game prints?
+ *
+ * TWO SHAPES, AND ONLY TWO — each measured over the whole committed DB (1,928 spells, 3,857
+ * non-empty message fields) before it was written down. Ten fields on five spells match:
+ *
+ *   SHAPE A — A SUBJECT WITH NO PREDICATE. The message's only word is one of the wiki's subject
+ *   placeholders. MEASURED: `You .` ×3 and `Someone .` ×3 — the msgCastOnYou and msgCastOnOther of
+ *   `Snails Healing`, `Slugs Healing` and `Sloths Healing`, the three shaman heal-over-times whose
+ *   wiki pages state the sentence's subject and then state nothing else. (The whitespace-only
+ *   limit case of the same shape is folded here too; it is measured ZERO today.)
+ *
+ *   SHAPE B — THE NOT-APPLICABLE MARKER. The message is exactly `N/A`. MEASURED ×4: all three
+ *   fields of `FireBomb`, whose own `classes` text says "There are no messages in chat when the
+ *   spell is cast/lands", plus the msgWearsOff of `Nature's Holy Wrath`. `N/A` is the scrape
+ *   writing down that the wiki declined to answer — the most literal possible statement of nothing.
+ *
+ * THE BOUNDARY, WHICH IS THE WHOLE OF LAW 1 HERE: a SHORT sentence is still a sentence and must
+ * survive. `You burn.` (Flames of Ro), `You stop.` (Chase the Moon), `Someone dies.` (Death Peace)
+ * and 134 other two-word fields have a subject AND a predicate and are untouched. So are the
+ * subject-LESS ones the wiki simply cropped — `fades away.` ×10, `starts limping!` ×2,
+ * `screams in pain.` ×3 — which are real predicates that the suffix table matches every day. Only
+ * a message with nothing but a subject, or the literal not-applicable marker, is folded.
+ *
+ * AND THE TWO SHAPES AGREE WITH AN INDEPENDENT COUNT, which is why the census is trustworthy rather
+ * than merely stated: those same ten fields are EXACTLY the ten message fields in the whole DB that
+ * carry a single word. Every other one of the 3,847 carries two or more. The rule was derived from
+ * the shapes and it lands on the population a word count finds from the other direction.
+ */
+export function isPlaceholderMessage(msg: string): boolean {
+  const text = msg.trim()
+  if (text.toUpperCase() === 'N/A') return true
+  // The message's WORDS: every run of non-alphanumerics is a separator, so the trailing period, the
+  // wiki's stray spacing and a lone `!` all fall away and what is left is prose or nothing.
+  const words = text.replace(/[^A-Za-z0-9]+/g, ' ').trim().toLowerCase()
+  return words === '' || BARE_SUBJECTS.has(words)
+}
+
+/**
+ * BLANK THE SCRAPE'S PLACEHOLDER MESSAGES — the from-null discipline, applied at load (JOS-342).
+ *
+ * THE DEFECT. A field the wiki states nothing real for was reading downstream as a field that
+ * states something, because a stub is a non-empty string and every gate in this module asks
+ * `!!s.msgCastOnOther`. `Snails Healing` therefore earned a `landsOnOther` suggestion whose authored
+ * raw pattern was `^\[[^\]]*\] (?<player>[A-Za-z' \`]{1,48}) \.` — a trigger that fires on any line
+ * ending in a name and a period, offered to the user as coverage for a spell landing. Its
+ * `Someone .` also minted the cast-on-other suffix `.`, a real (if rarely reached) entry in the
+ * parser's matching table, and both stubs were joined into the wizard's `searchText`.
+ *
+ * NULLING IS THE WHOLE FIX, and that is the point of doing it HERE rather than at each consumer:
+ * the rules for an ABSENT field are already correct everywhere — `searchTextFor` filters it out,
+ * `buildSpellDb` never indexes it, `suggestionTemplates` declines `lands`/`landsOnOther`/`wearsOff`
+ * for it, and `buildSpellCatalog` authors no capture. There is nothing to teach any of them; there
+ * was only a lie to stop telling. The five spells keep every honest template they had (all three
+ * Healing rows are Beneficial and so still offer `fade`), so none of them leaves the catalog.
+ *
+ * `undefined`, not `null` — that is what "absent" is spelled as in `SpellEntry`, and it is what
+ * `applySpellCorrections` tests for when a correction states `from: null`.
+ *
+ * NON-MUTATING, like the two passes above it and for the same reason: `spells.json` is one shared
+ * object for the whole process. Only the rows that change are copied.
+ */
+export function applyPlaceholderMessages(spells: readonly SpellEntry[]): {
+  spells: SpellEntry[]
+  report: PlaceholderReport
+} {
+  const report: PlaceholderReport = { nulled: 0, rows: [] }
+  const out = spells.map((s) => {
+    let patched: SpellEntry | null = null
+    for (const field of MESSAGE_FIELDS) {
+      const text = s[field]
+      if (text === undefined || !isPlaceholderMessage(text)) continue
+      patched = { ...(patched ?? s), [field]: undefined }
+      report.nulled += 1
+      report.rows.push({ spell: s.name, field, text })
+    }
+    return patched ?? s
+  })
+  return { spells: out, report }
+}
+
 let cached: SpellDb | null = null
 let cachedCorrections: CorrectionsReport | null = null
+let cachedRemovals: RemovalsReport | null = null
+let cachedPlaceholders: PlaceholderReport | null = null
 
 /**
  * Load + build the spell DB (cached) from the bundled spells.json, with our corrections applied to
@@ -721,23 +870,69 @@ let cachedCorrections: CorrectionsReport | null = null
  * learned overlay, which only ever needs to reach `castOnYou` — would have left the suffix index
  * and the catalog still holding the wiki's text, which is how a spell ends up matching in the
  * parser and missing from the search box.
+ *
+ * AND REMOVALS COME BEFORE ALL OF IT (JOS-337). The three passes are ordered, and the order is
+ * semantics rather than legibility for the first one: a spell EQ Legends does not have must be
+ * gone before anything reads it, so that no duration is derived for it, no correction can claim
+ * it (a correction naming a removed row reports `unknownSpells` and the audit fails, which is the
+ * intended contradiction), and no derived table — parser index, alert catalog, level unlocks —
+ * can offer it to the player.
+ *
+ * AND THE PLACEHOLDER PASS COMES LAST (JOS-342), which is also semantics rather than legibility.
+ * It must run AFTER the corrections because a correction is OUR stated truth about a sentence and
+ * has to win: an overlay entry that replaces `You .` with the line the game really prints leaves a
+ * field this pass then correctly declines to touch, whereas running first would have blanked the
+ * `from` text out from under that correction and reported it `stale` — a contradiction between two
+ * layers that both believe they are fixing the same row. No committed correction names any of the
+ * five placeholder spells today; the ORDER is what keeps that true when one does. And it must run
+ * BEFORE `buildSpellDb`, for the reason the corrections order states: one text, read once, by every
+ * derived structure at the same moment.
  */
 export function loadSpellDb(): SpellDb {
   if (cached) return cached
   const file = spellsJson as SpellDbFile
-  // DURATIONS FIRST, then the message overlay. The two never touch the same field, so the order is
-  // legibility rather than semantics: this one reads what the wiki already said and the corrections
-  // state what it got wrong.
-  const dated = applyDerivedDurations(file.spells).spells
+  // REMOVALS FIRST: what the game does not have at all.
+  const present = applySpellRemovals(file.spells)
+  cachedRemovals = present.report
+  // Then DURATIONS, then the message overlay. Those two never touch the same field, so their order
+  // is legibility rather than semantics: one reads what the wiki already said and the other states
+  // what it got wrong.
+  const dated = applyDerivedDurations(present.spells).spells
   const { spells, report } = applySpellCorrections(dated)
   cachedCorrections = report
-  cached = buildSpellDb(spells)
+  // …and LAST, the scrape's stubs, blanked so every table below reads them as the nothing they are.
+  const honest = applyPlaceholderMessages(spells)
+  cachedPlaceholders = honest.report
+  cached = buildSpellDb(honest.spells)
   return cached
 }
 
 /** What the committed corrections overlay did on this load (startup line + the audit test). */
 export function spellCorrectionsReport(): CorrectionsReport | null {
   return cachedCorrections
+}
+
+/**
+ * What the committed REMOVALS layer did on this load (startup line + the audit test).
+ *
+ * Reported separately from the corrections rather than folded into their counts, because the two
+ * answer different questions and a boot log that added them together would be lying about both:
+ * `applied` counts sentences rewritten, `removed` counts spells that are not in the game.
+ */
+export function spellRemovalsReport(): RemovalsReport | null {
+  return cachedRemovals
+}
+
+/**
+ * What the PLACEHOLDER pass blanked on this load (startup line + the audit test).
+ *
+ * A third line rather than a number added to either of the others, for the reason the removals
+ * report already states: `applied` counts sentences rewritten, `removed` counts spells the game
+ * does not have, and `nulled` counts fields the wiki declined to answer. Summing any two of those
+ * would misreport both.
+ */
+export function spellPlaceholdersReport(): PlaceholderReport | null {
+  return cachedPlaceholders
 }
 
 /**

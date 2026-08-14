@@ -17,7 +17,6 @@ export interface LootRowsInput {
   /** Which order the GROUPED table is in (lootSort.ts). The flat ledger is a chronological
    *  ledger and stays newest-first whatever this says — see the toolbar's gate. */
   sort: LootSortKey
-  isFavorite: (name: string) => boolean
 }
 
 export interface LootRows {
@@ -48,8 +47,7 @@ export function useLootRows({
   query,
   questOnly,
   showInventoryOnly,
-  sort,
-  isFavorite
+  sort
 }: LootRowsInput): LootRows {
   // Typing echoes IMMEDIATELY (the caller's local `query` state); the filter consumes a
   // DEFERRED copy so a keystroke never blocks on the filter + re-render (Task #41).
@@ -82,7 +80,7 @@ export function useLootRows({
   const events = useMemo(() => filterLootEvents({ keyed, questOnly, q }), [keyed, q, questOnly])
   // Re-sorting is the ONLY thing a sort change costs: the filter above it is memoized on the
   // query, so switching to "last looted" never re-runs the per-keystroke work.
-  const grouped = useMemo(() => groupLootRows(events, isFavorite, sort), [events, isFavorite, sort])
+  const grouped = useMemo(() => groupLootRows(events, sort), [events, sort])
 
   // The inventory-only tail is kept OUT of the default BROWSE so the Loot table stays a loot
   // table (the toolbar chip says how many are hiding) — but a SEARCH always reaches it, because a
@@ -90,9 +88,9 @@ export function useLootRows({
   const invOnlyRows = useMemo<GroupRow[]>(
     () =>
       showsInvOnly(showInventoryOnly, q)
-        ? buildInvOnlyRows({ source: invOnlySource, questOnly, q, isFavorite })
+        ? buildInvOnlyRows({ source: invOnlySource, questOnly, q })
         : [],
-    [showInventoryOnly, invOnlySource, questOnly, q, isFavorite]
+    [showInventoryOnly, invOnlySource, questOnly, q]
   )
 
   const groupRows = useMemo(

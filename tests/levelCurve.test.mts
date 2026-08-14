@@ -325,6 +325,57 @@ test('the live bar holds flat to the end of the drawn domain, and never past a r
 })
 
 // ─────────────────────────────────────────────────────────────────────────────────────────
+// 4b. THE SWAP THAT LANDS ON THE LEVEL YOU WERE ALREADY AT (JOS-331) — section 3's refusal, in
+//     the one shape `buildLevelSegments` cannot flag. Hand-written columns because the point is
+//     the SHAPE, and the real occurrence of it is a moving target in a live log (the owner's is
+//     Tue Jul 28 2026: `Welcome to level 11!` at 15:51:40 and again at 16:46:22, with 95.302% of
+//     a bar stated in between and the series carrying on to 12). This is the regression test —
+//     the live-log tripwire in section 5 is what FOUND it, and only after the window re-scaled.
+
+test('two dings at the SAME level are one segment — the blind spot this refusal covers', () => {
+  const segs = buildLevelSegments([
+    { ts: D0, level: 11 },
+    { ts: D0 + 3 * M, level: 11 }
+  ])
+  // Not an accusation, a statement of fact about the upstream contract: the split is on a STRICT
+  // decrease, so an equal-level re-report is invisible there and `afterSwap` stays false. Which
+  // is exactly why levelCurve.isUnannouncedRestart has to test the levels itself.
+  assert.equal(segs.length, 1, 'the strict-decrease split does not see an equal-level re-report')
+  assert.equal(segs[0].afterSwap, false)
+})
+
+test('a ding that re-reports the level it was already at refuses its span, and never descends', () => {
+  const snap = columns([{ at: 1, pct: 40 }, { at: 2, pct: 40 }, { at: 4, pct: 10 }])
+  const segments = buildLevelSegments([
+    { ts: D0, level: 11 },
+    { ts: D0 + 3 * M, level: 11 }
+  ])
+  const curve = levelCurveFull({ snap, segments, t0: D0 - M, t1: D0 + 10 * M })
+
+  // The span between the two level-11 reports refuses WHOLESALE, in `swapped`'s own word: no
+  // level was gained at the second one, so nothing dates the restart and the 80% stated inside
+  // might belong to either bar — WL44's argument exactly, at an equal level instead of a lower.
+  assert.deepEqual(
+    curve.gaps.map((g) => [g.kind, g.t0, g.t1, g.level]),
+    [['swapped', D0, D0 + 3 * M, 11]]
+  )
+  // THE BUG THIS IS AGAINST: the old code closed the first bar ON that re-report, so the run rose
+  // to 11.8 and then dropped to 11 in one stroke — a pixel claiming the bar emptied.
+  for (const run of curve.runs) {
+    for (let i = 1; i < run.points.length; i++) {
+      assert.ok(run.points[i].y >= run.points[i - 1].y, 'no run may descend')
+    }
+    for (const p of run.points) {
+      assert.ok(!(p.ts > D0 && p.ts < D0 + 3 * M), `a vertex at ${String(p.ts)} accumulated across the restart`)
+    }
+  }
+  // The bar AFTER the re-report is ordinary and is still drawn — the refusal is one span, not a
+  // poison pill for the rest of the series.
+  assert.equal(curve.runs.length, 1, 'the post-restart bar draws normally')
+  assert.deepEqual(curve.runs[0].points.map((p) => p.y), [11, 11.1])
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
 // 5. THE DOWN-SAMPLER, against a SLOW FULL-RESOLUTION REFERENCE over the real capped columns.
 //
 //    The claim being proven is not "close enough". It is that per pixel column the reduced path
@@ -344,21 +395,39 @@ function columnExtent(points: readonly CurvePoint[], scale: ChartScale, colW = 1
   return by
 }
 
-/** The fixtures + (on the owner's machine) the real log, which is the only place the columns
- *  are actually at their cap. */
-function downsampleCases(): Case[] {
-  const cases = ['wl40-farm-run.log', 'wl44-swap-boundary.log', 'e2e-leveling.log'].map(fixtureCase)
-  if (!existsSync(LOG)) return cases
+/**
+ * The owner's live log, replayed AT MOST ONCE per process.
+ *
+ * 135 MB through the real parser is ~2.5 s and three tests below want the same snapshot, so the
+ * replay is cached rather than repeated. `undefined` is "not tried yet", `null` is "there is no
+ * live log here" — which is every machine but the owner's, CI included.
+ */
+let realLogCase: Case | null | undefined
+function theRealLog(): Case | null {
+  if (realLogCase !== undefined) return realLogCase
+  if (!existsSync(LOG)) {
+    realLogCase = null
+    return realLogCase
+  }
   const snap = replay(readFileSync(LOG, 'utf8').split(/\r?\n/))
   const segments = segmentsOf(snap)
   const scale = scaleOf(snap)
-  cases.push({
+  realLogCase = {
     name: 'THE REAL LOG',
     snap,
     segments,
     scale,
     full: levelCurveFull({ snap, segments, t0: scale.t0, t1: scale.t1 })
-  })
+  }
+  return realLogCase
+}
+
+/** The fixtures + (on the owner's machine) the real log, which is the only place the columns
+ *  are actually at their cap. */
+function downsampleCases(): Case[] {
+  const cases = ['wl40-farm-run.log', 'wl44-swap-boundary.log', 'e2e-leveling.log'].map(fixtureCase)
+  const real = theRealLog()
+  if (real) cases.push(real)
   return cases
 }
 
@@ -393,6 +462,37 @@ function assertRunReduced(ref: CurveRun, got: CurveRun, scale: ChartScale, label
   return refCols.size
 }
 
+/**
+ * THE PRECONDITION, ASSERTED DIRECTLY (JOS-331).
+ *
+ * `downsamplePoints` keeps the FIRST and LAST vertex of each pixel column, which reproduces that
+ * column's vertical extent only while a run never descends. A descending run breaks it SILENTLY:
+ * the column holding the descent reports a maximum that is not the column's maximum, and whether
+ * anyone notices depends on where the column boundaries happen to fall — which is why the real
+ * defect this test now guards lived in the log for three weeks and surfaced only when the `All`
+ * window re-scaled and moved the grid underneath it.
+ *
+ * So the invariant gets its own test, ahead of the one that depends on it. When the next data
+ * shape breaks it, this fails by name instead of as a mystery column-extent mismatch.
+ */
+test('no full-resolution run ever descends — the invariant first+last per column is exact under', () => {
+  let vertices = 0
+  for (const c of downsampleCases()) {
+    for (let i = 0; i < c.full.runs.length; i++) {
+      const pts = c.full.runs[i].points
+      for (let k = 1; k < pts.length; k++) {
+        assert.ok(
+          pts[k].y >= pts[k - 1].y,
+          `${c.name} run ${String(i)}: the curve DESCENDS ${String(pts[k - 1].y)} → ${String(pts[k].y)} ` +
+            `at ${new Date(pts[k].ts).toISOString()} — a pixel claiming the bar emptied`
+        )
+      }
+      vertices += pts.length
+    }
+  }
+  assert.ok(vertices > 500, `only ${String(vertices)} vertices checked — the cases did not replay`)
+})
+
 test('per-pixel down-sampling draws the same picture as one vertex per log line', () => {
   let columnsChecked = 0
   let dropped = 0
@@ -423,10 +523,9 @@ test('per-pixel down-sampling draws the same picture as one vertex per log line'
 //    benchmark of the machine.
 
 test('building the curve is cheap enough to do on every snapshot and every window change', () => {
-  const real = existsSync(LOG)
-  const snap = real ? replay(readFileSync(LOG, 'utf8').split(/\r?\n/)) : replay(readFixture('wl44-swap-boundary.log'))
-  const segments = segmentsOf(snap)
-  const scale = scaleOf(snap)
+  const c = theRealLog() ?? fixtureCase('wl44-swap-boundary.log')
+  const real = c.name === 'THE REAL LOG'
+  const { snap, segments, scale } = c
   const args = { snap, segments, t0: scale.t0, t1: scale.t1 }
   for (let i = 0; i < 5; i++) downsampleCurve(levelCurveFull(args), scale)
   const t0 = performance.now()
