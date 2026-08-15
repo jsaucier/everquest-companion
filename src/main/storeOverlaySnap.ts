@@ -17,23 +17,29 @@
 // shared/overlaySnap.ts beside the pure functions. This file is storage and nothing else.
 
 import { settingsStore } from './store'
-import { normalizeOverlaySnap, type OverlaySnapPrefs } from '../shared/overlaySnap'
+import { mergeOverlaySnap, normalizeOverlaySnap, type OverlaySnapPrefs } from '../shared/overlaySnap'
 
-/** The stored blob, defaulted. Never throws, never returns a partial. */
+/** The stored blob, defaulted — and, while the release hold stands, false whatever it says
+ *  (JOS-359; the clamp is in `normalizeOverlaySnap`). Never throws, never returns a partial. */
 export function getOverlaySnap(): OverlaySnapPrefs {
   return normalizeOverlaySnap(settingsStore.get('overlaySnap'))
 }
 
 /**
- * Merge-patch the blob; returns what was ACTUALLY stored, so the Preferences switch renders the
- * answer rather than assuming its request landed.
+ * Merge-patch the blob; returns what the feature will ACTUALLY do, so the Preferences switch
+ * renders the answer rather than assuming its request landed.
  *
- * The patch is `unknown` because it arrives over IPC. `normalizeOverlaySnap`'s second argument is
- * the merge: fields the patch does not name (or names with the wrong type) fall back to what is
- * stored right now, so a renderer, a hand-edited file and a share import all go through one door.
+ * The patch is `unknown` because it arrives over IPC. The second argument is the merge: fields the
+ * patch does not name (or names with the wrong type) fall back to what is stored right now, so a
+ * renderer, a hand-edited file and a share import all go through one door.
+ *
+ * WHAT IS WRITTEN IS THE USER'S OWN VALUE, unclamped — the release hold is applied on READ and
+ * never by rewriting somebody's store (JOS-359). A patch under the hold therefore cannot silently
+ * erase the `true` a tester left behind, while the value this function RETURNS is what the app
+ * will do, which is nothing.
  */
 export function setOverlaySnap(patch: unknown): OverlaySnapPrefs {
-  const next = normalizeOverlaySnap(patch, getOverlaySnap())
+  const next = mergeOverlaySnap(patch, mergeOverlaySnap(settingsStore.get('overlaySnap')))
   settingsStore.set('overlaySnap', next)
-  return next
+  return normalizeOverlaySnap(next)
 }

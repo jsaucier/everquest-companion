@@ -1,5 +1,10 @@
 // OverlaySnapSetting — Preferences → Overlays (JOS-217).
 //
+// NOT ON SCREEN THIS RELEASE (JOS-359). `SNAP_RELEASE_HOLD` (shared/overlaySnap.ts) holds the
+// feature out of the 2026-08-14 build, and PreferencesView does not build this item while it
+// stands. The card is kept whole rather than deleted because the hold is a hold: lifting it is one
+// line, and this file is what that line brings back.
+//
 // ONE SWITCH, AND IT SHIPS OFF. Three reports asked for overlays that line up; one of the same
 // reports complained that an earlier snap FOUGHT them. The owner's ruling is therefore that this
 // is opt-in and that nothing changes for anybody who does not opt in — so the OFF caption says

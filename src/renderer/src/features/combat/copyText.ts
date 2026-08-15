@@ -108,9 +108,14 @@ function sourceTable(rows: SourceView[], mode: 'out' | 'in'): string[] {
 }
 
 /**
- * YOUR DEFENCE, exactly as the panel states it above the incoming rows (JOS-354). Same three
- * builders the panel uses (`defenseRows.ts`), so the paste and the screen can never disagree about
- * a rate or about which outcomes are your own skills.
+ * YOUR DEFENCE, exactly as the panel states it (JOS-354). Same three builders the panel uses
+ * (`defenseRows.ts`), so the paste and the screen can never disagree about a rate, about which
+ * outcomes are your own skills, or — since JOS-361 — about the ORDER the rows are ranked in.
+ *
+ * THE PANEL PUTS IT BEHIND A TAB NOW AND THE PASTE STILL CARRIES IT (JOS-361). The copy affordance
+ * belongs to the card's header, above the tab strip, so it serializes the whole incoming direction
+ * rather than whichever of the two tabs happens to be open; a clipboard that changed shape with a
+ * tab click would make a paste depend on something the reader of the paste cannot see.
  */
 function defenseHeader(seg: SegmentView): string[] {
   const d = seg.defense
@@ -146,9 +151,10 @@ export function formatSegmentText(seg: SegmentView, mode: 'out' | 'in'): string 
   const rows = mode === 'out' ? seg.entities : seg.incoming
   const out: string[] = [subjectLine(null, seg), ...statLines(segmentStats(seg, mode))]
 
-  // The defence block rides ABOVE the rows in the Incoming direction, where the panel puts it —
-  // and it is emitted even when nothing landed, because "37 swings, all of them avoided" is a
-  // segment worth pasting and the row table below would be empty for it.
+  // The defence block rides ABOVE the rows in the Incoming direction — where the panel used to put
+  // it, and where a linear paste still wants it (it is the summary; the table is the detail). It is
+  // emitted even when nothing landed, because "37 swings, all of them avoided" is a segment worth
+  // pasting and the row table below would be empty for it.
   if (mode === 'in') out.push(...defenseHeader(seg))
 
   if (rows.length === 0) {

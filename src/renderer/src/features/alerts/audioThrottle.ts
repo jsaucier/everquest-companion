@@ -12,8 +12,8 @@
 // cooldowns, and the recent-fires ring are all upstream of here and see every fire. The record
 // is not the noise. What is dropped is the second, third and fourth SOUND — and the speech with
 // it, because "one audio alert" is a claim about what you HEAR, not about which channel it came
-// out of. An `audio:'both'` alert is ONE occupancy, not two: its sound + queued utterance are a
-// single unit by design (voice-alerts D5), so charging it twice would let it silence itself.
+// out of. Since JOS-362 a firing is one channel or the other (the combined 'both' is retired), so
+// an occupancy is one sound or one utterance and the question of charging a def twice is moot.
 //
 // THE WINDOW COALESCES BY WHAT WOULD BE HEARD, NOT BY OCCUPANCY (JOS-347). It used to hold a
 // single timestamp, so the FIRST firing in a burst silenced every other firing in it whatever

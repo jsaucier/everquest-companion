@@ -206,8 +206,10 @@ test('a slice with no mote says so, once, instead of leaving a blank section', (
   const rows = view(snap, [loot('Bone Chips', 10 * MIN, 'Nagafen’s Lair - Solo 4 (Refined)')]).rows
   const motes = rows.filter((r) => r.row === 'motes')
   assert.equal(motes.length, 1)
+  // IN THE OPEN, NOT ON A HOVER (JOS-358 took every row title): 'none here' beside the em-dash IS
+  // the sentence now, and the slice caption under the rows says which stretch it is about.
   assert.equal(motes[0].detail, 'none here')
-  assert.match(motes[0].title, /No upgrade mote has dropped in the whole log\./)
+  assert.equal(motes[0].label, 'Motes')
 })
 
 test('the ZONE half of a slice reaches the motes too — instance noise and all', () => {
@@ -266,9 +268,12 @@ test('the header takes your own /who over the ding tail, and says so', () => {
   assert.equal(withWho.level, 11)
   assert.equal(withWho.levelCue, '/who')
   assert.equal(withWho.levelTitle, 'Your own /who row stated this level, 5m ago.')
-  // …and the projection refuses rather than projecting the bar the swap threw away.
+  // …and the projection refuses rather than projecting the bar the swap threw away. The REASON is
+  // no longer a hover on this row (JOS-358 took every one); the refusal itself is what this window
+  // states, and the sentence behind it is `ETA_BLOCKED_TITLE.staleLevel`, pinned where it is still
+  // printed (tests/overviewLeveling.test.mts).
   assert.equal(valueOf(withWho, 'eta'), NONE)
-  assert.match(withWho.rows.find((r) => r.id === 'eta')?.title ?? '', /different level than your last level-up/)
+  assert.equal(withWho.rows.find((r) => r.id === 'eta')?.detail, '')
 })
 
 test('a level nothing has restated for hours wears its age in the header', () => {
@@ -373,12 +378,18 @@ test('at the cap the AA row is drawn even when the slice holds no completion at 
   assert.equal(valueOf(v, 'aa'), '0.00')
 })
 
-test('a refused projection is an em-dash WITH ITS REASON, never a number', () => {
+test('a refused projection is an em-dash, never a number and never a guess', () => {
   // No ding at all: there is no anchor to sum stated percentages from.
   const v = view(farming({ pct: 1 }), [])
+  const eta = v.rows.find((r) => r.id === 'eta')
   assert.equal(valueOf(v, 'eta'), NONE)
-  assert.match(v.rows.find((r) => r.id === 'eta')?.title ?? '', /No level-up has been recorded/)
-  assert.equal(v.rows.find((r) => r.id === 'eta')?.detail, '', 'nothing is claimed about a level')
+  // THE ROW IS STILL DRAWN, and it claims nothing — no target level, no `est.`. The one-clause
+  // REASON used to be a hover here and JOS-358 took every hover off these rows (owner ruling: the
+  // overlay windows keep tooltips only in the title bar); `ETA_BLOCKED_TITLE` is untouched and
+  // pinned where it is still printed, on the Overview card.
+  assert.equal(eta?.label, 'Next level')
+  assert.equal(eta?.detail, '', 'nothing is claimed about a level')
+  assert.equal(eta?.inferred, false)
 })
 
 /**

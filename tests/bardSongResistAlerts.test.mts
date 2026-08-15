@@ -191,7 +191,9 @@ test('JOS-347 A5: the chip ships a per-song voice line, so the user need not bui
   // speech. That is what made three of the four inaudible even after the window learned to tell
   // them apart, and it is why the fix is in both files.
   const defs = CHANTS.map(resistDef)
-  for (const d of defs) assert.equal(d.audio, 'both')
+  // 'speech', not the old combined channel — JOS-362 retired "Sound + voice", and the whole point
+  // of this chip is the one word that tells the four chants apart.
+  for (const d of defs) assert.equal(d.audio, 'speech')
   const phrases = defs.map((d) => (d.speech?.mode === 'custom' ? d.speech.phrase : null))
   assert.deepEqual(phrases, [
     'Flame resisted',

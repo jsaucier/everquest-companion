@@ -10,19 +10,12 @@
 // click. Nothing was dropped — these strings are the only statement of the coat list, the
 // modifier groups and why Timeline is disabled.
 
-import {
-  Box,
-  Divider,
-  Paper,
-  Stack,
-  ToggleButton,
-  ToggleButtonGroup,
-  Typography,
-  type SxProps,
-  type Theme
-} from '@mui/material'
+import { Box, Divider, Paper, Stack, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material'
 import CircleIcon from '@mui/icons-material/Circle'
 import { FightPicker } from './FightPicker'
+// The pill-track chrome for all three switches below. It moved to its own module when the meter
+// card grew tabs of its own (JOS-361) and had to wear the same control — see segmented.ts.
+import { segmented } from './segmented'
 import { ScopeStatus } from './ScopeStatus'
 import type { CombatScope, MeterMode, ScopeOptions } from './dashboardData'
 import type { MeterScope, RosterSnap } from '@shared/roster'
@@ -160,59 +153,6 @@ function StanceReadout({
  *  slots and they proc on every swing. */
 function hasCoat(coat: BladeCoatState | undefined): boolean {
   return !!coat && (!!coat.utility || coat.combat.length > 0)
-}
-
-/**
- * Chrome for the header's segmented controls. All three used to be identical `small`
- * ToggleButtonGroups sitting in a row, which is what made the bar read as a toolbar dump:
- * three outlined boxes of equal weight, none of them obviously the important one. They are
- * now one SHAPE (a low borderless pill track) at three different WEIGHTS, so the eye ranks
- * them instead of scanning them:
- *   - `primary` — the view switch (Dashboard/Timeline). It is the NAVIGATION of this tab, so
- *                 it is the only control wearing the accent: an accent-tinted track behind the
- *                 selection and accent text on it.
- *   - `quiet`   — the scope (Fight/Overall), which lives INSIDE the subject unit: a plain
- *                 light wash, so it reads as part of that control rather than a peer of it.
- *   - `text`    — the direction filter (Outgoing/Incoming): no track at all, just text that
- *                 brightens when active. It filters what one panel lists; it is not a mode.
- *
- * UNSELECTED IS NOT DISABLED. The direction pair used to render its inactive half in
- * `text.disabled`, which is the same colour the app uses for things you cannot click — so the
- * one word you are meant to click ("Incoming") read as dead text. Every unselected option here
- * is `text.secondary` and lifts on hover; `text.disabled` is now reserved for the genuinely
- * disabled case (Timeline with no event ring), which is what it should have meant all along.
- */
-function segmented(weight: 'primary' | 'quiet' | 'text'): SxProps<Theme> {
-  const selected =
-    weight === 'primary'
-      ? { bgcolor: 'rgba(217,178,95,0.20)', color: 'primary.main' }
-      : weight === 'quiet'
-        ? { bgcolor: 'rgba(255,255,255,0.10)', color: 'text.primary' }
-        : // no track behind the pair, so the ACTIVE one carries a faint wash of its own —
-        // colour + weight alone are too weak a signal at 11px.
-          { bgcolor: 'rgba(255,255,255,0.09)', color: 'text.primary' }
-  return {
-    flexShrink: 0,
-    ...(weight === 'text' ? null : { bgcolor: 'rgba(255,255,255,0.04)', borderRadius: 1, p: '2px' }),
-    '& .MuiToggleButtonGroup-grouped': {
-      border: 0,
-      borderRadius: '5px !important',
-      px: weight === 'text' ? 0.5 : 1,
-      py: '1px',
-      minHeight: 0,
-      fontSize: 11,
-      fontWeight: 600,
-      lineHeight: 1.7,
-      letterSpacing: 0,
-      textTransform: 'none',
-      color: 'text.secondary',
-      '&:hover': { bgcolor: 'rgba(255,255,255,0.06)', color: 'text.primary' },
-      '&.Mui-selected': { ...selected, fontWeight: 700 },
-      '&.Mui-selected:hover': selected,
-      // The ONE thing in this bar that is allowed to look dead, and only when it truly is.
-      '&.Mui-disabled': { color: 'text.disabled', '&:hover': { bgcolor: 'transparent' } }
-    }
-  }
 }
 
 /**

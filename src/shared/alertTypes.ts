@@ -145,16 +145,37 @@ export type SpeechMode = 'custom' | 'alertName' | 'spellName' | 'spellFirstWord'
  * WHICH audio channel a fired alert uses (decision D5). Absent ⇒ 'sound', which is exactly
  * what every alert written before voice alerts existed meant — so the field is optional and
  * no migration has to touch a def that never asked to speak.
- * 'both' plays the sound first and queues the speech after it; cooldowns are unchanged.
+ *
+ * 'both' IS RETIRED (owner, 2026-08-14: "also remove sound + spoken - too much garbage"). It
+ * stays in the union because it stays READABLE — a store written by an older build, a share
+ * string, an exported def — and `resolveAlertAudio` (shared/speechText.ts) is the one place it
+ * turns back into a channel the app still has. Nothing OFFERS it any more: the two pickers list
+ * `ALERT_AUDIO_CHOICES`, and every write goes through a value of that narrower type. See
+ * `AlertAudioChoice` below for the rule, and never widen a picker back onto this union.
  */
 export type AlertAudio = 'sound' | 'speech' | 'both'
+
+/**
+ * The channels a user can actually CHOOSE — the union every picker offers and every write
+ * produces (JOS-362). `AlertAudio` minus the retired member, expressed as a subtraction so a
+ * future member of the wider union is offered by default rather than silently dropped.
+ */
+export type AlertAudioChoice = Exclude<AlertAudio, 'both'>
 
 /** Per-alert speech configuration. Absent on a def ⇒ treated as `{ mode: 'alertName' }`. */
 export interface AlertSpeech {
   mode: SpeechMode
   /** Required iff mode === 'custom'; capped at MAX_SPEECH_CHARS (shared/speechText.ts). */
   phrase?: string
-  /** Voice override for this alert; absent ⇒ the global default voice (VoicePrefs.voiceId). */
+  /**
+   * RETIRED (JOS-362) — a per-alert voice override, now IGNORED everywhere it is read.
+   *
+   * The owner's ruling: "our settings shouldn't store which voice per alert, only the preferences
+   * should (within Voice (spoken))". A stored id is tolerated so old stores, exports and share
+   * strings still load, and it is dropped the next time that alert is saved (`speechFieldsFor`,
+   * `speechFieldsOf` — both rebuild this block without it). Nothing reads it: the voice comes from
+   * `VoicePrefs.voiceId` at speak time. Do not re-introduce a reader.
+   */
   voiceId?: string
 }
 

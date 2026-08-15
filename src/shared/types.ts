@@ -905,6 +905,7 @@ export type {
   AlertPrefs,
   SpeechMode,
   AlertAudio,
+  AlertAudioChoice,
   AlertSpeech,
   SpeechEngine,
   VoicePrefs,

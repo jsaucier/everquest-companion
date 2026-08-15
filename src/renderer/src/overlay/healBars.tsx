@@ -21,20 +21,20 @@ import { MeterCrumb, type CrumbTotal } from './meterCrumb'
 // The app's ONE `m:ss` spelling — see meterBars.tsx for why it comes from here.
 import { fmtDur } from '../features/combat/copyTable'
 import { formatNum as fmt, formatHealRate } from '../lib/formatRate'
+// `spellTitle` / `healerTitle` / `healTotalTitle` are deliberately NOT imported any more
+// (JOS-358): the builders live on in healRows.ts for the Combat tab's Healing dimension, which is
+// the surface that can print them — this window carries no hover at all outside its title bar.
 import {
   ABSORB_NOTE,
-  healTotalTitle,
   UNSTATED_AMOUNT,
   hasAbsorbCounts,
   healPanel,
   healerAmount,
   healerStat,
-  healerTitle,
   isAbsorbLane,
   isUnstatedLane,
   laneAmount,
-  spellStat,
-  spellTitle
+  spellStat
 } from '../features/combat/healRows'
 
 // Re-exported so HealMeter (and anything else in this bundle) keeps one import site for the
@@ -59,7 +59,8 @@ const KIND_COLOR: Record<string, string> = {
   enemy: '#cf6679'
 }
 
-/** A single horizontal bar: label + right-text + pct-fill. Same treatment as the DPS overlay. */
+/** A single horizontal bar: label + right-text + pct-fill. Same treatment as the DPS overlay —
+ *  including NO hover (JOS-358): what a bar states is what is printed on it. */
 function Bar({
   color,
   pct: fill,
@@ -67,8 +68,7 @@ function Bar({
   label,
   right,
   onClick,
-  accent,
-  title
+  accent
 }: {
   color: string
   pct: number
@@ -77,12 +77,10 @@ function Bar({
   right: string
   onClick?: () => void
   accent?: string
-  title?: string
 }): JSX.Element {
   return (
     <div
       onClick={onClick}
-      title={title}
       style={{
         position: 'relative',
         height: 18,
@@ -162,17 +160,15 @@ function NothingToRank({ live, mit }: { live: boolean; mit: MitigationView | nul
 /**
  * THE AGGREGATE THE TITLE BAR USED TO CARRY (JOS-158) — the SEGMENT's own `HealingView.hps`,
  * moved and not recomputed, so the number a pinned meter shows did not change on the day its
- * label appeared. It carries the restored/absorbed sentence that used to hang off the header tail
- * (`healTotalTitle` — the one phrasing both healing surfaces print), because a layout move is no
- * reason for an honesty note to go missing. What the number COVERS is said by the crumb row's own
- * label; see overlay/meterCrumb.tsx.
+ * label appeared. What the number COVERS is said by the crumb row's own label; see
+ * overlay/meterCrumb.tsx.
+ *
+ * IT USED TO CARRY THE RESTORED/ABSORBED SENTENCE on hover as well (`healTotalTitle`, inherited
+ * from the header tail). JOS-358 took it: this window keeps hovers only in the title bar. The
+ * sentence is unchanged on the Combat tab's segment header, which is where it can be read.
  */
 function healTotal(seg: SegmentView | undefined): CrumbTotal {
-  return {
-    text: formatHealRate(seg?.healing.hps ?? 0),
-    accent: ACCENT,
-    title: healTotalTitle(seg?.healing)
-  }
+  return { text: formatHealRate(seg?.healing.hps ?? 0), accent: ACCENT }
 }
 
 /**
@@ -277,7 +273,6 @@ function SpellBar({ s, healerKind }: { s: HealSpellView; healerKind: string }): 
         </>
       }
       right={laneAmount(s)}
-      title={spellTitle(s)}
     />
   )
 }
@@ -311,7 +306,6 @@ function HealerBar({
       }
       right={healerAmount(h)}
       onClick={onDrill}
-      title={healerTitle(h)}
     />
   )
 }
@@ -324,14 +318,10 @@ function EnemyHealedLine({
   enemy: { total: number; healers: HealSourceView[] }
 }): JSX.Element | null {
   if (enemy.total <= 0) return null
+  // The line names itself; the per-healer breakdown behind it went with the hover (JOS-358) and is
+  // one drill away on the Combat tab's Healing dimension.
   return (
-    <div
-      style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', padding: '6px 2px 0' }}
-      title={`Healing that landed on mobs you fought. Top: ${enemy.healers
-        .slice(0, 3)
-        .map((h) => `${h.name} ${fmt(h.total)}`)
-        .join(', ')}`}
-    >
+    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', padding: '6px 2px 0' }}>
       enemies healed {fmt(enemy.total)}
     </div>
   )

@@ -125,6 +125,93 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '0.28.0',
+    date: '2026-08-14',
+    entries: [
+      {
+        kind: 'new',
+        text: 'The meter card grows a Mitigation tab on the incoming side: how often you block, dodge, parry, and riposte - counts and rates over the swings actually aimed at you - with your riposte damage broken out inside your melee total. Damage breakdown stays the first thing you see.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Alert phrases can name the mob a spell landed on or faded from: write {target} in a custom phrase and the name is filled in for you - no pattern to write. Suggested fade and break alerts say it by default, and the phrase editor lists the words each alert can fill.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'A Plane of Sky item count can be stated by hand - a pencil on the quest panel Have cell - and correcting the count is what clears a stuck Ready entry. A by-hand chip states the number came from you, and one click takes it back.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'A fourth Sky counting mode, rebaseline: load an inventory dump and older loot evidence is set aside - the dump is the floor, and only what the log says after it moves the numbers.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Heal-over-time spells raise alerts now: a new trigger fires on the heal itself, so it works for every rank of the spell, and beneficial spells landing on you have their own template too.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Slugs Healing had no log sentences on record, so no trigger could ever fire for it and no timer could learn it - the shaman heal ladder speaks its real sentences now.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Several alerts firing in the same instant all sound now: distinct voice lines each play once instead of the first alert muting the rest - four song resists in one pulse are four spoken facts. Identical sounds still fold into one.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A loot alert no longer silently discards a pattern typed without a field: the editor names its fields and refuses to save half a condition.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A re-summoned pet whose only introduction is its own buff landing binds again - and a summoned pet never times out: it ends when it dies, is dismissed, or you swap loadouts.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The Combat tab and the Mobs tab agree on kill counts: a mob opened from a fight card no longer reads zero kills.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Disrupting Shot reads level 20 without a disputed flag - confirmed in play.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'An update check interrupted by the machine going to sleep retries on wake instead of counting as a failure - and a check that did fail says so instead of looking like success.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Under Wine or Crossover the app no longer forces the one graphics path Wine cannot draw, so the window renders instead of coming up blank. Still unsupported - but no longer broken by default.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The spoken-phrase entry on an alert row says what it is now - Edit spoken phrase - and opens every time you pick it, not just the first.'
+      },
+      {
+        kind: 'changed',
+        text: 'Overlay bars no longer pop tooltips over the game. The window title bar keeps its hints, and a tooltip never lingers after your mouse leaves the window.'
+      },
+      {
+        kind: 'changed',
+        text: 'Alerts play a sound or speak - the combined sound-plus-voice option is gone. An alert that used it speaks if it has a phrase and plays its sound otherwise; nothing else about your alerts changed.'
+      },
+      {
+        kind: 'changed',
+        text: 'The spoken voice is one setting now: change it in Preferences and every spoken alert changes with it. Alerts no longer keep the voice they happened to be created with.'
+      }
+    ]
+  },
+  {
     version: '0.27.0',
     date: '2026-08-13',
     entries: [

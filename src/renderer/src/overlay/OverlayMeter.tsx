@@ -15,7 +15,7 @@ import { FOOTER_ROW } from './overlayScale'
 import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
 import { useOverlayCombat } from './useOverlayCombat'
 import { useMeterScope } from '../features/combat/useCombatPrefs'
-import { EMPTY_ROSTER, SCOPE_HINT, chipLabel } from '@shared/roster'
+import { EMPTY_ROSTER, chipLabel } from '@shared/roster'
 
 // Palette (matches the app's combat colors; the overlay has no MUI theme).
 const GOLD = '#d9b25f'
@@ -249,10 +249,7 @@ export default function OverlayMeter(): JSX.Element {
         textScale={textScale}
         locked={locked}
         capture={capture}
-        scope={{
-          label: chipLabel(meterScope, roster),
-          title: `${SCOPE_HINT[meterScope]}. Change it in Preferences > Combat.`
-        }}
+        scope={{ label: chipLabel(meterScope, roster) }}
         notice={<PetNudgeCard nudge={liveNudge(snap)} />}
       >
         <MeterBars
@@ -300,9 +297,8 @@ function MeterFooter({
         color: 'rgba(255,255,255,0.6)'
       }}
     >
-      <span title="Background opacity" style={{ flexShrink: 0 }}>
-        bg
-      </span>
+      {/* The word IS the label (JOS-358) — the footer names its own controls, it does not hover. */}
+      <span style={{ flexShrink: 0 }}>bg</span>
       <input
         type="range"
         min={0.1}

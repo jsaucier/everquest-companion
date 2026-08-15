@@ -9,6 +9,7 @@ import XpOverlay from './XpOverlay'
 import RespawnOverlay from './RespawnOverlay'
 import { isHealOverlayKind } from '@shared/types'
 import { isTimerOverlayKind } from '@shared/buffTimers'
+import { installOverlayPointerExit } from './pointerExit'
 
 // The overlay renders in its OWN transparent BrowserWindow (Task #52). It is a
 // standalone React root — deliberately NOT wrapped in the app's MUI ThemeProvider
@@ -44,6 +45,12 @@ function Surface(): React.JSX.Element {
   if (isHealOverlayKind(kind)) return <HealMeter />
   return <OverlayMeter />
 }
+
+// EVERY KIND GETS THE ORPHAN GUARD (JOS-358). A native tooltip that outlives the pointer sits on
+// top of the GAME, and a click-through window has nothing left to un-hover it — so the dismissal
+// is installed here, once, for whichever surface mounts below. See overlay/pointerExit.ts for
+// which three things count as "the pointer left" on an always-on-top window.
+installOverlayPointerExit()
 
 // overlay.html always carries #overlay-root; fail loudly rather than letting
 // createRoot throw a container error nobody can trace back.

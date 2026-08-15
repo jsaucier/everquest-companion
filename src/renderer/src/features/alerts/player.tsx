@@ -5,8 +5,8 @@
 // pure function — `speechPlan` in lib/speech.ts — rather than by a branch at each call site:
 //   audio:'sound'  (or absent) → unchanged: the pack sound, as it always was.
 //   audio:'speech'            → the utterance INSTEAD of the sound.
-//   audio:'both'              → the sound, then the utterance queued behind it (D5), using
-//                               soundCache's `onEnded` continuation so they never overlap.
+// A def still storing the retired 'both' (JOS-362) resolves to one of those two inside
+// `speechPlan` — see `resolveAlertAudio` — so this path plays ONE channel per firing, always.
 // The alerts module's master MUTE and its volumes govern both halves: mute silences speech
 // too, and the utterance is spoken at VoicePrefs.volume × this alert's effective volume. The
 // engine itself (which tier, which voice, and the fact that the e2e channel never utters)
@@ -120,15 +120,14 @@ export function playAlertNow(def: AlertDef, firing?: Pick<FiredAlert, 'spell'>):
   audioWindow = gate.window
   if (!gate.play) return
   const gain = effectiveVolume(def)
-  const say = (): void => {
-    if (plan.speak) void speak(plan.speak, voice, { ...(def.speech?.voiceId ? { voiceId: def.speech.voiceId } : {}), gain })
-  }
-  if (!plan.sound) {
-    say()
+  // One channel or the other, never both (JOS-362): a plan carries a sound or an utterance. WHICH
+  // VOICE says it is `voice` — the live prefs copy, read at firing time — and nothing off the def:
+  // a stored `speech.voiceId` is ignored, so changing the preference changes every alert at once.
+  if (plan.speak) {
+    void speak(plan.speak, voice, { gain })
     return
   }
-  // 'both': the utterance is the sound's continuation, so nothing talks over the airhorn.
-  void playSound(def.sound.packId, def.sound.soundId, gain, plan.after ? say : undefined)
+  void playSound(def.sound.packId, def.sound.soundId, gain)
 }
 
 /**

@@ -88,21 +88,29 @@ test('D2: the panel rows always show the four skills, and only ever ADD an outco
   const { defense } = replay('w49-round-triple-backstab.log')
   const rows = defenseRows(defense)
 
-  // The four the reporter asked about, in a fixed order, plus the mob's own whiff because this
-  // window has 30 of them. NOT the rune row: nothing absorbed a blow here, and a zero there would
-  // say nothing about the player at all.
-  assert.deepEqual(rows.map((r) => r.label), ['Block', 'Dodge', 'Parry', 'Riposte', 'Missed you'])
-  assert.deepEqual(rows.filter((r) => r.active).map((r) => r.label), ['Block', 'Dodge', 'Parry', 'Riposte'])
-  assert.deepEqual(rows.map((r) => r.count), [7, 2, 1, 2, 30])
+  // The four the reporter asked about, plus the mob's own whiff because this window has 30 of
+  // them. NOT the rune row: nothing absorbed a blow here, and a zero there would say nothing
+  // about the player at all.
+  assert.deepEqual(rows.filter((r) => r.active).map((r) => r.label), ['Block', 'Dodge', 'Riposte', 'Parry'])
+
+  // STACK-RANKED BY COUNT (JOS-361, owner: "the misses should be at the top here"). The window's
+  // hand-counted tallies are miss 30, block 7, dodge 2, riposte 2, parry 1 — so the mob's own
+  // whiff leads and the rows descend from there.
+  assert.deepEqual(rows.map((r) => r.count), [30, 7, 2, 2, 1])
+  assert.deepEqual(rows.map((r) => r.label), ['Missed you', 'Block', 'Dodge', 'Riposte', 'Parry'])
+  // …and the two rows TIED at 2 keep the order the reporter named them in, so the block cannot
+  // shuffle between two equal rows from one snapshot tick to the next (the sort is stable).
+  assert.deepEqual(rows.filter((r) => r.count === 2).map((r) => r.label), ['Dodge', 'Riposte'])
 
   // A window with NO active defence at all still draws all four, at zero — the JOS-113 rule
-  // ("Dragon Punch expands to 0% crit") said of the defensive panel.
+  // ("Dragon Punch expands to 0% crit") said of the defensive panel. Ranking did not change WHAT
+  // draws: the four simply sort to the bottom, under the one outcome that happened.
   const none = {
     ...defense,
     avoided: { miss: 5, dodge: 0, parry: 0, riposte: 0, block: 0, absorb: 0 },
     rates: { miss: 100, dodge: 0, parry: 0, riposte: 0, block: 0, absorb: 0 }
   }
-  assert.deepEqual(defenseRows(none).map((r) => r.label), ['Block', 'Dodge', 'Parry', 'Riposte', 'Missed you'])
+  assert.deepEqual(defenseRows(none).map((r) => r.label), ['Missed you', 'Block', 'Dodge', 'Parry', 'Riposte'])
 
   // The headline carries its own denominator (law 11's spirit).
   assert.equal(defenseHeadline(defense), '52% of 81 swings at you avoided · 15% by block/parry/dodge/riposte')

@@ -56,18 +56,20 @@ import type { JSX, ReactNode } from 'react'
  */
 export const TOTAL_LABEL = 'all'
 
-/** The aggregate this meter is showing, as the crumb row needs it. */
+/**
+ * The aggregate this meter is showing, as the crumb row needs it.
+ *
+ * NO HOVER NOTE SINCE JOS-358. This carried one — the healing meter's restored/absorbed split,
+ * inherited from the header tail JOS-158 replaced — until the owner ruled that these windows keep
+ * tooltips only in the TITLE BAR. The note is not lost: the Combat tab's segment header states the
+ * same sentence from the same `healTotalTitle` (features/combat/SegmentHeader.tsx), on a surface
+ * with room to be read. What is gone is the overlay restating it over the game.
+ */
 export interface CrumbTotal {
   /** already through `lib/formatRate` — `21.7k dps` for damage, `1.2k hps` for healing. */
   text: string
   /** the meter's own accent (damage gold / heal green), so it reads as the headline figure. */
   accent: string
-  /**
-   * ONE CLAUSE, on a span that is not a control (AGENTS.md tooltip diet). The healing meter's
-   * restored/absorbed split lives here — it used to hang off the header tail this replaced, and
-   * dropping it in a layout move would have been a quiet loss of an honesty note.
-   */
-  title?: string
 }
 
 export function MeterCrumb({
@@ -100,10 +102,11 @@ export function MeterCrumb({
           marginBottom: 3
         }}
       >
-        {/* THE WAY OUT, and now its own element rather than the whole row: the aggregate beside it
-            carries a hover note, and a note on a click target is the one thing the tooltip rule
-            forbids. It still GROWS to fill everything the two right-hand items leave, so the
-            reachable back area is what it always was minus the number's own width. */}
+        {/* THE WAY OUT, and its own element rather than the whole row. It was split off because the
+            aggregate beside it carried a hover note and a note on a click target is the one thing
+            the tooltip rule forbids; JOS-358 took that note away, and the split STAYS — the back
+            target is bounded by the number rather than by the row, which is the honest hit area
+            either way. It still GROWS to fill everything the two right-hand items leave. */}
         <div
           onClick={onBack ?? undefined}
           style={{
@@ -117,9 +120,8 @@ export function MeterCrumb({
         >
           {name !== null && (
             <>
-              <span style={{ fontSize: 13 }} title={onBack ? 'Back' : undefined}>
-                {onBack ? '‹' : '·'}
-              </span>
+              {/* The chevron says Back by being a chevron (JOS-358 — no hover out here). */}
+              <span style={{ fontSize: 13 }}>{onBack ? '‹' : '·'}</span>
               <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
             </>
           )}
@@ -128,7 +130,6 @@ export function MeterCrumb({
         {total && (
           <span
             data-testid="overlay-total"
-            title={total.title}
             style={{ display: 'flex', alignItems: 'baseline', gap: 3, flexShrink: 0 }}
           >
             <span

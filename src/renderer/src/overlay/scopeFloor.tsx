@@ -22,9 +22,9 @@
 // IT IS NOT CHROME, AND IT DOES NOT VANISH WHEN LOCKED. The header tag did, on the JOS-115 rule
 // that a pinned click-through window is chrome-free. That rule was about things you reach for;
 // this is a watermark you read, it is `pointerEvents: none` so it is click-through with the panel
-// rather than merely beside it, and a LOCKED meter is precisely the one that has no selector, no
-// controls and no tooltip left to explain why a name is missing from it. So it stays in both
-// modes, and the lock changes nothing about it.
+// rather than merely beside it, and a LOCKED meter is precisely the one that has no selector and
+// no controls left to explain why a name is missing from it. So it stays in both modes, and the
+// lock changes nothing about it. Since JOS-358 the word is ALL it says — see ScopeFloorText.
 //
 // MUI-FREE ON PURPOSE, like every file in this bundle.
 
@@ -43,11 +43,16 @@ import type { CaptureReason } from './useOverlayChrome'
  */
 const FLOOR_H = 12
 
-/** What the floor says: the scope word (already through `chipLabel`) and the tooltip the header
- *  tag used to carry — what this scope means, and where the choice lives now. */
+/**
+ * What the floor says: the scope word, already through `chipLabel`. THE WORD, AND NOTHING ELSE —
+ * the hover it used to carry (what this scope means, and where the choice lives) went with JOS-358,
+ * the owner's ruling that the overlay windows keep tooltips only in the title bar. It cost nothing
+ * here: the watermark is `pointerEvents: none`, so that sentence was already unreachable by a
+ * pointer, and the place the choice actually lives is Preferences > Combat, which is where the
+ * setting explains itself (features/preferences/MeterScopeSetting.tsx).
+ */
 export interface ScopeFloorText {
   label: string
-  title: string
 }
 
 /**
@@ -59,11 +64,10 @@ export interface ScopeFloorText {
  * scale is for the reading matter (the bars), and a watermark that grew with it would be the one
  * thing on the panel demanding attention at 2.0.
  */
-export function ScopeFloor({ label, title }: ScopeFloorText): JSX.Element {
+export function ScopeFloor({ label }: ScopeFloorText): JSX.Element {
   return (
     <div
       data-testid="overlay-scope-floor"
-      title={title}
       style={{
         position: 'absolute',
         left: 6,

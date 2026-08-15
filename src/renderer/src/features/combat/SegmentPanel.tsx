@@ -10,10 +10,11 @@
 // the Overview card renders too — this file is the panel's chrome (header, crumb, scroll box,
 // scope/dimension resolution) and the mob-drill arm that only this surface has.
 
-import { useMemo } from 'react'
-import { Box, Paper, Typography } from '@mui/material'
+import { useMemo, useState } from 'react'
+import { Box, Paper, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material'
 import { TargetSkillBars } from './CombatDashboard'
 import { DefensePanel } from './DefensePanel'
+import { segmented } from './segmented'
 import { meterDrill, skillsForTarget, type Drill, type MeterMode, type TargetDetail } from './dashboardData'
 import { HealBody } from './HealPanel'
 import { DrillCrumb, MeterRows, crumbOf } from './MeterRows'
@@ -44,20 +45,42 @@ function IncomingHeals({ seg }: { seg: SegmentView }): React.JSX.Element | null 
   )
 }
 
+// ── the card's own two tabs (JOS-361) ──────────────────────────────────────────────────
+
+/** Which question this card is answering about the INCOMING direction. */
+type MeterTab = 'damage' | 'mitigation'
+
 /**
- * YOUR DEFENCE (JOS-354), and the two conditions that decide whether it belongs on screen at all:
- * the panel must be listing what is hitting you (a source's own `missBreakdown` in the OUTGOING
- * direction is the mob's avoidance of YOUR swings — the opposite fact), and no drill may be open,
- * because this is a statement about the whole segment and would otherwise sit over one subject's
- * lanes.
+ * THE TAB STRIP, and the two conditions that decide whether the card has tabs at all:
  *
- * ITS OWN COMPONENT rather than two more `&&`s in `SegmentContent`'s JSX: that function is at the
- * measured complexity ceiling, and the house rule there is to split rather than ratchet the
- * threshold (combatShared.tsx's CopyButton precedent, one file over).
+ *  - the panel must be listing WHAT IS HITTING YOU. A source's own `missBreakdown` in the OUTGOING
+ *    direction is the mob's avoidance of YOUR swings — the opposite fact — so the Outgoing and
+ *    Healing dimensions have no second tab, not a disabled one (JOS-354's rule, unmoved).
+ *  - no drill may be open. Mitigation is a statement about the WHOLE segment; offering it over one
+ *    drilled subject's lanes would put two different subjects behind one pair of tabs.
+ *
+ * THE CONTROL IS THE COMBAT AREA'S OWN, not a new one: the same `segmented` pill track the
+ * Dashboard/Timeline, Fight/Overall and Outgoing/Incoming switches wear, at the `quiet` weight
+ * that means "this lives inside the unit it sits in" (segmented.ts). MUI `Tabs` exist elsewhere in
+ * the app (the gear area, Plane of Sky) but they are PAGE-level chrome with a full-width rule
+ * under them, which is not what a 22px-row card wants across its top.
  */
-function DefenceSummary({ seg, mode, drilled }: { seg: SegmentView; mode: MeterMode; drilled: boolean }): React.JSX.Element | null {
-  if (mode !== 'in' || drilled) return null
-  return <DefensePanel d={seg.defense} />
+function MeterTabs({ tab, setTab }: { tab: MeterTab; setTab: (t: MeterTab) => void }): React.JSX.Element {
+  return (
+    <Box sx={{ mb: 0.75, flexShrink: 0 }}>
+      <ToggleButtonGroup
+        size="small"
+        exclusive
+        data-testid="meter-tabs"
+        value={tab}
+        onChange={(_e: unknown, v: MeterTab | null) => v && setTab(v)}
+        sx={segmented('quiet')}
+      >
+        <ToggleButton value="damage">Damage breakdown</ToggleButton>
+        <ToggleButton value="mitigation">Mitigation</ToggleButton>
+      </ToggleButtonGroup>
+    </Box>
+  )
 }
 
 // ── drill resolution ───────────────────────────────────────────────────────────────────
@@ -100,7 +123,46 @@ function ownProcTags(seg: SegmentView, e: SourceView): readonly ProcSkillTag[] {
   return e.kind === 'you' ? (seg.procs.procSkills ?? []) : []
 }
 
-/** The scrolling body: the ranked source list at level 1, one drilled subject below it. */
+/**
+ * The DAMAGE BREAKDOWN tab's rows — the ranked source list at level 1, or the one drilled subject.
+ *
+ * A MOB drill replaces the source list entirely; it is this surface's own level and has no twin on
+ * the glance card or the overlay, so it stays here rather than in the shared body.
+ *
+ * Split out of `SegmentContent` when the tabs landed (JOS-361): that function was already at the
+ * measured complexity ceiling, and the house rule is to split rather than ratchet the threshold
+ * (combatShared.tsx's CopyButton precedent, one file over).
+ */
+function DamageRows({
+  seg,
+  mode,
+  panel,
+  d,
+  setDrill
+}: {
+  seg: SegmentView
+  mode: MeterMode
+  panel: MeterPanel
+  d: DrillState
+  setDrill: (drill: Drill | null) => void
+}): React.JSX.Element {
+  if (panel.level === 1 && d.targetDetail && d.targetName) {
+    return <TargetSkillBars target={d.targetName} detail={d.targetDetail} seg={seg} />
+  }
+  return (
+    <MeterRows
+      panel={panel}
+      activeSec={seg.activeSec}
+      procs={panel.level === 1 ? [] : ownProcTags(seg, panel.subject)}
+      // The Incoming direction has no drill: its rows fall back to EntityRow's own inline
+      // expansion, exactly as they did before this body was shared.
+      setDrill={mode === 'out' ? setDrill : null}
+      empty={mode === 'out' ? 'No outgoing damage in this segment.' : 'No incoming damage in this segment.'}
+    />
+  )
+}
+
+/** The scrolling body: whichever of the card's tabs is showing (JOS-361). */
 function SegmentContent({
   seg,
   mode,
@@ -109,7 +171,8 @@ function SegmentContent({
   roster,
   d,
   drill,
-  setDrill
+  setDrill,
+  tab
 }: {
   seg: SegmentView
   mode: MeterMode
@@ -121,6 +184,9 @@ function SegmentContent({
   /** the raw token — the Healing dimension resolves it against healers, not damage sources. */
   drill: Drill | null
   setDrill: (drill: Drill | null) => void
+  /** the RESOLVED tab: 'damage' wherever the strip is not offered at all (see `SegmentBody`), so
+   *  nothing downstream has to re-test the two conditions that decide whether tabs exist. */
+  tab: MeterTab
 }): React.JSX.Element {
   // THE HEALING DIMENSION IS ITS OWN LIST, top to bottom (P2). It shares this scroll box, the
   // drill token and the segment header — and nothing else: healers are not damage sources, so
@@ -132,28 +198,18 @@ function SegmentContent({
       </Box>
     )
   }
-  // A MOB drill replaces the source list entirely; it is this surface's own level and has no
-  // twin on the glance card or the overlay, so it stays here rather than in the shared body.
-  const mob = panel.level === 1 && d.targetDetail && d.targetName
   return (
     <Box data-testid="meter-body" sx={{ overflow: 'auto', flexGrow: 1, minHeight: 0 }}>
-      {/* YOUR DEFENCE (JOS-354) — above the mobs it is derived from; the component owns its own
-          two-condition gate (see DefenceSummary). */}
-      <DefenceSummary seg={seg} mode={mode} drilled={d.crumb !== null} />
-      {mob && d.targetName && d.targetDetail ? (
-        <TargetSkillBars target={d.targetName} detail={d.targetDetail} seg={seg} />
+      {tab === 'mitigation' ? (
+        // YOUR DEFENCE (JOS-354), on its own tab since JOS-361. Nothing else draws here: the two
+        // tabs are two answers, not one column with a heading on it.
+        <DefensePanel d={seg.defense} />
       ) : (
-        <MeterRows
-          panel={panel}
-          activeSec={seg.activeSec}
-          procs={panel.level === 1 ? [] : ownProcTags(seg, panel.subject)}
-          // The Incoming direction has no drill: its rows fall back to EntityRow's own inline
-          // expansion, exactly as they did before this body was shared.
-          setDrill={mode === 'out' ? setDrill : null}
-          empty={mode === 'out' ? 'No outgoing damage in this segment.' : 'No incoming damage in this segment.'}
-        />
+        <>
+          <DamageRows seg={seg} mode={mode} panel={panel} d={d} setDrill={setDrill} />
+          {mode === 'in' && !d.crumb && <IncomingHeals seg={seg} />}
+        </>
       )}
-      {mode === 'in' && !d.crumb && <IncomingHeals seg={seg} />}
     </Box>
   )
 }
@@ -239,6 +295,14 @@ export function SegmentBody({
   setDrill: (d: Drill | null) => void
 }): React.JSX.Element {
   const heal = mode === 'heal'
+  // WHICH TAB (JOS-361). Plain component state, NOT a renderer pref, and that is the neighbourhood
+  // convention rather than an oversight: the two switches this one sits under — the view switch
+  // (Dashboard/Timeline) and the direction filter (Outgoing/Incoming/Healing) — are both
+  // `useState` in CombatView, and the owner's ruling is that the card OPENS on Damage breakdown.
+  // A persisted tab would contradict that ruling the first time anyone left it on Mitigation.
+  // (The things around here that DO persist — the drill, the chart's hidden lines, Fight/Overall —
+  // persist because they are answers a user would have to re-derive; a tab is one click.)
+  const [tab, setTab] = useState<MeterTab>('damage')
   const dim = scopedDimension(seg, mode, scope, roster)
   const scoped = dim.rows
   const [combinePetRow] = useCombinePetRow()
@@ -250,11 +314,23 @@ export function SegmentBody({
   // describe a different set of rows than the ones under it (JOS-170).
   const head = headline(panel, dim)
   const d = useDrillState(panel, tl, drill)
+  // The two conditions from `MeterTabs`, resolved ONCE: whether the card has tabs at all, and
+  // therefore which tab the body is showing.
+  const tabbed = mode === 'in' && d.crumb === null
+  const shownTab: MeterTab = tabbed ? tab : 'damage'
 
   // "Copy this view" means THIS view: the same choice the body below makes, so the clipboard can
   // never hold a level the user isn't looking at. Built on click, never on render. The per-ability
   // stats a reader expanded inline (JOS-113) are not serialized: the paste is the ranked ability
   // table, and a single ability's crit/double/triple is a click-state, not a level to copy.
+  //
+  // …AND IT IS DELIBERATELY NOT TAB-AWARE (JOS-361). `formatSegmentText(seg, 'in')` already carries
+  // the defence block AND the attacker table, and it keeps carrying both: the copy button belongs
+  // to the panel HEADER, above the strip, so it is the CARD's affordance and not the visible tab's
+  // — and the alternative loses one of the two halves of the incoming picture depending on which
+  // tab happened to be open, which is exactly how a paste starts lying about the fight. Dropping
+  // mitigation from the paste would also silently retire the one place JOS-354's answer is
+  // shareable. The tab decides what is on SCREEN; the clipboard still gets the whole direction.
   const copyView = (): string =>
     panel.level !== 1
       ? // The SAME pets the body nests into this list — `MeterPanel.pets` IS what was nested,
@@ -299,6 +375,9 @@ export function SegmentBody({
           setDrill={setDrill}
         />
       )}
+      {/* The card's own tabs, at the top of its CONTENT and outside the scroll box below — a tab
+          strip that scrolls away with the rows it switches is not a tab strip. */}
+      {tabbed && <MeterTabs tab={tab} setTab={setTab} />}
       <SegmentContent
         seg={seg}
         mode={mode}
@@ -308,6 +387,7 @@ export function SegmentBody({
         d={d}
         drill={drill}
         setDrill={setDrill}
+        tab={shownTab}
       />
     </Paper>
   )

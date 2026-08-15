@@ -12,14 +12,23 @@
 // by the WINDOW MANAGER — the renderer never sees a mousemove and has no position to correct.
 // `will-move` is Electron's Windows hook into exactly that loop: it fires with the rectangle the
 // OS is about to apply, and `preventDefault()` cancels it. So the mechanism is "veto the move the
-// OS wanted, apply the one we want", which is why a snapped window STICKS while the pointer keeps
-// travelling and lets go once the pointer is further than the snap distance. windowPlacement.ts's
-// header predicted this landing spot ("and, for a snap, on the user's own move").
+// OS wanted, apply the one we want". windowPlacement.ts's header predicted this landing spot
+// ("and, for a snap, on the user's own move").
+//
+// …AND THE RECTANGLE IT HANDS US IS NOT THE POINTER (JOS-359). The first build read `will-move`'s
+// bounds as the hand's own position; they are not. The Windows move loop keeps a DRAG RECTANGLE
+// and offsets it by each mouse message, and the rectangle the app leaves behind is the one it
+// keeps — so once we answer a proposal with a snapped rectangle, the loop's baseline IS the snap
+// and the hand's travel since is gone. That is why a snapped overlay could not be pulled free, and
+// it is why the virtual position is NOT recoverable from the event: the accumulation lives in
+// `snapDrag` (shared/overlaySnap.ts), and this file's job is to feed it the two rectangles it
+// needs — the proposal, and where the window actually is right now.
 //
 // OFF MEANS NOTHING RUNS. The listener is installed unconditionally, because a preference that can
 // be toggled while an overlay is open must not need the window re-created — but its first line is
 // the store read, and with snapping off it returns before touching a rectangle, a display or the
 // geometry. That is the owner's "zero behavior change unless enabled" as a single early return.
+// HELD (SNAP_RELEASE_HOLD), the listener is not installed at all — see the constant's own comment.
 //
 // A SNAPPED POSITION IS THE USER'S OWN POSITION, so it is deliberately NOT declared through
 // windows.ts's `appliedBounds` marker (JOS-187). That marker exists to stop the app's own
@@ -35,7 +44,7 @@
 // of windows.ts) would make the two files circular for no gain.
 
 import type { BrowserWindow, Rectangle } from 'electron'
-import { snapMovingBounds } from '../shared/overlaySnap'
+import { snapDrag, SNAP_RELEASE_HOLD, type SnapDragSession } from '../shared/overlaySnap'
 import { getOverlaySnap } from './storeOverlaySnap'
 import { displayWorkAreas } from './windowPlacement'
 import { OVERLAY_KINDS, type OverlayKind } from '../shared/types'
@@ -82,18 +91,32 @@ export function installOverlaySnap(
   overlays: OverlayRegistry,
   mainWindow: () => BrowserWindow | null
 ): void {
+  // The release hold, at the only place it can be absolute: no listener, no store read, no chance
+  // that a stored `enabled: true` reaches a drag by some path the normalizer does not cover.
+  if (SNAP_RELEASE_HOLD) return
   let applying = false
+  // The drag's own memory (see `snapDrag`). Null between drags, and re-anchored by that function
+  // whenever the window turns out not to be where we left it.
+  let session: SnapDragSession | null = null
   w.on('will-move', (event, newBounds) => {
-    if (applying || !getOverlaySnap().enabled) return
-    const snapped = snapMovingBounds(newBounds, {
-      windows: neighbours(kind, overlays, mainWindow),
-      screens: displayWorkAreas()
+    if (applying || !getOverlaySnap().enabled) {
+      session = null
+      return
+    }
+    const step = snapDrag(session, {
+      proposal: newBounds,
+      // Where the window is BEFORE this proposal is applied — the rectangle the OS offset to
+      // reach `newBounds`, and the only way to recover how far the mouse actually travelled.
+      current: w.getBounds(),
+      targets: { windows: neighbours(kind, overlays, mainWindow), screens: displayWorkAreas() },
+      now: Date.now()
     })
-    if (snapped.x === newBounds.x && snapped.y === newBounds.y) return
+    session = step.session
+    if (step.apply === null) return
     event.preventDefault()
     applying = true
     try {
-      w.setBounds(snapped)
+      w.setBounds(step.apply)
     } finally {
       applying = false
     }

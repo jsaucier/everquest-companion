@@ -19,6 +19,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { OverlayConfig, OverlayDrill } from '@shared/types'
 import { clampTextScale } from '@shared/types'
+import { overlayPointerExited } from './pointerExit'
 
 /**
  * WHY A LOCKED OVERLAY EVER CAPTURES THE MOUSE, and why the reason has a NAME.
@@ -147,6 +148,11 @@ export function useOverlayChrome(): OverlayChrome {
     capturedRef.current = want
     setHovering(want)
     window.eqOverlay.setIgnoreMouse(!want)
+    // THE THIRD LEAVE SIGNAL (JOS-358). The last named reason letting go is this window saying
+    // nothing here needs the mouse any more — and it is the moment a PINNED overlay stops being
+    // able to observe a leave for itself, because main is about to start ignoring mouse events
+    // again. A native tooltip raised over the title bar would otherwise stay up over the game.
+    if (!want) overlayPointerExited()
   }
 
   const capture = (reason: CaptureReason, active: boolean): void => {
@@ -168,6 +174,10 @@ export function useOverlayChrome(): OverlayChrome {
     reasonsRef.current.clear()
     capturedRef.current = !next
     setHovering(false)
+    // PINNING IS A LEAVE TOO (JOS-358): the press that locks the window is made ON the control
+    // whose tooltip is up, and the very next thing that happens is the window going
+    // click-through — after which nothing can un-hover it.
+    overlayPointerExited()
   }
 
   return {

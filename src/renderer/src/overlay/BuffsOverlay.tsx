@@ -260,15 +260,20 @@ function useDismissals(): { dismissals: TimerDismissals; dismiss: (row: BuffTime
 
 /**
  * ONE FOOTER CHIP, drawn twice (JOS-215). The arrangement toggle and the permanent-buff toggle are
- * the same control — a two-state press whose LABEL states what you are looking at and whose title
- * states what pressing it would do — so they are one component rather than two copies of thirty
- * lines of inline style. `attr` carries the state the e2e reads, per chip.
+ * the same control — a two-state press whose LABEL states what you are looking at — so they are one
+ * component rather than two copies of thirty lines of inline style. `attr` carries the state the
+ * e2e reads, per chip.
+ *
+ * WHAT PRESSING IT WOULD DO IS AN ARIA NAME NOW, NOT A HOVER (JOS-358). The footer is not the title
+ * bar, and the owner ruled these windows keep tooltips only there. The sentence is worth keeping in
+ * the accessibility tree — the label is three characters wide and a screen reader has nothing else
+ * to go on — but it may not open a popup over the game.
  */
 function FooterChip({
   testId,
   attr,
   label,
-  title,
+  action,
   dim = false,
   onPress,
   noDrag
@@ -276,7 +281,8 @@ function FooterChip({
   testId: string
   attr: Record<string, string>
   label: string
-  title: string
+  /** What a press would do, as this control's accessible name. Never rendered as a tooltip. */
+  action: string
   /** Draw it faded — the "this is currently off" reading, for a chip whose two states are on/off. */
   dim?: boolean
   onPress: () => void
@@ -287,7 +293,7 @@ function FooterChip({
       type="button"
       data-testid={testId}
       {...attr}
-      title={title}
+      aria-label={action}
       onClick={onPress}
       style={{
         ...noDrag,
@@ -336,9 +342,8 @@ function BuffsFooter({
         color: 'rgba(255,255,255,0.6)'
       }}
     >
-      <span title="Background opacity" style={{ flexShrink: 0 }}>
-        bg
-      </span>
+      {/* The word IS the label (JOS-358) — the footer names its own controls, it does not hover. */}
+      <span style={{ flexShrink: 0 }}>bg</span>
       <input
         type="range"
         min={0.1}
@@ -358,7 +363,7 @@ function BuffsFooter({
         testId="buff-timer-grouping"
         attr={{ 'data-grouping': grouping }}
         label={grouping === 'none' ? 'time left' : 'by target'}
-        title={
+        action={
           grouping === 'none'
             ? 'Sorted by time left. Press to group by target instead.'
             : 'Grouped by target. Press to sort by time left instead.'
@@ -377,7 +382,7 @@ function BuffsFooter({
         attr={{ 'data-show-permanent': showPermanent ? 'true' : 'false' }}
         label="perm"
         dim={!showPermanent}
-        title={
+        action={
           showPermanent
             ? 'Showing buffs that never expire. Press to hide them.'
             : 'Buffs that never expire are hidden. Press to show them.'

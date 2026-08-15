@@ -72,11 +72,12 @@ export const SUGGEST_TEMPLATES: Record<
      * THE SPOKEN PHRASE THIS TEMPLATE SHIPS, given the spell's distinctive word — and the whole of
      * JOS-353's "suggested alerts can emit it" (owner ruling 2026-08-14).
      *
-     * A template with one gets `audio:'both'` and a `custom` speech mode. 'both' rather than
-     * 'speech', for the reason `landsOnOther` stated first: a suggestion the APP authors has to be
-     * audible on a machine with no speech voices at all, and `speechPlan` (lib/speech.ts) falls
-     * back to the pack sound only when the TEXT is empty, never when the engine is missing. The
-     * sound is the guaranteed half; the spoken sentence rides behind it.
+     * A template with one gets `audio:'speech'` and a `custom` speech mode. It used to get the
+     * combined 'both' channel — the pack sound as a guaranteed-audible half with the sentence
+     * riding behind it — and that channel is retired (JOS-362, owner: "also remove sound + spoken
+     * - too much garbage"). These templates exist to SAY something, so 'speech' is the half that
+     * survives; a machine with no voice set up is told so by `VoiceSetupLink` on the row itself,
+     * which is a fix rather than a silent substitution.
      *
      * `{target}` needs NO PATTERN — the app fills it from the event's own entity field
      * (shared/alertTargets.ts). `{player}` is `landsOnOther`'s declared capture group and is the
@@ -203,11 +204,11 @@ export const SUGGEST_TEMPLATES: Record<
   // are what stop a stranger typing the sentence into guild chat and having their text captured
   // and spoken. Read that module's threat model before touching this.
   //
-  // IT SPEAKS, AND IT ALSO PLAYS. `audio:'both'` rather than 'speech': a suggestion the APP
-  // authors has to be audible on a machine with no speech voices at all, and `speechPlan`
-  // (lib/speech.ts) falls back to the pack sound only when the TEXT is empty — never when the
-  // engine is missing. The sound is the guaranteed half; the spoken name rides behind it.
-  // "Consider this my opening move."
+  // IT SPEAKS, FULL STOP. This template shipped on the combined 'both' channel — the pack sound
+  // as the guaranteed-audible half, the spoken name behind it — until JOS-362 retired that
+  // channel; the point of the template is the NAME it says, so 'speech' is what it keeps. The def
+  // still carries its pack sound, so a user who switches the row's output back to a pack gets a
+  // working sound alert with one click. "Consider this my opening move."
   landsOnOther: {
     chip: 'When it lands on someone (say who)',
     kind: 'buffApply', // unused for this template — see `raw`; kept so the record shape is total.
@@ -467,10 +468,10 @@ function buildDef(entry: SpellCatalogEntry, template: TemplateKind, packId: stri
   }
   // THE TEMPLATES THAT SAY WHO (JOS-103 for `{player}`, JOS-353 for `{target}`). One branch for
   // all of them now: the phrase is the template's own (`speaks`), and every template that has one
-  // gets the same 'both' channel for the reason argued on that field.
+  // gets the same 'speech' channel for the reason argued on that field.
   const phrase = t.speaks?.(spellShortName(entry.name))
   if (phrase !== undefined) {
-    def.audio = 'both'
+    def.audio = 'speech'
     def.speech = { mode: 'custom', phrase }
   }
   return def
@@ -489,10 +490,10 @@ function buildDef(entry: SpellCatalogEntry, template: TemplateKind, packId: stri
  * arrive together. Four identical sounds in one instant is one sound (audioThrottle.ts, and it is
  * right to fold them); four DIFFERENT lines are four facts, and the throttle now keeps them all.
  * So the def the wizard authors names its own spell out loud, in the same shape and for the same
- * reasons as `landsOnOther`: `audio:'both'` rather than 'speech', because a suggestion the APP
- * authors must be audible on a machine with no speech voices at all, and the spoken half rides
- * behind the guaranteed sound. The phrase is editable like any other — this is the DEFAULT that
- * the reporter had to build by hand four times.
+ * reasons as `landsOnOther`: `audio:'speech'`, because the whole value of this suggestion is the
+ * word that tells the four chants apart. (It shipped on the combined 'both' channel until JOS-362
+ * retired that channel.) The phrase is editable like any other — this is the DEFAULT that the
+ * reporter had to build by hand four times.
  *
  * `castRank` is deliberately left alone: its lines are one per cast, not one per song pulse, and
  * a chip that starts talking because its twin had to is a change nobody asked for.
@@ -518,7 +519,7 @@ function buildRankDef(
     note: `Suggested alert - ${template} for ${rank}.`
   }
   if (template === 'resistRank') {
-    def.audio = 'both'
+    def.audio = 'speech'
     // The SHORT name, the way every other spoken default in this file says a spell: "Tuyen's
     // Chant of Frost V" is four syllables of preamble before the one word that tells the four
     // chants apart. `spellShortName` strips the rank first, so the phrase survives a level-up

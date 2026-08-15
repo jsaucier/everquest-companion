@@ -295,14 +295,16 @@ test('formatSegmentText (incoming) uses the incoming totals and appends the heal
       // Incoming carries NO active-dps and NO enemy-heal note — both are outgoing-only claims.
       'Incoming damage · 3.2k · 39 dps',
       '',
-      // YOUR DEFENCE (JOS-354) rides above the attacker table, exactly where the panel puts it.
-      // The run wraps on the app's ' · ' packer rather than overrunning the paste width, the four
-      // ACTIVE defences lead, and the mob's own whiff is a separate row because it is not a skill
-      // of yours. The riposte notes are prose and wrap on words.
+      // YOUR DEFENCE (JOS-354) rides above the attacker table: the summary first, the detail
+      // after. The panel puts it behind a Mitigation tab since JOS-361 and the paste still carries
+      // BOTH halves of the direction — the copy button is the card's, not the visible tab's.
+      // The run wraps on the app's ' · ' packer rather than overrunning the paste width, the rows
+      // are STACK-RANKED by count (JOS-361: 30 misses lead), and the riposte notes are prose and
+      // wrap on words.
       'Your defence · 52% of 81 swings at you avoided',
       '15% by block/parry/dodge/riposte',
-      'Block 7 (8.6%) · Dodge 2 (2.5%) · Parry 1 (1.2%) · Riposte 2 (2.5%)',
-      'Missed you 30 (37.0%)',
+      'Missed you 30 (37.0%) · Block 7 (8.6%) · Dodge 2 (2.5%)',
+      'Riposte 2 (2.5%) · Parry 1 (1.2%)',
       'Riposte: 2 swings turned aside · 2 counter-swings (2 landed) for 143',
       'damage - already inside your melee total, 0.5% of it',
       'Riposted by mobs: 11 counter-swings swung at you off your own attacks',

@@ -112,6 +112,26 @@ function fill(page: Page, testid: string, value: string): Promise<void> {
   return page.fill(`[data-testid="${testid}"] input`, value)
 }
 
+/**
+ * Answer the analytics first-run notice, the character-sheet.e2e.mts idiom.
+ *
+ * A fresh `userData` always shows it and it sits along the BOTTOM EDGE, over the dialog this spec
+ * drives — so a MUI menu item that happens to open down there is unclickable, and the failure
+ * reads as "the audio channel could not be chosen" rather than as "a first-run overlay was in
+ * front of it". It was luck that nothing had landed there before: JOS-362 took the third entry out
+ * of the audio-channel menu, the shorter menu no longer has to be shifted up to fit the viewport,
+ * and its second item now opens exactly where the notice is.
+ */
+async function answerNotice(page: Page): Promise<void> {
+  const notice = '[data-testid="telemetry-notice"]'
+  if ((await countOf(page, notice)) === 0) return
+  await page.click('[data-testid="telemetry-notice-off"]')
+  check(
+    'the analytics first-run notice can be answered out of the way',
+    await settleGone(page, notice, { timeoutMs: 8_000 })
+  )
+}
+
 /** Pick a value out of a MUI Select (its popup renders `li[data-value=…]`). */
 async function selectValue(page: Page, testid: string, value: string): Promise<void> {
   await page.click(`[data-testid="${testid}"]`)
@@ -395,6 +415,7 @@ async function main(): Promise<void> {
     page.on('pageerror', (e) => consoleErrors.push(String(e)))
 
     await page.waitForSelector('[data-testid="nav-alerts"]', { timeout: 60_000 })
+    await answerNotice(page)
     if ((await openManualEditor(page)) && (await dirtyTheForm(page))) {
       if (await focusCycle(page, 'e2e:focus-probe-1')) {
         await checkFormSurvived(page)

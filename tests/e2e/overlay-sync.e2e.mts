@@ -355,11 +355,22 @@ async function stepOverlayDrill(overlay: Page): Promise<void> {
   check('…and the fight timer is still on the row', /\d+:\d\d/.test(level2), level2)
 
   // NO CATEGORY CHIP (JOS-113). JOS-105 put a damage-type strip here and a third drill level; the
-  // owner rejected the grouping, so the drilled overlay is ONE BAR PER ABILITY with no strip. The
-  // per-ability stats live on each bar's hover title in this window (it is compact and, locked,
-  // click-through — there is no room for an inline expansion), so what is asserted here is that
-  // the rejected chip is gone rather than a new level opening.
+  // owner rejected the grouping, so the drilled overlay is ONE BAR PER ABILITY with no strip. What
+  // is asserted here is that the rejected chip is gone rather than a new level opening.
   check('the drilled overlay shows NO damage-type chip — one bar per ability, flat', (await countOf(overlay, CATEGORY_CHIP)) === 0)
+
+  // …AND NO HOVER ON ANY OF THEM (JOS-358, owner ruling from hands-on testing). The per-ability
+  // stats used to ride each bar's native `title`; the overlay windows keep tooltips only in the
+  // title bar now, and the fully-labeled figures are on the Combat tab. Asserted on the DRILLED
+  // level because that is where the longest of those strings lived.
+  const barTitles = await overlay.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>('[data-testid="overlay-bar"]')].map((e) => e.title)
+  )
+  check(
+    '…and no bar hovers a stat run over the game any more',
+    barTitles.length > 0 && barTitles.every((t) => t === ''),
+    JSON.stringify(barTitles.slice(0, 3))
+  )
 
   await overlay.click(CRUMB)
   const back = await settle(() => crumbText(overlay), (t) => t !== level2, { timeoutMs: 8_000 })

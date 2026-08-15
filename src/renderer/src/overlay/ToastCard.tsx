@@ -100,8 +100,10 @@ function CardChrome({ onDismiss }: { onDismiss: () => void }): JSX.Element {
       <button
         type="button"
         data-testid="toast-close"
+        // The ARIA name and nothing else (JOS-358). A `title` here said 'Dismiss' over a ✕ that
+        // already says it, on a card rather than in a window title bar — and this window's cards
+        // slide away on their own timer, which is exactly the shape a stranded popup outlives.
         aria-label="Dismiss this celebration"
-        title="Dismiss"
         onClick={close}
         onMouseEnter={() => setHot(true)}
         onMouseLeave={() => setHot(false)}

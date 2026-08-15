@@ -47,10 +47,14 @@
 // arithmetic is plain once you have seen it — this window is about 300px wide and its rows are 30px
 // tall, and the card is 300px wide and can run several times a row's height, so pointing anywhere
 // replaces the countdown you opened the window for with a drop table. The card is not worse than it
-// was; it is bigger than its host. So it is IN-APP ONLY, and this window went back to exactly what
-// round 5 left: plain rows whose native `title` carries `respawnProvenance` — the one string the tab
-// also shows, so the two surfaces still cannot drift — and a LOCKED window carrying neither, being
-// click-through and receiving no mouse events at all.
+// was; it is bigger than its host. So it is IN-APP ONLY.
+//
+// …AND JOS-358 FINISHED THE JOB: the plain `title` round 5 left on the row is gone too. The owner
+// ruled from hands-on testing that these windows keep tooltips ONLY in the title bar, and a row
+// hover was also leaving popups stranded over the game when the cursor flicked out. So a row states
+// its clock, its colour and its bar, and nothing else; `respawnProvenance` is unchanged and is what
+// the Timers tab's own card leads with (features/timers, lib/hoverCards.tsx). The header count's
+// hover — `RESPAWN_LEGEND_TITLE`, the two claims this window makes — is in the TITLE BAR and stays.
 //
 // (Nothing about round 6's REFACTOR is undone: the card still lives in `lib/hoverCards.tsx`, where
 // the event overlay's `/con` rows and the Timers tab both draw it. One of its two new callers went
@@ -87,7 +91,6 @@ import {
   respawnDurationText,
   respawnInZone,
   respawnOverridden,
-  respawnProvenance,
   respawnReading,
   respawnSeenLabel,
   respawnSourceLabel,
@@ -181,7 +184,10 @@ function SeenLine({
         <button
           type="button"
           data-testid="respawn-overlay-confirm"
-          title={RESPAWN_CONFIRM_TITLE}
+          // The label IS the sentence ('start clock here'); `RESPAWN_CONFIRM_TITLE` explains it on
+          // the Timers tab, where a hover is allowed. Out here it is a row control, and JOS-358
+          // keeps hovers in the title bar.
+          aria-label={RESPAWN_CONFIRM_TITLE}
           onClick={() => {
             onConfirm(row.id)
           }}
@@ -341,11 +347,9 @@ function RespawnLine({
       data-respawn-stale={r.stale ? 'true' : 'false'}
       data-respawn-overridden={respawnOverridden(row) ? 'true' : 'false'}
       data-respawn-basis={row.basis}
-      // ROUND 7: back to round 5's hover — the provenance sentence as a NATIVE title, which is the
-      // whole of what a 300px window can afford to say. Same string the tab's card leads with, so
-      // the two surfaces cannot drift; and a LOCKED window is click-through, so like every other
-      // affordance here it gets nothing, because it receives no mouse events at all.
-      title={interactive ? respawnProvenance(row, fmtDuration) : undefined}
+      // NO HOVER AT ALL (JOS-358). Round 7 left `respawnProvenance` here as a native title; the
+      // owner's ruling takes it, and `interactive` no longer changes anything about this row's
+      // hover because there is none in either mode. See the file header.
       style={{ padding: '2px 2px 3px', borderLeft: `2px solid ${tone}66`, paddingLeft: 5 }}
     >
       <ClockLine row={row} label={label} tone={tone} interactive={interactive} onUnwatch={onUnwatch} />
@@ -390,9 +394,11 @@ function RespawnFooter({
         gap: 6
       }}
     >
+      {/* No hover on the slider (JOS-358): it is the only thing in this footer and it looks like
+          what it is. */}
       <input
         type="range"
-        title="Background opacity"
+        aria-label="Background opacity"
         min={0.1}
         max={1}
         step={0.02}

@@ -62,29 +62,44 @@ import type { LootEvent, ProgressionSnap } from '@shared/types'
 import type { RangeStats } from '@shared/progressionStats'
 import type { Timeslice } from '@shared/timeslice'
 import { rangeStats } from '../../../shared/progressionStats'
-import { ETA_ABSURD_MS, ETA_BLOCKED_TITLE, atCap, levelEta } from '../../../shared/levelEta'
+import { ETA_ABSURD_MS, atCap, levelEta } from '../../../shared/levelEta'
 // The header's level is the STATED fact now (JOS-192) — the later of your last ding and your own
 // `/who` row — because the ding series says nothing across a loadout swap, which is the one moment
 // the number on a floating window is most likely to be wrong.
 import { currentLevelRead, type LevelStatement } from '../../../shared/currentLevel'
 import { aaEta } from '../../../shared/aaPace'
 import { moteRates, xpRowVisible, type XpRowId } from '../../../shared/xpOverlay'
-// WHICH HOUR (JOS-288). The union, the default, the just-arrived gate and the refusal sentence all
-// live in shared/rateBasis.ts; this file picks halves of pairs and chooses words.
+// WHICH HOUR (JOS-288). The union, the default and the just-arrived gate live in
+// shared/rateBasis.ts; this file picks halves of pairs and chooses words. The REFUSAL SENTENCE that
+// lives there too is no longer read here — it was a row hover, and JOS-358 took those.
 import {
   RATE_BASIS_DEFAULT,
-  RATE_TOO_SHORT_TITLE,
   basisRead,
   pickRate,
   type BasisRead,
   type RateBasis
 } from '../../../shared/rateBasis'
-import { AA_EST, AA_ETA_BLOCKED_TITLE, aaEtaValue } from '../features/leveling/aaPaceRows'
-import { NONE, basisSpanText, withBasis } from '../features/leveling/rangeStatsRows'
+import { AA_EST, aaEtaValue } from '../features/leveling/aaPaceRows'
+import { NONE, basisSpanText } from '../features/leveling/rangeStatsRows'
 import { fmtDuration } from '../features/leveling/levelChartGeometry'
 import { formatAaRate, formatDropRate, formatLevelRate, formatPointRate } from '../lib/formatRate'
 
-/** One printed row: a label, a number, its unit, and a dim trailing detail. */
+/**
+ * One printed row: a label, a number, its unit, and a dim trailing detail.
+ *
+ * THERE IS NO HOVER FIELD ANY MORE (JOS-358, owner ruling from hands-on testing: the overlay
+ * windows keep tooltips only in the title bar, and the bars get none). Every row here used to carry
+ * a `title` clause — what it measures, or why it was withheld — and this file built four of them.
+ * They are DELETED rather than left unread: a view-model field nothing renders is the "hide it"
+ * the ruling forbids, and the next reader would wire it back.
+ *
+ * WHAT REPLACED THEM, so the honesty is not quietly gone with the strings:
+ *   · a withheld rate is still an EM-DASH and the window still prints `· too short to rate` beside
+ *     the span, in the open (XpOverlay.tsx `xp-too-short`) — the reason a reader can act on;
+ *   · an inferred wait still wears `AA_EST` on the row itself;
+ *   · the full sentences live on the Leveling tab, which is the surface with room for them
+ *     (`ETA_BLOCKED_TITLE` is unchanged and still read by the Overview card).
+ */
 export interface XpOverlayRow {
   /** stable id — the React key and the e2e's handle (`xp-row-<id>`). */
   id: string
@@ -97,8 +112,6 @@ export interface XpOverlayRow {
   unit: string
   /** dim trailing context — 'to 44', '12×'. '' when there is none. */
   detail: string
-  /** One clause: what this row measures, or why it cannot be measured. */
-  title: string
   /** true ⇒ the row wears `AA_EST`. Only ever the AA wait — see the header. */
   inferred: boolean
 }
@@ -115,8 +128,6 @@ export interface XpOverlayView {
    * measures over it, rather than showing a span and dividing by something else.
    */
   span: string
-  /** The span line's hover: what that hour is, or why it is too short to divide by. */
-  spanTitle: string
   /** Which hour is in force — what the toggle renders as its state. */
   basis: RateBasis
   /**
@@ -155,19 +166,10 @@ function rate(n: number | null, fmt: (v: number) => string): string {
   return n == null ? NONE : fmt(n)
 }
 
-// The row hovers name the hour actually in force, and say so in the words the loot ledger already
-// uses (JOS-288). JOS-249's DEFINITION of that hour rides the window's SPAN line (XpOverlay.tsx,
-// `xp-span`) — one place, stated once for every row rather than four times over — but a row whose
-// number is withheld carries its own reason, because a blank on a window this small is a question.
-const XP_TITLE = (word: RateBasis): string =>
-  `Levels of progress per hour of ${word} time. The log states a percentage of the current level bar, never experience points.`
-const AA_RATE_TITLE = (word: RateBasis): string =>
-  `AA completions per hour of ${word} time, and the ability points they paid - the read that keeps working at the cap.`
-
-/** A withheld row's hover: the refusal, never a silence (`ETA_BLOCKED_TITLE`'s rule, one row over). */
-function rowTitle(title: string, read: BasisRead): string {
-  return read.measurable ? title : `${title} ${RATE_TOO_SHORT_TITLE}`
-}
+// JOS-358 DELETED THE ROW HOVERS from this file: `XP_TITLE`, `AA_RATE_TITLE` and the `rowTitle`
+// wrapper that appended the refusal to a withheld row. See `XpOverlayRow` for the argument and for
+// where each of those sentences still lives. The WORD for the hour in force is on the footer's
+// basis toggle, which is where a reader can also change it.
 
 /** The LEVELS pace. Drawn while the game is still stating a level-bar percentage; see the header
  *  for why it is absent at the cap rather than an em-dash. */
@@ -180,7 +182,6 @@ function levelsRow(stats: RangeStats, read: BasisRead): XpOverlayRow {
     value: r.value,
     unit: r.unit || 'lvl/hr',
     detail: '',
-    title: rowTitle(XP_TITLE(read.word), read),
     inferred: false
   }
 }
@@ -203,7 +204,6 @@ function aaRow(stats: RangeStats, read: BasisRead): XpOverlayRow {
     value: r.value,
     unit: r.unit || 'AA/hr',
     detail: points == null ? '' : formatPointRate(points),
-    title: rowTitle(AA_RATE_TITLE(read.word), read),
     inferred: false
   }
 }
@@ -238,7 +238,6 @@ function aaWaitRow(snap: ProgressionSnap, stats: RangeStats): XpOverlayRow {
     value: value ?? NONE,
     unit: '',
     detail: value === null ? '' : AA_EST,
-    title: eta.blocked === null ? 'Projected from the rhythm of recent completions.' : AA_ETA_BLOCKED_TITLE[eta.blocked],
     inferred: true
   }
 }
@@ -246,9 +245,10 @@ function aaWaitRow(snap: ProgressionSnap, stats: RangeStats): XpOverlayRow {
 /**
  * The PROJECTION row: time to the next level, or (at cap) the wait for the next AA.
  *
- * A blocked estimate is an em-dash WITH ITS REASON on hover — never a number, and never a silence:
- * on a window this small "why is that blank" is the question a blank invites, and the reason is one
- * clause (`ETA_BLOCKED_TITLE`, shared with the Overview card so the two refuse in the same words).
+ * A blocked estimate is an EM-DASH — never a number. The one-clause reason used to ride the row's
+ * hover (`ETA_BLOCKED_TITLE`); JOS-358 took every hover off these rows, and the constant is
+ * untouched and still read by the Overview card, so the two surfaces refuse in the same words
+ * wherever there is room to print them.
  */
 function etaRow(
   snap: ProgressionSnap,
@@ -272,7 +272,6 @@ function etaRow(
       value: NONE,
       unit: '',
       detail: '',
-      title: RATE_TOO_SHORT_TITLE,
       inferred: false
     }
   }
@@ -286,7 +285,6 @@ function etaRow(
       value: NONE,
       unit: '',
       detail: '',
-      title: ETA_BLOCKED_TITLE[eta.blocked],
       inferred: false
     }
   }
@@ -300,9 +298,6 @@ function etaRow(
     value: absurd ? '>1 day' : `~${fmtDuration(eta.ms)}`,
     unit: '',
     detail: `to ${eta.toLevel}`,
-    title:
-      `${Math.round(eta.progress * 100)}% of level ${eta.toLevel - 1} stated since your last level-up, ` +
-      `projected at this stretch's pace.`,
     inferred: false
   }
 }
@@ -344,7 +339,6 @@ function moteRows(
         value: NONE,
         unit: '',
         detail: 'none here',
-        title: `No upgrade mote has dropped in ${slice.caption}.`,
         inferred: false
       }
     ]
@@ -361,7 +355,6 @@ function moteRows(
       value: r.value,
       unit: r.unit || 'drops/hr',
       detail: `${m.drops.toLocaleString()}×`,
-      title: rowTitle(`${m.item} - ${m.drops.toLocaleString()} looted in ${slice.caption}.`, read),
       inferred: false
     }
   })
@@ -409,7 +402,6 @@ export function xpOverlayView(args: XpRowsArgs): XpOverlayView {
   return {
     rows,
     span: basisSpanText(basis),
-    spanTitle: withBasis('How much of this stretch the rates above are per.', basis),
     basis: basis.basis,
     measurable: basis.measurable,
     level: read?.level ?? null,

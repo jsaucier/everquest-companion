@@ -307,10 +307,11 @@ test('JOS-103 P2: the suggestion fires on the owner\'s real line and SPEAKS the 
     regex: "^\\[[^\\]]*\\] (?<player>[A-Za-z' `]{1,48}) growls with the spirit of the puma\\."
   })
   assert.deepEqual(lands.speech, { mode: 'custom', phrase: 'Puma on {player}' })
-  // 'both', never 'speech': the pack sound is the half that is guaranteed audible on a machine
-  // with no speech voices, and `speechPlan` falls back to it only for EMPTY TEXT, never for a
-  // missing engine. An app-authored suggestion must not be able to ship silence.
-  assert.equal(lands.audio, 'both')
+  // 'speech': this suggestion exists to say WHO it landed on, and JOS-362 retired the combined
+  // channel it used to ride ("also remove sound + spoken - too much garbage", owner). The def
+  // still names a pack sound, so switching the row's output back to a pack is one click, and a
+  // machine with no voice set up is told by the row's own VoiceSetupLink rather than by silence.
+  assert.equal(lands.audio, 'speech')
 
   const fired = fire([lands], [PUMA.landed])
   assert.equal(fired.length, 1, 'it must fire on the real line')

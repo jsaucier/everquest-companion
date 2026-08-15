@@ -125,13 +125,13 @@ function useSlowClock(): number {
   return now
 }
 
-/** One printed row: label · number · unit, with the dim detail pushed to the right edge. */
+/** One printed row: label · number · unit, with the dim detail pushed to the right edge.
+ *  NO HOVER (JOS-358) — see the file header: what a row can say, it says in the open. */
 function XpRowLine({ row }: { row: XpOverlayRow }): JSX.Element {
   return (
     <div
       data-testid={`xp-row-${row.id}`}
       data-row={row.row}
-      title={row.title}
       style={{ display: 'flex', alignItems: 'baseline', gap: 5, padding: '2px 2px' }}
     >
       <span
@@ -185,7 +185,8 @@ function RowToggle({
       data-testid={`xp-toggle-${id}`}
       data-on={on ? 'true' : 'false'}
       aria-pressed={on}
-      title={on ? `Hide the ${ROW_LABEL[id]} row` : `Show the ${ROW_LABEL[id]} row`}
+      // ARIA name, not a tooltip (JOS-358): a footer control on an overlay window.
+      aria-label={on ? `Hide the ${ROW_LABEL[id]} row` : `Show the ${ROW_LABEL[id]} row`}
       onClick={onClick}
       style={{
         ...noDrag,
@@ -212,8 +213,10 @@ function RowToggle({
  * It is a BUTTON RATHER THAN A PAIR OF THEM because there are exactly two honest denominators and a
  * two-option segmented control spends twice the width of this footer's whole budget to say the same
  * thing. It reads as a statement first ("these rates are per elapsed hour") and as a control second,
- * which is the right order for a number the reader is already looking at; the hover carries the full
- * definition of the hour it is currently on and the promise of the other.
+ * which is the right order for a number the reader is already looking at. The full definition of the
+ * hour in force used to ride a hover; since JOS-358 it is the button's ARIA name, because these
+ * windows carry tooltips only in the title bar — the WORD on the button is the state, and the state
+ * is what a reader glancing over a game needs.
  */
 function BasisToggle({
   basis,
@@ -230,7 +233,7 @@ function BasisToggle({
       type="button"
       data-testid="xp-basis"
       data-basis={basis}
-      title={`Rates are per hour of ${basis} time. Click for ${other} time. ${BASIS_TITLE[basis]}`}
+      aria-label={`Rates are per hour of ${basis} time. Click for ${other} time. ${BASIS_TITLE[basis]}`}
       onClick={onClick}
       style={{
         ...noDrag,
@@ -256,8 +259,8 @@ function BasisToggle({
  *
  * A button rather than a pair, for `BasisToggle`'s reason: two states, and this footer's whole width
  * budget is smaller than a segmented control's. It is drawn ONLY while the slice carries a zone —
- * `every tier` of nothing is not a state a reader can act on — and the hover carries the definition
- * plus the promise of the other, which is the only tooltip this window has ever had.
+ * `every tier` of nothing is not a state a reader can act on. The definition and the promise of the
+ * other state are its ARIA name rather than a hover (JOS-358).
  */
 function TierToggle({
   scope,
@@ -280,7 +283,7 @@ function TierToggle({
       type="button"
       data-testid="xp-tier"
       data-scope={scope}
-      title={`${meaning} Click for ${ZONE_SCOPE_LABEL[other]}.`}
+      aria-label={`${meaning} Click for ${ZONE_SCOPE_LABEL[other]}.`}
       onClick={onClick}
       style={{
         ...noDrag,
@@ -345,9 +348,10 @@ function XpFooter({
         color: 'rgba(255,255,255,0.6)'
       }}
     >
+      {/* No hover on the slider (JOS-358); it looks like what it is. */}
       <input
         type="range"
-        title="Background opacity"
+        aria-label="Background opacity"
         min={0.1}
         max={1}
         step={0.02}
@@ -535,9 +539,9 @@ export default function XpOverlay(): JSX.Element {
         {view.rows.length > 0 && (
           <div
             data-testid="xp-span"
-            // ...and what that span IS, on hover (JOS-249) — or why it is too short to divide by
-            // (JOS-288). A native title is the only tooltip this window has ever had.
-            title={view.spanTitle}
+            // WHAT THAT SPAN IS used to ride a hover here (JOS-249/JOS-288). JOS-358 takes it: the
+            // caption already names the stretch and the `· too short to rate` marker below already
+            // says when it cannot be divided by, both in the open.
             style={{ fontSize: 9, color: 'rgba(255,255,255,0.38)', padding: '3px 2px 0' }}
           >
             {slice.caption} · {view.span}

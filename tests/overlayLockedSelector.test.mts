@@ -142,11 +142,11 @@ test('JOS-121: the scope word is out of the title bar and onto the panel floor',
   // overlay is LOCKED (unlike the header tag it replaced), so `pointerEvents: none` is the only
   // thing keeping a click-through window click-through.
   assert.match(floor, /pointerEvents: 'none'/)
-  // …and it CANNOT know about the lock, because the only things it is given are the word and the
-  // tooltip. That is the whole of "it does not vanish when pinned", stated as a signature rather
-  // than as a missing branch somebody could add back.
-  assert.match(floor, /export function ScopeFloor\(\{ label, title \}: ScopeFloorText\)/)
-  assert.match(floor, /export interface ScopeFloorText \{\s+label: string\s+title: string\s+\}/)
+  // …and it CANNOT know about the lock, because the only thing it is given is the word (JOS-358
+  // took the hover that used to ride beside it). That is the whole of "it does not vanish when
+  // pinned", stated as a signature rather than as a missing branch somebody could add back.
+  assert.match(floor, /export function ScopeFloor\(\{ label \}: ScopeFloorText\)/)
+  assert.match(floor, /export interface ScopeFloorText \{\s+label: string\s+\}/)
 
   for (const [who, rel] of Object.entries(METERS)) {
     const text = src(rel)
@@ -189,9 +189,10 @@ test('JOS-158: the meters state their aggregate in the panel, not in the title b
   // at full weight, where every bar's own number is plain white inside a bar.
   assert.match(crumb, /color: total\.accent, fontWeight: 700/)
   assert.match(crumb, /data-testid="overlay-total-value"/)
-  // THE BACK CONTROL IS ITS OWN ELEMENT NOW. The aggregate beside it carries a hover note (the
-  // healing split), and a note on a click target is exactly what the tooltip rule forbids — so
-  // the row's `onClick` may not be on the row.
+  // THE BACK CONTROL IS ITS OWN ELEMENT. It was split off because the aggregate beside it carried a
+  // hover note (the healing split) and a note on a click target is what the tooltip rule forbids;
+  // JOS-358 took the note and the split STAYS — the back target is bounded by the number rather
+  // than by the row, which is the honest hit area either way.
   assert.doesNotMatch(crumb, /data-testid="overlay-crumb"[\s\S]{0,80}onClick/)
   assert.match(crumb, /flexGrow: 1,\s+minWidth: 0,\s+cursor: onBack \? 'pointer' : 'default'/)
 
@@ -213,9 +214,17 @@ test('JOS-158: the meters state their aggregate in the panel, not in the title b
     // meter shows did not change on the day its label appeared.
     assert.match(text, /formatRate\(seg\.outDps\)|formatHealRate\(seg\?\.healing\.hps \?\? 0\)/, `${who} recomputed it`)
   }
-  // …and the healing meter's restored/absorbed sentence survived the move rather than being
-  // dropped with the header tail it used to hang off.
-  assert.match(src('../src/renderer/src/overlay/healBars.tsx'), /title: healTotalTitle\(seg\?\.healing\)/)
+  // …and the healing meter's restored/absorbed sentence is NOT here any more (JOS-358). It rode the
+  // crumb's hover from JOS-158 until the owner ruled the overlay windows carry tooltips only in the
+  // title bar; `healTotalTitle` itself is untouched, and the Combat tab's segment header still
+  // prints it. Pinned as an ABSENCE so a later change cannot quietly re-import it.
+  const healBars = src('../src/renderer/src/overlay/healBars.tsx')
+  assert.doesNotMatch(healBars, /healTotalTitle\(/)
+  assert.match(
+    src('../src/renderer/src/features/combat/SegmentHeader.tsx'),
+    /healTotalTitle\(seg\.healing\)/,
+    'the sentence has to still be printed SOMEWHERE — the tab is where it went'
+  )
 })
 
 test('the event log keeps the whole-window sensor it always had', () => {

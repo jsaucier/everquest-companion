@@ -23,7 +23,8 @@ import assert from 'node:assert/strict'
 import type { LootEvent } from '../src/shared/types'
 import type { ProgressionSnap } from '../src/shared/progressionTypes'
 import type { RangeStats, ZoneRangeRow } from '../src/shared/progressionStatsTypes'
-import { IDLE_GAP_MS } from '../src/shared/progressionStats'
+import { IDLE_GAP_MS, rangeStats } from '../src/shared/progressionStats'
+import { levelEta } from '../src/shared/levelEta'
 import { resolveSlice, type SliceId } from '../src/shared/timeslice'
 import { normalizeXpRows } from '../src/shared/xpOverlay'
 import {
@@ -358,15 +359,17 @@ test('the overlay rates default to the ELAPSED hour, and the toggle is the other
   assert.equal(valueOf(active, 'aa'), '4.14', 'the 31-minute silence is out of the active denominator')
   assert.equal(elapsed.rows.find((r) => r.id === 'aa')?.detail, '3.00 pts/hr')
   assert.equal(active.rows.find((r) => r.id === 'aa')?.detail, '6.21 pts/hr')
-  // The levels pace moves with it, and both rows name the hour they are per.
+  // The levels pace moves with it…
   assert.notEqual(valueOf(elapsed, 'xp'), valueOf(active, 'xp'))
-  assert.match(elapsed.rows.find((r) => r.id === 'xp')?.title ?? '', /per hour of elapsed time/)
-  assert.match(active.rows.find((r) => r.id === 'xp')?.title ?? '', /per hour of active time/)
+  // …and the WORD for the hour in force is on the view, which is what the footer's basis toggle
+  // prints. The rows used to name it on a hover each; JOS-358 took every row hover off this window
+  // (owner ruling: tooltips live in the title bar out here), so the window states it ONCE, in the
+  // open, on the control that also changes it.
+  assert.equal(elapsed.basis, 'elapsed')
+  assert.equal(active.basis, 'active')
   // …and the span line states the hour it just divided by, in the same word (owner ruling 2).
   assert.equal(elapsed.span, 'over 1h 0m elapsed')
   assert.equal(active.span, 'over 29m active')
-  assert.match(elapsed.spanTitle, /Elapsed time = /)
-  assert.match(active.spanTitle, /Active time = /)
 })
 
 test('the mote rates follow the same hour as the paces above them', () => {
@@ -394,7 +397,13 @@ test('the projection and the pace row above it are finally the same arithmetic',
   const perHour = Number(valueOf(v, 'xp'))
   const eta = v.rows.find((r) => r.id === 'eta')
   assert.ok(perHour > 0 && eta)
-  const progress = Number(/^(\d+)%/.exec(eta.title)?.[1] ?? '0') / 100
+  // THE REMAINING BAR, asked of `levelEta` directly. It used to be read back off the row's hover
+  // ('42% of level 43 stated since your last level-up'); JOS-358 deleted every row title, so the
+  // identity is now checked against the derivation the row is built from — which is the stronger
+  // reading of it anyway, and does not depend on a sentence continuing to be phrased that way.
+  const bounds = dataBounds(snap, [])
+  const slice = resolveSlice({ snap, bounds, id: 'all' })
+  const progress = levelEta(snap, rangeStats({ snap, range: slice.range }), null).progress
   const expectedMs = ((1 - progress) / perHour) * HOUR
   // fmtDuration rounds, so this compares the printed minute rather than the millisecond.
   assert.equal(eta.value, `~${fmtDuration(expectedMs)}`)
@@ -426,8 +435,11 @@ test('a stretch shorter than the idle threshold refuses every rate, with its rea
   assert.equal(valueOf(v, 'aa'), NONE, 'the confident 0.00 forty seconds in is the defect')
   assert.equal(valueOf(v, 'xp'), NONE)
   assert.equal(v.rows.find((r) => r.row === 'motes')?.value, NONE)
-  for (const id of ['xp', 'aa'])
-    assert.match(v.rows.find((r) => r.id === id)?.title ?? '', /too little to state as a rate per hour/)
+  // THE REASON IS IN THE OPEN RATHER THAN ON FOUR HOVERS. Each pace row used to append
+  // `RATE_TOO_SHORT_TITLE` to its own title; JOS-358 deleted every row title on this window (owner
+  // ruling: the overlay windows keep tooltips only in the title bar), and `measurable` — asserted
+  // above, and the flag the window renders as `· too short to rate` beside the span — is the one
+  // statement that now covers all four blanks.
   // THE COUNT IS NEVER GATED — what dropped, dropped.
   assert.equal(v.rows.find((r) => r.row === 'motes')?.detail, '1×')
   // …and the projection goes with the pace it is built on, rather than asserting what the row above
@@ -446,5 +458,8 @@ test('the rows are drawn either way — only the number waits for evidence', () 
   const at = view(justArrived(RATE_MIN_MS), [])
   assert.equal(at.measurable, true)
   assert.equal(valueOf(at, 'aa'), '0.00', 'a measured zero over a real span still prints')
-  assert.match(at.rows.find((r) => r.id === 'aa')?.title ?? '', /^AA completions per hour of elapsed time/)
+  // …and it is a rate PER THE HOUR IN FORCE, which the window states once on its basis toggle
+  // rather than on the row (JOS-358 — no row hovers out here).
+  assert.equal(at.basis, 'elapsed')
+  assert.equal(at.rows.find((r) => r.id === 'aa')?.unit, 'AA/hr')
 })

@@ -58,6 +58,13 @@ import { stepAlwaysPlayAll } from './alwaysPlayAllSteps.mjs'
 // `{target}` from the PLAIN editor, on a live-tailed line (JOS-353) — next door for the same
 // line-budget reason, and here because §5 below is the declared-capture half of the same claim.
 import { stepTargetToken } from './targetTokenSteps.mjs'
+// WRITING a custom phrase — from the alert ROW and from the editor (JOS-360). Next door for the
+// same line-budget reason, and here because this is the spec that owns both surfaces: §4's row
+// picker and §5's phrase resolution are the two halves it joins.
+import { stepCustomPhrase } from './customPhraseSteps.mjs'
+// The voice comes from PREFERENCES and nowhere else (JOS-362) — next door for the same line-budget
+// reason, and here because this is the spec that owns the engine seam's utterance ring.
+import { stepVoiceFollowsPrefs } from './voicePrefsSteps.mjs'
 
 const VOICE_PANEL = '[data-testid="pref-voice"]'
 /** The RETIRED master switch. Asserted to be absent — see the header. */
@@ -371,7 +378,7 @@ async function stepEditor(page: Page): Promise<string> {
   const name = await editingName(page)
   check('the alert editor carries a Speech block', (await countOf(page, '[data-testid="alert-speech-block"]')) === 1)
   check(
-    'the audio channel is a sound/speech/both choice, and the throttle opt-out is beside it',
+    'the audio channel is a sound/speech choice, and the throttle opt-out is beside it',
     (await countOf(page, '[data-testid="alert-audio-action"]')) === 1 &&
       (await countOf(page, '[data-testid="alert-always-play"]')) === 1
   )
@@ -383,7 +390,13 @@ async function stepEditor(page: Page): Promise<string> {
     !!name && preview.includes(name),
     `${preview.slice(0, 80)} (editing “${name}”)`
   )
-  check('the mode picker and the per-alert voice override are offered', (await countOf(page, '[data-testid="alert-speech-mode"]')) === 1 && (await countOf(page, '[data-testid="alert-speech-voice"]')) === 1)
+  // The mode picker is offered; the per-alert VOICE picker is not, and its absence is the claim
+  // (JOS-362 — the voice lives in Preferences now, see voicePrefsSteps.mts).
+  check(
+    'the mode picker is offered, and no per-alert voice override is',
+    (await countOf(page, '[data-testid="alert-speech-mode"]')) === 1 &&
+      (await countOf(page, '[data-testid="alert-speech-voice"]')) === 0
+  )
 
   await page.click('[data-testid="alert-save"]')
   await page.waitForSelector('[data-testid="alert-dialog"]', { state: 'detached', timeout: 15_000 })
@@ -568,6 +581,12 @@ async function main(): Promise<void> {
       await stepCaptureHint(page)
       // §6 after §5, same reasoning one step further: it stores a def and appends to the tail too.
       await stepTargetToken(page, log)
+      // §7 last: it stores a def, edits it from two surfaces and appends to the tail twice.
+      await stepCustomPhrase(page, log)
+      // §8 after it, because it CHANGES THE VOICE PREFERENCE and leaves it changed: every step
+      // above reads the prefs blob, and one that had been rewritten under them would be asserting
+      // against a world it had already moved.
+      await stepVoiceFollowsPrefs(page)
     }
 
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))

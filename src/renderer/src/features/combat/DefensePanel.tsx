@@ -3,13 +3,21 @@
 // WHERE IT LIVES, AND WHY IT IS NOT A FIFTH DASHBOARD CELL. The dashboard is four equal panels
 // answering four questions — WHO, WHEN, WHAT FIRED, WHOM (CombatView.DashboardGrid says so at
 // length, and the arrangement is an owner ruling). Defence is not a fifth subject: it is the other
-// half of the one the INCOMING direction already shows. So it draws at the top of the meter panel
-// whenever that panel is listing what is hitting you, above the mob rows it is derived from —
-// the same placement `IncomingHeals` has at the bottom of that list, for the same reason.
+// half of the one the INCOMING direction already shows. So it lives inside that panel, and nowhere
+// else in the app.
 //
-// IT IS NEVER SHOWN IN THE OUTGOING DIRECTION. A source's own `missBreakdown` there is the MOB's
-// avoidance of YOUR swings, which is the opposite fact; putting a defensive summary above it would
-// invite exactly the misreading this panel exists to end.
+// …AND INSIDE IT, IT IS THE SECOND TAB (JOS-361, owner ruling 2026-08-14 after hands-on testing:
+// "defense should be in a second tab (not selected by default) within the card. damage breakdown
+// is first. mitigation is second"). It shipped STACKED above the incoming rows, which spent the
+// top of the card on a block the reader had not asked for and pushed the ranked attacker list
+// below the fold. The two are different questions about the same direction — what is hitting me,
+// and how much of it I am turning aside — so they are two tabs of one card rather than one column
+// of both. SegmentPanel.tsx owns the strip; this file owns the block.
+//
+// IT IS NEVER SHOWN IN THE OUTGOING DIRECTION — so the Outgoing card has no Mitigation tab at all,
+// not a disabled one. A source's own `missBreakdown` there is the MOB's avoidance of YOUR swings,
+// which is the opposite fact; offering a "Mitigation" tab over it would invite exactly the
+// misreading this panel exists to end.
 //
 // THE BARS ARE THE APP'S `Bar`, coloured with the enemy hue like every other incoming row, so the
 // panel reads as part of the direction it sits in rather than as a new visual language.
@@ -38,7 +46,9 @@ function Notes({ d }: { d: DefenseView }): React.JSX.Element | null {
 export function DefensePanel({ d }: { d: DefenseView }): React.JSX.Element {
   const rows = defenseRows(d)
   return (
-    <Box data-testid="defense-panel" sx={{ mb: 1, pb: 1, borderBottom: '1px solid', borderColor: 'divider' }}>
+    // No bottom rule any more: the border existed to separate this block from the attacker rows
+    // it used to sit on top of, and inside its own tab there is nothing below it to separate from.
+    <Box data-testid="defense-panel">
       <Stack direction="row" justifyContent="space-between" alignItems="baseline" spacing={1} sx={{ mb: 0.5 }}>
         <Typography
           variant="caption"
@@ -56,7 +66,10 @@ export function DefensePanel({ d }: { d: DefenseView }): React.JSX.Element {
       ) : (
         rows.map((r) => (
           <Tooltip key={r.key} title={`${r.hint} ${r.count} of ${d.swings} swings aimed at you.`}>
-            <Box>
+            {/* The testid is what lets the headless harness read the RANKING off the screen
+                (JOS-361) — a unit test can assert `defenseRows` order, but only the mounted panel
+                can say the rows are drawn in it. */}
+            <Box data-testid="defense-row">
               <Bar
                 color={KIND_COLOR.enemy}
                 // The four ACTIVE defences carry the accent stripe; the mob's own whiff and your

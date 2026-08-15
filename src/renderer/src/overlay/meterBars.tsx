@@ -17,10 +17,9 @@
 
 import { type JSX, useMemo } from 'react'
 import type { OverlayDrill } from '@shared/types'
-import { CATEGORY_LABEL, type DamageCategory, type SegmentView, type SourceView } from '@shared/combat'
+import { type DamageCategory, type SegmentView, type SourceView } from '@shared/combat'
 import { formatNum as fmt, formatRate } from '../lib/formatRate'
 import { type FlatSkill, type SkillRow } from '../features/combat/dashboardData'
-import type { AbilityMulti } from '../features/combat/abilityStats'
 import { laneDps, meterPanel, type MeterPanel, type OwnRow, type PetRow } from '../features/combat/petRows'
 import { useCombinePetRow } from '../features/combat/useCombatPrefs'
 import { scopeSources } from '../features/combat/meterScope'
@@ -62,7 +61,14 @@ const CAT_COLOR: Record<DamageCategory, string> = {
 }
 
 
-/** A single horizontal bar: label + right-text + pct-fill. Dense + high-contrast. Clickable to drill. */
+/**
+ * A single horizontal bar: label + right-text + pct-fill. Dense + high-contrast. Clickable to drill.
+ *
+ * NO HOVER (JOS-358, owner ruling from hands-on testing: tooltips on these windows live in the
+ * title bar and the bars get NONE). It used to carry a `title` spelling out the compacted stats;
+ * what a bar states is now exactly what is printed ON it, and the fully-labeled figures are on the
+ * Combat tab, which is the surface that has room for them.
+ */
 function Bar({
   color,
   pct,
@@ -70,8 +76,7 @@ function Bar({
   label,
   right,
   onClick,
-  accent,
-  title
+  accent
 }: {
   color: string
   pct: number
@@ -81,9 +86,6 @@ function Bar({
   onClick?: () => void
   /** Full-height left stripe — keeps a skill row's category readable at any bar width. */
   accent?: string
-  /** Native hover tooltip spelling out the compacted right-hand stats (interactive mode only —
-   *  a locked overlay is click-through, so nothing hovers it). */
-  title?: string
 }): JSX.Element {
   return (
     <div
@@ -91,7 +93,6 @@ function Bar({
       // the overlay drill spec drives these rows by selector (tests/e2e/overlay-sync.e2e.mts).
       data-testid="overlay-bar"
       onClick={onClick}
-      title={title}
       style={{
         position: 'relative',
         height: 18,
@@ -154,9 +155,10 @@ export type Drill = OverlayDrill
  * the main view's bars (features/combat/combatShared.tsx skillStatText):
  *   `12% miss · 3 - 145dmg`
  * Density here comes from carrying FEWER stats, never from compressing labels (`12%m` / `145/3`
- * are unreadable in a glance-and-forget overlay). The counts the main view puts one click down
- * in its expanded readout live in this row's hover `title` instead — the overlay has no room
- * for an expansion, and in locked (click-through) mode there would be no way to collapse one.
+ * are unreadable in a glance-and-forget overlay). The counts the main view puts one click down in
+ * its expanded readout USED TO live in this row's hover title; since JOS-358 they live on the
+ * Combat tab alone, which is the surface with room for them — this window has no expansion, no
+ * hover, and in locked (click-through) mode no way to collapse either.
  * The row TOTAL is not here — it owns the right end of the bar.
  */
 function skillStat(s: FlatSkill): string {
@@ -174,59 +176,14 @@ function skillStat(s: FlatSkill): string {
   return parts.join(' · ')
 }
 
-/** The multi-attack facts (JOS-113) — the double/triple this ability landed, over its rounds, and
- *  the auto-attack ability's flurry line. The overlay carries them in the hover title, where its
- *  other per-ability stats live (it has no room for an inline expansion, and locked mode is
- *  click-through). Empty when the ability opened no rounds. */
-function multiFacts(multi: AbilityMulti | null | undefined): string {
-  if (!multi) return ''
-  const bits: string[] = []
-  if (multi.rounds > 0 && multi.text) bits.push(`${multi.text} over ${fmt(multi.rounds)} rounds${multi.estimated ? ' (est.)' : ''}`)
-  if (multi.flurry != null) bits.push(multi.flurry)
-  return bits.join(' · ')
-}
-
-/** The labeled stat run for one row, shared by the row title and its children lines. */
-function skillFacts(s: FlatSkill, multi?: AbilityMulti | null): string {
-  const land = landEvidence(s)
-  // The overlay has no expansion, so the damage-less row's hover carries the BASIS too — where
-  // the landings came from, or why a resist rate is being withheld.
-  if (s.hits === 0) return `${land.text} · ${land.hint}`
-  const misses = s.misses ?? 0
-  const swings = s.hits + misses
-  const resists = s.resists ?? 0
-  const bits = [
-    `total ${fmt(s.total)}`,
-    `${s.hits} hits`,
-    `avg per hit ${fmt(Math.round(s.total / s.hits))}`,
-    `${s.crits} crits (${Math.round((s.crits / s.hits) * 100)}% crit)`
-  ]
-  if (misses > 0) bits.push(`${Math.round((misses / swings) * 100)}% miss (${misses} of ${swings} swings avoided)`)
-  if (resists > 0) bits.push(land.resistText)
-  const min = s.min ?? 0
-  bits.push(min > 0 && min !== s.max ? `damage range ${fmt(min)} - ${fmt(s.max)}` : `damage range ${fmt(s.max)}`)
-  const mult = multiFacts(multi)
-  if (mult) bits.push(mult)
-  return bits.join(' · ')
-}
-
-/**
- * The overlay's stand-in for the main view's expanded per-ability readout: the same figures,
- * fully labeled, as the row's hover title (interactive mode — a locked overlay is
- * click-through, so it neither hovers nor could collapse an inline expansion). It carries this
- * ability's own multi-attack reading (JOS-113 — double/triple/flurry), which on the tab expands
- * inline; here it is one more labeled fact on the hover.
- * For the GROUPED Slay Undead row this title also carries what the main view puts in the
- * expansion — the per-weapon-skill split, one labeled line each. The overlay's 18px rows have
- * no room for an inline breakdown and locked mode could never collapse one, so the hover title
- * is where that detail lives here.
- */
-function skillTitle(s: SkillRow, catLabel: string): string {
-  const head = `${s.name} (${catLabel}) - ${skillFacts(s, s.multi)}`
-  if (!s.children || s.children.length === 0) return head
-  const lines = s.children.map((c) => `  ${c.name} - ${skillFacts(c)}`)
-  return `${head}\nBy skill:\n${lines.join('\n')}`
-}
+// WHAT JOS-358 DELETED HERE, so nobody re-derives it from the comments above. Three builders lived
+// in this file — `multiFacts`, `skillFacts` and `skillTitle` — and their whole job was the hover
+// title on a bar: the fully-labeled figures, the multi-attack reading (JOS-113), and the grouped
+// Slay Undead row's per-weapon split. The owner ruled the bars carry no tooltip at all, so they
+// have no reader left and are gone rather than kept warm. NOTHING WAS LOST FROM THE PRODUCT: the
+// Combat tab builds all three from `petRows`/`abilityStats` on a surface that can actually print
+// them, and `landEvidence` (the damage-less row's honest sentence) still speaks ON the bar through
+// `skillStat` above.
 
 /** ONE skill/spell lane of the drilled source — category-colored, stats inside the bar, and its
  *  OWN rate at the right end beside its total (petRows.laneDps; owner ruling 2026-08-05). Every
@@ -258,7 +215,6 @@ function SkillLine({ s, activeSec }: { s: SkillRow; activeSec: number }): JSX.El
         </>
       }
       right={`${formatRate(laneDps(s.total, activeSec))} · ${fmt(s.total)}`}
-      title={skillTitle(s, CATEGORY_LABEL[s.category])}
     />
   )
 }
@@ -274,11 +230,6 @@ function SkillLine({ s, activeSec }: { s: SkillRow; activeSec: number }): JSX.El
  * it stands for — a whole source, folded to one line.
  */
 function PetLine({ pet, pct, onDrill }: { pet: PetRow; pct: number; onDrill?: () => void }): JSX.Element {
-  const swings = pet.hits + pet.misses
-  const facts = [`total ${fmt(pet.total)}`, `${pet.hits} hits`]
-  if (pet.crits > 0) facts.push(`${pet.crits} crits`)
-  if (pet.misses > 0) facts.push(`${Math.round((pet.misses / swings) * 100)}% miss (${pet.misses} of ${swings} swings)`)
-  if (pet.resists > 0) facts.push(`${pet.resists} resisted`)
   return (
     <Bar
       color={KIND_COLOR.pet}
@@ -292,7 +243,6 @@ function PetLine({ pet, pct, onDrill }: { pet: PetRow; pct: number; onDrill?: ()
       }
       right={`${formatRate(pet.dps)} · ${fmt(pet.total)}`}
       onClick={onDrill}
-      title={`${pet.name} (your pet) - ${facts.join(' · ')}`}
     />
   )
 }

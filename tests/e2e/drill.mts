@@ -355,22 +355,14 @@ export async function stepDrillAcrossFights(page: Page): Promise<void> {
   const cleared = await settle(() => storedDrill(page), (v) => v === null, { timeoutMs: 10_000 })
   check('switching DIRECTION still un-drills — that boundary did not move', cleared === null, String(cleared))
 
-  // 5. YOUR DEFENCE (JOS-354) rides the Incoming direction, and ONLY it. The step is here rather
-  //    than in a spec of its own because this is the one place the suite already flips direction,
-  //    and the claim is exactly a mount claim: the block a unit test cannot see is on screen, it
-  //    states its own denominator, and it is absent from the direction where a source's avoidance
-  //    breakdown means the opposite thing.
-  const headline = await settle(
-    () => page.evaluate(() => document.querySelector('[data-testid="defense-headline"]')?.textContent ?? ''),
-    (t) => t.length > 0,
-    { timeoutMs: 10_000 }
-  )
-  check('YOUR DEFENCE IS ON SCREEN IN THE INCOMING DIRECTION', headline.length > 0, headline)
-  check(
-    '…and the headline carries its own denominator — a rate with no exposure is a lie',
-    /swings at you|nothing has swung/i.test(headline),
-    headline
-  )
+  // 5. YOUR DEFENCE (JOS-354) rides the Incoming direction, and ONLY it — and since JOS-361 it
+  //    rides the card's SECOND TAB there. The step is here rather than in a spec of its own
+  //    because this is the one place the suite already flips direction, and the claims are exactly
+  //    mount claims a unit test cannot make: which tab the card opens on, that the block is on
+  //    screen behind the other one, that its rows are drawn in the ranked order `defenseRows`
+  //    computes, and that neither the tabs nor the block exist in the direction where a source's
+  //    avoidance breakdown means the opposite thing.
+  await stepMitigationTab(page)
 
   // …and leave the tab the way the steps after this one expect to find it: Outgoing, level 1.
   await page.click(`${TOGGLE} button[value="out"]`, { timeout: 10_000 }).catch(() => undefined)
@@ -378,5 +370,75 @@ export async function stepDrillAcrossFights(page: Page): Promise<void> {
     '…and it is GONE in Outgoing, where the same numbers would mean the mob’s avoidance of YOUR swings',
     await settleGone(page, '[data-testid="defense-panel"]', { timeoutMs: 10_000 })
   )
+  check(
+    '…and Outgoing offers no Mitigation TAB either — not a disabled one, none',
+    await settleGone(page, TABS, { timeoutMs: 10_000 })
+  )
   await settleStable(() => countOf(page, ROW), { timeoutMs: 10_000 })
+}
+
+/** The meter card's own tab strip (JOS-361) — Incoming only, and only while nothing is drilled. */
+const TABS = '[data-testid="meter-tabs"]'
+
+/** The `count · pct%` a defence row ends with, per row, top to bottom — the RANK as drawn. */
+async function defenceCounts(page: Page): Promise<number[]> {
+  return page.evaluate(() =>
+    [...document.querySelectorAll('[data-testid="defense-row"]')].map((el) => {
+      // The row's right end is `<count> · <pct>%`; the label sits to its left and may itself
+      // contain no digits, so the LAST such run is unambiguous.
+      const m = /(\d+) · [\d.]+%\s*$/.exec(el.textContent ?? '')
+      return m ? Number(m[1]) : -1
+    })
+  )
+}
+
+/**
+ * THE CARD OPENS ON DAMAGE BREAKDOWN, AND MITIGATION IS ONE CLICK AWAY (JOS-361).
+ *
+ * Called with the dashboard already on Incoming at level 1 (step 4 above left it there). The
+ * defence block being ABSENT on arrival is the owner's actual ask — "not selected by default" —
+ * so it is asserted before anything is clicked, not merely implied by the tab that is selected.
+ */
+async function stepMitigationTab(page: Page): Promise<void> {
+  const tabs = await settleCount(page, TABS, 1, { timeoutMs: 10_000 })
+  if (!check('the INCOMING card carries the two tabs', tabs === 1, `${tabs} tab strips`)) return
+
+  check(
+    'THE CARD OPENS ON DAMAGE BREAKDOWN — mitigation is not selected by default',
+    (await page.$$(`${TABS} button[value="damage"].Mui-selected`)).length === 1
+  )
+  check(
+    '…so the defence block is NOT on screen until it is asked for',
+    (await page.$$('[data-testid="defense-panel"]')).length === 0
+  )
+  // The damage tab is still the meter: the attacker rows the card is for are what it shows.
+  check('…and the ranked attacker rows are what that tab shows', (await countOf(page, ROW)) >= 1)
+
+  await page.click(`${TABS} button[value="mitigation"]`, { timeout: 10_000 })
+  const headline = await settle(
+    () => page.evaluate(() => document.querySelector('[data-testid="defense-headline"]')?.textContent ?? ''),
+    (t) => t.length > 0,
+    { timeoutMs: 10_000 }
+  )
+  check('YOUR DEFENCE IS ON SCREEN ON THE MITIGATION TAB', headline.length > 0, headline)
+  check(
+    '…and the headline carries its own denominator — a rate with no exposure is a lie',
+    /swings at you|nothing has swung/i.test(headline),
+    headline
+  )
+
+  // THE STACK RANK, read off the screen. A segment where nothing has swung at you draws the quiet
+  // note and no rows at all, which is the honest degenerate case rather than a failure.
+  const counts = await defenceCounts(page)
+  if (counts.length === 0) {
+    note('this fight has no swings aimed at you — the panel states that instead of ranking rows')
+    return
+  }
+  check('every defence row states a count', !counts.includes(-1), counts.join(', '))
+  const ranked = [...counts].sort((a, b) => b - a)
+  check(
+    'THE ROWS ARE STACK-RANKED BY COUNT, DESCENDING (JOS-361)',
+    counts.join(',') === ranked.join(','),
+    `${counts.join(' ≥ ')} (expected ${ranked.join(' ≥ ')})`
+  )
 }

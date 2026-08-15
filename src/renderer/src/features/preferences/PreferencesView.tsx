@@ -39,8 +39,9 @@
 //             pet's damage sits. Lives in ./CombatSection.tsx, descriptor and all.
 //   Overlays — when the floating meters get out of the way: hide them while EverQuest isn't
 //             running (on by default) and/or while it isn't the window you're in (off).
-//             Lives in ./OverlayAutoHideSetting.tsx. Plus the opt-in drag magnetism (JOS-217,
-//             ./OverlaySnapSetting.tsx — OFF by default) and the celebration toast's controls.
+//             Lives in ./OverlayAutoHideSetting.tsx. Plus the celebration toast's controls — and
+//             the opt-in drag magnetism (JOS-217, ./OverlaySnapSetting.tsx), which is HELD OUT of
+//             this release and therefore not built into the section at all (JOS-359).
 //   Graphics — the two compatibility switches for a machine whose graphics driver dislikes what
 //             this app draws: software rendering (next launch) and solid, non-transparent
 //             overlays (next overlay open). Lives in ./GraphicsSetting.tsx, descriptor and all.
@@ -94,6 +95,8 @@ import { FeedbackSetting, type OpenFeedback } from './FeedbackSetting'
 import { VoiceSetting } from './VoiceSetting'
 import { OverlayAutoHideSetting } from './OverlayAutoHideSetting'
 import { OverlaySnapSetting } from './OverlaySnapSetting'
+// The release hold this card is behind (JOS-359). Imported for the FLAG, not for geometry.
+import { SNAP_RELEASE_HOLD } from '@shared/overlaySnap'
 import { ToastSetting } from './ToastSetting'
 // Cursor ring: another descriptor that lives beside its own card, same ceiling, same answer.
 import { cursorRingSection } from './CursorRingSetting'
@@ -180,10 +183,31 @@ function voiceSection(): PrefSection {
 }
 
 /**
+ * The drag magnetism card (JOS-217), or nothing at all while the feature is HELD OUT of the
+ * release (JOS-359 — `SNAP_RELEASE_HOLD` carries the ruling and is the one line that lifts it).
+ *
+ * A card whose switch the store would ignore is worse than no card, which is why the hold reaches
+ * up here and not only into the normalizer: the item is not built, so it is not in the pane, not
+ * in the search index, and not a control a user can be told is broken.
+ */
+function snapItems(): PrefItem[] {
+  if (SNAP_RELEASE_HOLD) return []
+  return [
+    {
+      id: 'overlay-snap',
+      label: 'Snap overlays while dragging',
+      keywords:
+        'snap snapping magnet align alignment grid edge edges side abut stack line up lined tidy position drag move overlay overlays meter meters screen monitor match matching sizes equal',
+      content: <OverlaySnapSetting />
+    }
+  ]
+}
+
+/**
  * The floating overlays' own rules: when they get out of the way, whether a drag snaps them into
- * line (JOS-217), and the celebration toast. Its own factory for the same reason `voiceSection` is
- * one — `buildSections` sits against the 100-code-line ceiling — and, like that one, it depends
- * on none of buildSections' inputs.
+ * line (JOS-217, held out of this release — see `snapItems`), and the celebration toast. Its own
+ * factory for the same reason `voiceSection` is one — `buildSections` sits against the
+ * 100-code-line ceiling — and, like that one, it depends on none of buildSections' inputs.
  */
 function overlaysSection(): PrefSection {
   return {
@@ -198,13 +222,7 @@ function overlaysSection(): PrefSection {
           'overlay overlays meter meters hide auto autohide show running focus focused unfocused alt tab background desktop game closed floating',
         content: <OverlayAutoHideSetting />
       },
-      {
-        id: 'overlay-snap',
-        label: 'Snap overlays while dragging',
-        keywords:
-          'snap snapping magnet align alignment grid edge edges side abut stack line up lined tidy position drag move overlay overlays meter meters screen monitor match matching sizes equal',
-        content: <OverlaySnapSetting />
-      },
+      ...snapItems(),
       {
         id: 'toast',
         label: 'Celebration toasts',

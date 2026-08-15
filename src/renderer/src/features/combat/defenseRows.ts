@@ -15,6 +15,13 @@
 // argument JOS-113 made for showing `0% crit` on an ability that never crit. The two outcomes that
 // are NOT skills of yours (the mob's own whiff, and a rune eating the blow) draw only when they
 // happened, because a zero there says nothing about you at all.
+//
+// …AND THEY ARE STACK-RANKED (JOS-361, owner ruling 2026-08-14 with the screenshot in hand: "the
+// misses should be at the top here (look like stack rank)"). Every other list on this surface —
+// the source meter under it, the mob card beside it — is ordered by size, so a fixed-order block
+// in the middle of them reads as a form rather than as a measurement. WHAT DRAWS did not change:
+// the four active defences still draw at zero and simply sort to the bottom, which is the honest
+// place for them.
 
 import type { DefenseView, MissBreakdown } from '../../../../shared/combat'
 
@@ -33,7 +40,12 @@ export interface DefenseRow {
   hint: string
 }
 
-/** The four defensive skills, in the order the reporter named them, then the two non-skills. */
+/**
+ * The six outcomes. This order is no longer the DRAWING order (JOS-361 ranks the rows by count) —
+ * it is the DECLARATION order, and it survives as the tie-break: `Array.prototype.sort` is stable,
+ * so two outcomes with the same count keep the order the reporter named them in and the block does
+ * not shuffle between two equal rows from one snapshot tick to the next.
+ */
 const ROWS: { key: keyof MissBreakdown; label: string; active: boolean; hint: string }[] = [
   { key: 'block', label: 'Block', active: true, hint: 'Swings you blocked ("but YOU block!").' },
   { key: 'dodge', label: 'Dodge', active: true, hint: 'Swings you dodged ("but YOU dodge!").' },
@@ -59,12 +71,17 @@ const ROWS: { key: keyof MissBreakdown; label: string; active: boolean; hint: st
 ]
 
 /**
- * The rows to draw. The four active defences always; the two non-skill outcomes only when they
- * occurred. Order is fixed rather than ranked by count, so the same four sit in the same places
- * from fight to fight and can be read without checking the labels each time.
+ * The rows to draw, STACK-RANKED by count (JOS-361). The four active defences always; the two
+ * non-skill outcomes only when they occurred.
+ *
+ * The sort is on the COUNT, not on the rate: they share one denominator (the engine divided every
+ * outcome by the same swings), so ranking by either gives the same order — and the count is the
+ * number the row actually leads with.
  */
 export function defenseRows(d: DefenseView): DefenseRow[] {
-  const shown = ROWS.filter((r) => r.active || d.avoided[r.key] > 0)
+  const shown = ROWS.filter((r) => r.active || d.avoided[r.key] > 0).sort(
+    (a, b) => d.avoided[b.key] - d.avoided[a.key]
+  )
   const max = Math.max(1, ...shown.map((r) => d.avoided[r.key]))
   return shown.map((r) => ({
     key: r.key,

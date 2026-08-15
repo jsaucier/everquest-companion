@@ -449,9 +449,15 @@ const LOOTED = 'Bone Chips'
  *   * THE RECENTLY-KILLED ENTRY gets the same card — the owner asked for it where the decision to
  *     watch is actually made — with the shorter note a mob with no clock can honestly carry.
  *   * THE FLOATING WINDOW LOSES IT. The card is 300px wide and the window is about 300px wide, so
- *     it took the window over; the owner ruled it in-app only. Pointing at an overlay row now has
- *     to produce NOTHING, and the provenance sentence is back on the row's native title where
- *     round 5 left it.
+ *     it took the window over; the owner ruled it in-app only. Pointing at an overlay row has to
+ *     produce NOTHING.
+ *
+ * …AND JOS-358 TOOK THE LAST THING THAT ROW COULD SAY ON HOVER. Round 7 left the provenance
+ * sentence on the row's native `title`; the owner ruled from hands-on testing that these windows
+ * keep tooltips ONLY in the title bar (and that a stranded one was surviving the pointer leaving
+ * the window). So the assertion below INVERTS: pointing at an overlay row produces no card AND no
+ * title. The provenance itself is unchanged — the tab's card, asserted above, is built from the
+ * same `respawnProvenance`, which is what keeps the two surfaces from drifting.
  */
 async function stepHoverCard(page: Page, overlay: Page): Promise<void> {
   const before = await settleStable(() => cardText(page))
@@ -488,15 +494,16 @@ async function stepHoverCard(page: Page, overlay: Page): Promise<void> {
   await pointAtOverlayRow(overlay, OWN_MOB, true)
   const over = await settleStable(() => cardText(overlay))
   check('the floating window draws NO card at all - it is in-app only now', over === '', over)
-  // What it draws instead is round 5's shape: the provenance sentence on the row's native title,
-  // the same string the tab's card leads with. Read as a TITLE — if it had merely been deleted with
-  // the card, this fails.
+  // …AND NO TITLE EITHER (JOS-358). Round 7 left the provenance sentence on the row's native title;
+  // the owner's ruling takes it. Read as a TITLE on the ROW specifically — the header count's own
+  // hover is in the title bar and is asserted alive in `stepOverlayShowsClocks`, so a change that
+  // stripped the whole window would fail there instead of passing quietly here.
   const rowTitles = await overlay.evaluate(() =>
     [...document.querySelectorAll<HTMLElement>('[data-testid="respawn-overlay-row"]')].map((e) => e.title)
   )
   check(
-    '…and says what it knows about the respawn on a plain title instead',
-    rowTitles.some((t) => t.includes('Killed') && t.includes('upper bound')),
+    '…and no longer hovers a provenance sentence over the game either',
+    rowTitles.every((t) => t === ''),
     JSON.stringify(rowTitles)
   )
   await pointAtOverlayRow(overlay, OWN_MOB, false)

@@ -90,12 +90,11 @@ function DismissControl({
       type="button"
       data-testid="buff-timer-dismiss"
       data-armed={armed ? 'true' : 'false'}
+      // The ARIA name stays and the hover does not (JOS-358): this control sits on a ROW, and the
+      // owner ruled these windows carry tooltips only in the title bar. The two-press ceremony
+      // says itself — the glyph becomes the word `clear?` — which was always the readable half of
+      // what the hover spelled out.
       aria-label={armed ? `Confirm clearing the ${row.name} bar` : `Clear the ${row.name} bar`}
-      title={
-        armed
-          ? 'Press again to clear this bar. It clears the BAR only - nothing is forgotten or unlearned.'
-          : 'Clear this bar (press twice). The spell is not touched.'
-      }
       onClick={(e) => {
         e.stopPropagation()
         if (!armed) {
@@ -229,7 +228,9 @@ export function BuffTimerBar({
       // the caster, and the target is a chip here but a block heading in the other arrangement.
       data-spell={row.name}
       data-target={row.target ?? ''}
-      title={row.candidates ? `Shared landing message - one of: ${row.candidates.join(', ')}` : undefined}
+      // NO HOVER ON THE ROW (JOS-358). It listed the shared-landing candidates; the AMBIGUITY
+      // itself is still on screen as the `~` chip beside the name (JOS-84's law), which is the
+      // part a glance over a game can use. The candidate list is in the app.
       style={{
         display: 'flex',
         flexDirection: 'column',

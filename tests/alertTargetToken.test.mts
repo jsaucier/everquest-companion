@@ -392,7 +392,9 @@ test('JOS-353 E1: the five speaking templates say the right sentence on real lin
   for (const [key, template, line, expected] of cases) {
     const def = suggestionsFor(entryFor(key)).find((s) => s.template === template)?.def
     assert.ok(def, `the wizard must offer "${template}" for ${key}`)
-    assert.equal(def.audio, 'both', `${template}: the pack sound is the guaranteed half`)
+    // 'speech' since JOS-362 retired the combined channel: these templates exist to SAY a
+    // sentence, so the spoken half is the one that survived.
+    assert.equal(def.audio, 'speech', `${template}: a template with a phrase speaks it`)
     const fired = fire([def], [line])
     assert.equal(fired.length, 1, `${template}: the line must fire it`)
     assert.equal(speechTextFor(def, fired[0]), expected, `${template} on ${key}`)
