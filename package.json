@@ -1,6 +1,6 @@
 {
   "name": "everquest-companion",
-  "version": "0.27.0",
+  "version": "0.28.0",
   "license": "FSL-1.1-MIT",
   "description": "EverQuest Legends companion â€” real-time log analysis and Plane of Sky quest tracking",
   "main": "./out/main/index.js",
