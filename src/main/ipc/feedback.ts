@@ -43,7 +43,7 @@ function refuse(
 
 export function registerFeedbackIpc(): void {
   // Header context: versions, channel, queued count, whether this build has an endpoint.
-  ipcMain.handle(IPC.feedbackContext, () => feedbackContext())
+  ipcMain.handle(IPC.feedbackContext, async () => await feedbackContext())
 
   // Build the scrubbed slice and return a CAPPED preview. The gz bytes never cross IPC.
   // An unrecognized window is null (the dialog's "no log to attach" state), never a guess.

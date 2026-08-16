@@ -34,6 +34,10 @@ export { markFunnelStep, observeFirstRun, recordFunnelFailure } from './funnels'
 // importing this index would pull in `collector.ts`, which imports `errorLog.ts`. The leaf module
 // exists to make that one import safe; every other producer comes through here.
 export { noteParserStall, notePresenceRestart, noteRendererCrash, noteSpeechFailure } from './health'
+// THE SETUP SNAPSHOT (JOS-364) — the once-per-session reading of what this install and this
+// machine are. Armed by `perf.ts` when the startup replay finishes, through here like everything
+// else: the producer lives two files further in and no caller may reach past this line to it.
+export { recordSetupSnapshot, scheduleSetupSnapshot } from './setupSnapshot'
 // The message → one-of-five-words reduction the two failure producers share. Exported from the
 // façade so no call site can import it and then reach one file further into the ring.
 export { classifyFailure } from './failureClass'

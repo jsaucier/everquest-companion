@@ -146,6 +146,28 @@ export function readErrorReports(c: Clients, sinceDay: string): Promise<Row[]> {
 }
 
 /**
+ * THE PERF CUBE (JOS-372) — the one CROSS-TAB read on this page, and the only one that returns
+ * more than one dimension per row.
+ *
+ * `usage_daily` can say how many session reports saw a bad stall; only this table can say whether
+ * that rate is higher on fullscreen installs, on small boxes, or while an overlay is
+ * locked, because a counter keyed on one `dim` structurally cannot cross two facts.
+ *
+ * BOUNDED EXACTLY LIKE THE COUNTER READS, and by the same constant: it is `day >= :floor` over the
+ * PRIMARY KEY's leading column, and the row count per day is capped by the cube's own cardinality
+ * (every dim is a closed set — infra/schema.sql states the budget), so the window bounds the scan
+ * twice over. There is no id on this table at all, so as with `error_report` there is not even an
+ * identifier to decline to select.
+ */
+export function readPerfDaily(c: Clients, sinceDay: string): Promise<Row[]> {
+  return c.query(
+    'SELECT day, cohort, window_mode, machine_class, locked, stall_bucket, tail_bucket, n' +
+      ' FROM perf_daily WHERE day >= $1 ORDER BY day LIMIT $2',
+    [sinceDay, USAGE_ROW_LIMIT],
+  )
+}
+
+/**
  * NOTE WHAT IS NOT SELECTED: `analytics_id`. The readout needs day-grained facts about the
  * population (how many, first seen when, on what version) and never the identifier itself, so
  * the id does not leave the database — not into main, not over the bridge, not into a panel.

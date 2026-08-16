@@ -43,6 +43,9 @@ import { launchOnFixture, stageFixture, type FixtureLog } from './logFixture.mjs
 // The error-report steps (JOS-100) live next door: adding them here put this spec past the
 // repo's 400-code-line ceiling, and the split follows a real seam. See errorReportSteps.mts.
 import { DELIBERATE, stepErrorReport, stepThrowRendererError } from './errorReportSteps.mjs'
+// …and the two readings that ride a session report and are read off the RING after the process
+// exits — the startup replay (JOS-57) and the live-session probe (JOS-367). Same seam, same split.
+import { stepLiveRiders, stepStartupReading } from './sessionRiderSteps.mjs'
 
 const NOTICE = '[data-testid="telemetry-notice"]'
 const TEXT = '[data-testid="telemetry-notice-text"]'
@@ -311,52 +314,6 @@ function stepOnDisk(userData: string): void {
   )
 }
 
-/**
- * THE STARTUP READING ACTUALLY FIRED (JOS-57) — read off the ring FILE, with the app that wrote
- * it gone. It cannot be observed from inside a running launch: the reading is produced when the
- * replay finishes and is carried by the next session report, which is a heartbeat ten minutes
- * later (JOS-269; it was five, and a suite that caps a spec at 5 min was never going to see it
- * either way) or the `sessionEnd` written on the way out — and it is the `sessionEnd` arm this
- * asserts, which is the arm that got MORE common, not less. So this is the only place the chain —
- * `replayDone` → perf.ts → the collector's pending slot → `sessionEnd` → the ring on disk — is
- * visible at once, and it is exactly the failure JOS-39 was about: a schema and a panel that are
- * both fine while nothing ever emits, which reads as "the fleet has no slow launches".
- *
- * The numbers are asserted as SHAPE, not as values: this launch really did replay the staged
- * fixture, so a millisecond figure is a property of the machine running the suite (frozen numbers
- * rot). What must be true on any machine is that the reading exists, carries all six fields, and
- * that the size is a BUCKET INDEX rather than a byte count.
- */
-function stepStartupReading(userData: string): void {
-  const path = join(userData, 'telemetry.json')
-  let events: { ev: Record<string, unknown> }[]
-  try {
-    events = (JSON.parse(readFileSync(path, 'utf8')) as { events?: { ev: Record<string, unknown> }[] }).events ?? []
-  } catch (err) {
-    check('the startup replay reading reached the ring on disk', false, String(err))
-    return
-  }
-  const carriers = events.filter((r) => r.ev.startup !== undefined)
-  if (!check(
-    'the startup replay reading reached the ring on disk, on a session report',
-    carriers.length === 1,
-    `${String(carriers.length)} carrier(s) among ${String(events.length)}: ${[...new Set(events.map((r) => String(r.ev.t)))].join(', ')}`
-  )) return
-  const s = carriers[0].ev.startup as Record<string, unknown>
-  check(
-    '…carrying all six numbers, and a log SIZE that is a bucket index rather than a byte count',
-    ['replayMs', 'eventsReplayed', 'dutyPct', 'maxBlockMs', 'blocksOver50', 'logSizeBucket'].every(
-      (k) => typeof s[k] === 'number'
-    ) && (s.logSizeBucket as number) <= 5,
-    JSON.stringify(s)
-  )
-  // ONE LAUNCH IS ONE READING: the app replayed once at startup and nothing else may report.
-  check(
-    '…exactly once for the launch — a second reading would be a second replay counted as a launch',
-    events.filter((r) => r.ev.startup !== undefined).length === 1
-  )
-}
-
 /** THE PERSISTENCE ASSERTION — a real second process against the same userData dir. */
 async function stepPersisted(page: Page): Promise<void> {
   const p = await payload(page)
@@ -419,6 +376,34 @@ async function stepCollects(page: Page): Promise<void> {
     'switching tabs records viewDwell events into the LOCAL ring',
     p.buffered.some((r) => r.ev.t === 'viewDwell'),
     `${String(p.buffered.length)} buffered: ${[...new Set(p.buffered.map((r) => String(r.ev.t)))].join(', ')}`
+  )
+
+  // THE SETUP SNAPSHOT (JOS-364), on the machine the suite is really running on. It is the one
+  // event in this schema whose producer reads the OS, the GPU process, the screen and the store,
+  // so a unit test can pin every mapping and still not prove that any of those four answer inside
+  // a running Electron app — which is exactly what went wrong for three waves, when the event had
+  // a rollup, a doc section and no producer at all.
+  //
+  // Polled rather than timed: the producer waits out its own delay after the replay finishes, and
+  // a fixed sleep here would be a flake waiting for a slow CI box.
+  const settled = await settle(() => payload(page), (x) => x.buffered.some((r) => r.ev.t === 'setupSnapshot'), { timeoutMs: 30_000 })
+  const setup = settled.buffered.filter((r) => r.ev.t === 'setupSnapshot')
+  check(
+    'the setup snapshot is PRODUCED — once, on the machine this suite is running on',
+    setup.length === 1,
+    `${String(setup.length)} among ${[...new Set(settled.buffered.map((r) => String(r.ev.t)))].join(', ')}`
+  )
+  // The machine class, as SHAPE rather than as values: the cores and the GPU of the box running
+  // this suite are properties of THAT box, and frozen numbers rot. What must hold on any machine
+  // is that every axis is present and is a bucket index or a member of its own closed enum.
+  const ev: Record<string, unknown> = setup[0]?.ev ?? {}
+  const ENUMS = { gpuVendor: 'nvidia amd intel other unknown', gpuCompositing: 'hardware software off unknown', eqWindowMode: 'fullscreen windowed unknown' }
+  check(
+    '…carrying the machine class: four bucket INDICES, three closed enums and a safe-mode flag',
+    ['cpuCountBucket', 'totalMemBucket', 'displayCountBucket', 'primaryScaleBucket'].every((k) => typeof ev[k] === 'number') &&
+      Object.entries(ENUMS).every(([k, allowed]) => allowed.split(' ').includes(String(ev[k]))) &&
+      typeof ev.safeMode === 'boolean',
+    JSON.stringify(ev)
   )
 
   // …AND MAIN DERIVES THE FUNNEL STEP FROM THEM. `firstNonOverviewView` is never sent by the
@@ -568,6 +553,9 @@ async function main(): Promise<void> {
   // …and now that launch is gone, what it left behind. It is the one launch that ends with
   // collection ON (dismissal is not an opt-out), so it is the one whose ring holds a reading.
   stepStartupReading(firstRunData)
+  // …and the LIVE half of the same chain (JOS-367), off the same ring: the startup probes stop at
+  // `replayDone` and these two start there, so one launch leaves both readings behind.
+  stepLiveRiders(firstRunData)
   stepErrorReport(firstRunData, log)
   await firstRun({ label: 'launch 2: fresh userData — the Details link…', errors: consoleErrors, log, step: stepDetailsOpensPane })
   await firstRun({ label: 'launch 3: fresh userData — opting out…', errors: consoleErrors, log, step: stepOptOut, userData: restartData })

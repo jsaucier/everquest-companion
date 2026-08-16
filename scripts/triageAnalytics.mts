@@ -19,6 +19,7 @@ import {
   missingTable,
   readAnalyticsInstalls,
   readOwnerInstalls,
+  readPerfDaily,
   readUsageDaily,
   readUsageFunnelDaily,
   SCHEMA_FILE,
@@ -35,9 +36,11 @@ import {
   ofCohort,
   toFunnelRows,
   toInstallRows,
+  toPerfRows,
   toUsageRows,
   type FunnelRow,
   type InstallRow,
+  type PerfRow,
   type UsageRow,
 } from '../src/main/triage/usageRows'
 import { USAGE_COHORTS, type UsageCohort } from '../src/shared/telemetryRollup'
@@ -116,6 +119,10 @@ interface CohortRows {
   usage: UsageRow[]
   funnels: FunnelRow[]
   installs: InstallRow[]
+  /** The perf cube (JOS-372) — a FOURTH table, read here for the same reason the other three
+   *  are: the digest and the tab must render one computation, and a section the CLI could not
+   *  feed would be a section that silently disagrees with the panel. */
+  perf: PerfRow[]
 }
 
 /**
@@ -146,10 +153,11 @@ export async function cmdAnalyticsDigest(ctx: AnalyticsCtx): Promise<void> {
   // and unavailable is a printed reason rather than a failed command. It is CloudWatch (the EMF
   // heartbeat metric), not the cluster — the counter tables are keyed on a day and cannot answer
   // "right now" at all.
-  const [usage, funnels, installs, downloads, live] = await Promise.all([
+  const [usage, funnels, installs, perf, downloads, live] = await Promise.all([
     readUsageDaily(c, since),
     readUsageFunnelDaily(c, since),
     readAnalyticsInstalls(c),
+    readPerfDaily(c, since),
     ctx.args.json ? undefined : fetchGhDownloads(ctx.nowMs),
     ctx.args.json
       ? undefined
@@ -162,12 +170,14 @@ export async function cmdAnalyticsDigest(ctx: AnalyticsCtx): Promise<void> {
     usage: toUsageRows(usage),
     funnels: toFunnelRows(funnels),
     installs: toInstallRows(installs),
+    perf: toPerfRows(perf),
   }
   const build = (cohort: UsageCohort): ReturnType<typeof buildAnalytics> =>
     buildAnalytics({
       usage: ofCohort(rows.usage, cohort),
       funnels: ofCohort(rows.funnels, cohort),
       installs: ofCohort(rows.installs, cohort),
+      perf: ofCohort(rows.perf, cohort),
       windowDays: days,
       nowMs: ctx.nowMs,
     })

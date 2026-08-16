@@ -151,6 +151,47 @@ export function toErrorIssueRows(rows: readonly Row[]): ErrorIssueRow[] {
   }))
 }
 
+/**
+ * ONE `perf_daily` ROW (JOS-372) — the only row shape here that carries more than one dimension,
+ * which is the entire reason that table exists.
+ *
+ * `stallBucket` is parsed to a NUMBER because the readout compares it against a rung of
+ * `LIVE_STALL_MS_EDGES` ("was this report's worst tick at least half a second"), and -1 is what an
+ * unparseable value becomes: such a row still counts in its slice's denominator (it was a real
+ * report) and can never count as a stall, which is the fail-safe direction. `tailBucket` stays a
+ * string — it is a dim like the other three, and '-' (the session tailed nothing) is one of its
+ * legal values.
+ */
+export interface PerfRow {
+  day: string
+  cohort: UsageCohort
+  windowMode: string
+  machineClass: string
+  locked: string
+  stallBucket: number
+  tailBucket: string
+  n: number
+}
+
+/** A bucket index column, or -1 for anything that is not one. */
+const idx = (v: unknown): number => {
+  const i = Number(str(v, ''))
+  return Number.isInteger(i) && i >= 0 ? i : -1
+}
+
+export function toPerfRows(rows: readonly Row[]): PerfRow[] {
+  return rows.map((r) => ({
+    day: str(r.day),
+    cohort: cohortOf(r.cohort),
+    windowMode: str(r.window_mode, 'unknown'),
+    machineClass: str(r.machine_class, 'unknown'),
+    locked: str(r.locked, DIM_NONE),
+    stallBucket: idx(r.stall_bucket),
+    tailBucket: str(r.tail_bucket, DIM_NONE),
+    n: num(r.n)
+  }))
+}
+
 export function toInstallRows(rows: readonly Row[]): InstallRow[] {
   return rows.map((r) => ({
     firstSeenDay: str(r.first_seen_day),

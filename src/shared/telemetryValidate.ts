@@ -43,6 +43,8 @@ import {
   ALERT_COUNT_EDGES,
   APP_VERSION_RE,
   CHAR_COUNT_EDGES,
+  CPU_COUNT_EDGES,
+  DISPLAY_COUNT_EDGES,
   isTelemetryObject,
   LOG_SIZE_BYTES_EDGES,
   MAX_BATCH_EVENTS,
@@ -50,13 +52,17 @@ import {
   MAX_DURATION_MS,
   MAX_TZ_OFFSET_HOURS,
   MIN_TZ_OFFSET_HOURS,
+  PRIMARY_SCALE_EDGES,
   TELEMETRY_API_VERSION,
   TELEMETRY_CHANNELS,
   TELEMETRY_EVENT_KINDS,
+  TELEMETRY_EQ_WINDOW_MODES,
   TELEMETRY_FAILURE_CLASSES,
   TELEMETRY_FEATURES,
   TELEMETRY_FUNNELS,
   TELEMETRY_FUNNEL_STEPS,
+  TELEMETRY_GPU_COMPOSITING,
+  TELEMETRY_GPU_VENDORS,
   TELEMETRY_OUTCOMES,
   TELEMETRY_OVERLAY_KINDS,
   TELEMETRY_PLATFORMS,
@@ -64,14 +70,19 @@ import {
   TELEMETRY_UPDATE_STEPS,
   TELEMETRY_VIEWS,
   TELEMETRY_VOICE_ENGINES,
+  TOTAL_MEM_GB_EDGES,
   UUID_V4_RE,
   type EvFunnelStep,
   type EvHealthCounters,
+  type EvSetupSnapshot,
   type EvUpdateOutcome,
   type TelemetryBatch,
   type TelemetryEnvelope,
+  type TelemetryEqWindowMode,
   type TelemetryEvent,
   type TelemetryEventKind,
+  type TelemetryGpuCompositing,
+  type TelemetryGpuVendor,
   type TelemetryOverlayKind,
   type TelemetryRecord
 } from './telemetry'
@@ -168,21 +179,90 @@ function vSetupSnapshot(o: Record<string, unknown>): Validated<TelemetryEvent> {
   if (!packs.ok) return packs
   const channel = oneOf(o.updateChannel, 'updateChannel', TELEMETRY_UPDATE_CHANNELS)
   if (!channel.ok) return channel
-  return {
-    ok: true,
-    value: {
-      t: 'setupSnapshot',
-      charCountBucket: chars.value,
-      logSizeBucket: logSize.value,
-      alertCountBucket: alerts.value,
-      overlaysEnabled: overlays.value,
-      cursorRing: ring.value,
-      autoHide: autoHide.value,
-      voiceEngine: engine.value,
-      soundPackCount: packs.value,
-      updateChannel: channel.value
-    }
+  const value: EvSetupSnapshot = {
+    t: 'setupSnapshot',
+    charCountBucket: chars.value,
+    logSizeBucket: logSize.value,
+    alertCountBucket: alerts.value,
+    overlaysEnabled: overlays.value,
+    cursorRing: ring.value,
+    autoHide: autoHide.value,
+    voiceEngine: engine.value,
+    soundPackCount: packs.value,
+    updateChannel: channel.value
   }
+  return machineClass(o, value)
+}
+
+/**
+ * THE MACHINE CLASS (JOS-364), checked the way every optional rider in this file is: absent and
+ * null both mean "this client does not measure it", and the field is then NOT copied across
+ * rather than defaulted — which is what keeps `tests/telemetryContract.test.mts`'s round-trip
+ * assertion meaningful and what makes an older ingest reading a newer client harmless.
+ *
+ * A PRESENT FIELD IS STILL FULLY CHECKED. Optional means "may be absent", never "may be
+ * anything": a bucket index outside its ladder or a string outside its enum fails the whole
+ * event here exactly as `charCountBucket` does, which is the property the ladders exist for.
+ *
+ * It is a separate function only because the two together are past the repo's per-function
+ * ceiling; the split is by subject (what the install is configured like / what the machine is).
+ */
+function machineClass(
+  o: Record<string, unknown>,
+  value: EvSetupSnapshot
+): Validated<TelemetryEvent> {
+  const ladders = machineBuckets(o, value)
+  if (!ladders.ok) return ladders
+  const enums = machineEnums(o, value)
+  if (!enums.ok) return enums
+  if (o.safeMode !== undefined && o.safeMode !== null) {
+    const safe = flag(o.safeMode, 'safeMode')
+    if (!safe.ok) return safe
+    value.safeMode = safe.value
+  }
+  return { ok: true, value }
+}
+
+/** The four ladders. Split from its caller purely to stay under the repo's complexity ceiling —
+ *  a loop with an optional-field guard and a failure return costs three branches per axis. */
+function machineBuckets(
+  o: Record<string, unknown>,
+  value: EvSetupSnapshot
+): Validated<true> {
+  const buckets = [
+    ['cpuCountBucket', CPU_COUNT_EDGES],
+    ['totalMemBucket', TOTAL_MEM_GB_EDGES],
+    ['displayCountBucket', DISPLAY_COUNT_EDGES],
+    ['primaryScaleBucket', PRIMARY_SCALE_EDGES]
+  ] as const
+  for (const [field, edges] of buckets) {
+    if (o[field] === undefined || o[field] === null) continue
+    const b = bucket(o[field], field, edges)
+    if (!b.ok) return b
+    value[field] = b.value
+  }
+  return { ok: true, value: true }
+}
+
+/** The three enums, same split for the same reason. */
+function machineEnums(o: Record<string, unknown>, value: EvSetupSnapshot): Validated<true> {
+  const enums = [
+    ['gpuVendor', TELEMETRY_GPU_VENDORS],
+    ['gpuCompositing', TELEMETRY_GPU_COMPOSITING],
+    ['eqWindowMode', TELEMETRY_EQ_WINDOW_MODES]
+  ] as const
+  for (const [field, allowed] of enums) {
+    if (o[field] === undefined || o[field] === null) continue
+    const e = oneOf(o[field], field, allowed)
+    if (!e.ok) return e
+    // The three enums have disjoint member types, so the assignment is spelled per field rather
+    // than through the loop's union — a `oneOf` over `gpuVendor`'s list cannot produce a value
+    // `eqWindowMode` would accept, and the compiler is the one saying so.
+    if (field === 'gpuVendor') value.gpuVendor = e.value as TelemetryGpuVendor
+    else if (field === 'gpuCompositing') value.gpuCompositing = e.value as TelemetryGpuCompositing
+    else value.eqWindowMode = e.value as TelemetryEqWindowMode
+  }
+  return { ok: true, value: true }
 }
 
 function vFunnelStep(o: Record<string, unknown>): Validated<TelemetryEvent> {
@@ -229,7 +309,12 @@ const HEALTH_OPTIONAL_FIELDS = [
   'suppressedErrorLines',
   // JOS-266's, optional for exactly the same reason and added the same way — which is what the
   // rule is FOR: a third additive field costs one line here and nothing at either end of a skew.
-  'imageCacheReadFailures'
+  'imageCacheReadFailures',
+  // JOS-364's two lost-child counters, added the same way for the fourth and fifth time. The GPU
+  // one is an ERROR (it is `rendererCrashes` with a different process); the utility one is not —
+  // `HEALTH_NON_ERROR_FIELDS` (./telemetryRollup.ts) is where that distinction is kept.
+  'gpuProcessGone',
+  'utilityProcessGone'
 ] as const
 
 function vHealthCounters(o: Record<string, unknown>): Validated<TelemetryEvent> {

@@ -50,6 +50,14 @@ import {
   type TelemetryEvent,
   type TelemetryRecord
 } from './telemetry'
+import { foldLiveRiders, LIVE_METRICS } from './telemetryRollupLive'
+import {
+  foldPerfCube,
+  perfDimsFromEvents,
+  UNKNOWN_PERF_DIMS,
+  type PerfCubeRow,
+  type PerfInstallDims
+} from './telemetryPerfCube'
 
 /** `dim` is NOT NULL in the schema; this is what "this metric has no dimension" looks like. */
 export const DIM_NONE = '-'
@@ -173,6 +181,24 @@ export const USAGE_METRICS = {
   setupVoice: 'setupVoice',
   setupPacks: 'setupPacks',
   setupUpdateChannel: 'setupUpdateChannel',
+  /**
+   * THE MACHINE CLASS (JOS-364) — eight more metrics off the same event, and they are the AXIS
+   * every performance reading in this table gets sliced by rather than eight more curiosities.
+   * dim is the bucket INDEX (`setupCpu`, `setupMem`, `setupDisplays`, `setupScale`) or the enum
+   * member (`setupGpuVendor`, `setupCompositing`, `setupSafeMode` as on/off, `setupEqWindowMode`).
+   *
+   * ADDITIVE WITH NO SCHEMA CHANGE, exactly as `health` and the startup metrics are: `usage_daily`
+   * holds arbitrary (metric, dim) pairs (infra/schema.sql), so new metric NAMES are free and the
+   * ingest deploy that learns them changes no table.
+   */
+  setupCpu: 'setupCpu',
+  setupMem: 'setupMem',
+  setupGpuVendor: 'setupGpuVendor',
+  setupCompositing: 'setupCompositing',
+  setupSafeMode: 'setupSafeMode',
+  setupDisplays: 'setupDisplays',
+  setupScale: 'setupScale',
+  setupEqWindowMode: 'setupEqWindowMode',
   /**
    * ERRORS PER BUILD (JOS-96) — "did I release buggy code", which is a question about a RELEASE
    * and so cannot be answered by a counter that only knows a field name.
@@ -314,7 +340,15 @@ export const USAGE_METRICS = {
   /** dim = `<step>:<failureClass>`. */
   updateFailure: 'updateFailure',
   /** dim = `<funnel>:<step>:<failureClass>` — the funnel table has no class column. */
-  funnelFailure: 'funnelFailure'
+  funnelFailure: 'funnelFailure',
+  /**
+   * THE LIVE SESSION (JOS-367) — twenty-one metrics off the two session reports' three new
+   * riders, declared in `./telemetryRollupLive.ts` because this file is at the repo's
+   * 400-code-line ceiling. Each one is documented where it is declared; what belongs HERE is why
+   * they are in this table at all: they are the first numbers this pipeline has ever carried
+   * about a session that was RUNNING, as opposed to one that was starting.
+   */
+  ...LIVE_METRICS
 } as const
 
 export type UsageMetric = (typeof USAGE_METRICS)[keyof typeof USAGE_METRICS]
@@ -347,8 +381,19 @@ export type UsageMetric = (typeof USAGE_METRICS)[keyof typeof USAGE_METRICS]
  * seeing the picture. What the number describes is a machine whose cache directory is being fought
  * over — antivirus, a cleaner, a permissions change — which is a fact about that machine and not
  * about the build that was running when it happened.
+ *
+ * `utilityProcessGone` (JOS-364) joins them on the audio/network/storage argument: Chromium starts
+ * and stops utility processes as a matter of course, and this counter cannot tell a teardown from a
+ * kill beyond the clean-exit filter its producer applies. Summed into the rate it would report a
+ * normal Chromium as a buggy release. Its sibling `gpuProcessGone` is deliberately NOT here — a GPU
+ * process that died took every window's compositor with it, which is `rendererCrashes`' argument
+ * about a different process.
  */
-export const HEALTH_NON_ERROR_FIELDS: readonly string[] = ['imageFetchFailures', 'imageCacheReadFailures']
+export const HEALTH_NON_ERROR_FIELDS: readonly string[] = [
+  'imageFetchFailures',
+  'imageCacheReadFailures',
+  'utilityProcessGone'
+]
 
 /** Whether a `health` dim's field name is an ERROR for rate purposes. See the list above. */
 export function isErrorHealthField(field: string): boolean {
@@ -516,6 +561,12 @@ export interface RollupResult {
   funnels: FunnelCounter[]
   /** Empty for every batch that carries no `errorReport` — which is almost all of them. */
   errors: ErrorReportRow[]
+  /**
+   * THE PERF CUBE (JOS-372) — the one cross-tab this pipeline keeps, and empty for every batch
+   * that carries no live stall reading. `./telemetryPerfCube.ts` says what the dims are and why
+   * there are only five of them.
+   */
+  perf: PerfCubeRow[]
 }
 
 /**
@@ -540,6 +591,18 @@ export interface RollupContext {
    * `newInstalls` and `upgrades` are disjoint and can be read side by side.
    */
   upgraded: boolean
+  /**
+   * THE PERF CUBE'S TWO SETUP DIMS AS THE INSTALL ROW HOLDS THEM (JOS-372) — a fourth fact of
+   * exactly the kind the three above are: knowable only from the row the ingest path is already
+   * touching, and knowable nowhere else. A `setupSnapshot` is sent once per LAUNCH while a stall
+   * reading rides every session report for hours, so most batches that need these dims do not
+   * carry them; the install row is where they wait.
+   *
+   * OPTIONAL, so every existing caller and every existing fixture compiles and folds exactly as
+   * it did. Absent (and a batch with no snapshot of its own) means `unknown`, which is a real
+   * class in the cube rather than a missing value — see `./telemetryPerfCube.ts`.
+   */
+  perf?: PerfInstallDims
 }
 
 /**
@@ -562,6 +625,15 @@ function add(bag: Bag, metric: string, dim: string, n: number): void {
 
 const flag = (on: boolean): string => (on ? 'on' : 'off')
 
+/** `add`, bound to one batch's accumulator, for the live riders' fold next door (JOS-367). The
+ *  Bag and `DIM_NONE` stay owned by this file — that is what makes those two files a split and
+ *  not a cycle (`telemetryValidateBase.ts`'s rule, applied to the storage half). */
+const counter =
+  (bag: Bag) =>
+  (metric: string, dim: string, n: number): void => {
+    add(bag, metric, dim, n)
+  }
+
 function foldSetup(bag: Bag, ev: Extract<TelemetryEvent, { t: 'setupSnapshot' }>): void {
   add(bag, USAGE_METRICS.setups, DIM_NONE, 1)
   add(bag, USAGE_METRICS.setupChars, String(ev.charCountBucket), 1)
@@ -573,6 +645,38 @@ function foldSetup(bag: Bag, ev: Extract<TelemetryEvent, { t: 'setupSnapshot' }>
   add(bag, USAGE_METRICS.setupVoice, ev.voiceEngine, 1)
   add(bag, USAGE_METRICS.setupPacks, DIM_NONE, ev.soundPackCount)
   add(bag, USAGE_METRICS.setupUpdateChannel, ev.updateChannel, 1)
+  foldMachineClass(bag, ev)
+}
+
+/**
+ * THE MACHINE CLASS (JOS-364), folded off the same event.
+ *
+ * EVERY FIELD IS OPTIONAL ON THE WIRE (the additive-field rule), and each is skipped when absent
+ * rather than folded as a zero — which is a different statement from `foldHealth`'s `?? 0`, and
+ * deliberately so. There, 0 is the honest reading of "a client that does not measure it saw none
+ * of them"; here, bucket 0 is a REAL bucket (fewer than two cores, no display) and defaulting to
+ * it would invent a population of impossible machines out of clients that predate the field.
+ *
+ * A separate function from `foldSetup` only because the two together are past the repo's
+ * per-function ceiling; the cut is by subject — what the install is set to, and what it runs on.
+ */
+function foldMachineClass(bag: Bag, ev: Extract<TelemetryEvent, { t: 'setupSnapshot' }>): void {
+  if (ev.cpuCountBucket !== undefined) add(bag, USAGE_METRICS.setupCpu, String(ev.cpuCountBucket), 1)
+  if (ev.totalMemBucket !== undefined) add(bag, USAGE_METRICS.setupMem, String(ev.totalMemBucket), 1)
+  if (ev.gpuVendor !== undefined) add(bag, USAGE_METRICS.setupGpuVendor, ev.gpuVendor, 1)
+  if (ev.gpuCompositing !== undefined) {
+    add(bag, USAGE_METRICS.setupCompositing, ev.gpuCompositing, 1)
+  }
+  if (ev.safeMode !== undefined) add(bag, USAGE_METRICS.setupSafeMode, flag(ev.safeMode), 1)
+  if (ev.displayCountBucket !== undefined) {
+    add(bag, USAGE_METRICS.setupDisplays, String(ev.displayCountBucket), 1)
+  }
+  if (ev.primaryScaleBucket !== undefined) {
+    add(bag, USAGE_METRICS.setupScale, String(ev.primaryScaleBucket), 1)
+  }
+  if (ev.eqWindowMode !== undefined) {
+    add(bag, USAGE_METRICS.setupEqWindowMode, ev.eqWindowMode, 1)
+  }
 }
 
 /**
@@ -606,6 +710,11 @@ function foldHealth(
   add(bag, USAGE_METRICS.health, `${version}:suppressedErrorLines`, ev.suppressedErrorLines ?? 0)
   // …and JOS-266's, read through `?? 0` for the same reason a third time.
   add(bag, USAGE_METRICS.health, `${version}:imageCacheReadFailures`, ev.imageCacheReadFailures ?? 0)
+  // JOS-364's two lost-child counters, `?? 0` for the fourth and fifth time. The GPU one counts
+  // into the error RATE (it is a crash of a process we depend on); the utility one is on the deny
+  // list below, because Chromium's utility processes come and go by design.
+  add(bag, USAGE_METRICS.health, `${version}:gpuProcessGone`, ev.gpuProcessGone ?? 0)
+  add(bag, USAGE_METRICS.health, `${version}:utilityProcessGone`, ev.utilityProcessGone ?? 0)
 }
 
 /**
@@ -671,6 +780,7 @@ function foldSession(bag: Bag, ev: TelemetryEvent, version: string): boolean {
       add(bag, USAGE_METRICS.heartbeats, DIM_NONE, 1)
       add(bag, USAGE_METRICS.linesParsed, DIM_NONE, ev.linesParsed ?? 0)
       if (ev.startup !== undefined) foldStartup(bag, ev.startup, version)
+      foldLiveRiders(counter(bag), DIM_NONE, ev)
       return true
     case 'sessionEnd':
       add(bag, USAGE_METRICS.sessionEnds, DIM_NONE, 1)
@@ -678,6 +788,7 @@ function foldSession(bag: Bag, ev: TelemetryEvent, version: string): boolean {
       add(bag, USAGE_METRICS.sessionLenBucket, String(bucketOf(ev.durationMs, SESSION_MS_EDGES)), 1)
       add(bag, USAGE_METRICS.linesParsed, DIM_NONE, ev.linesParsed ?? 0)
       if (ev.startup !== undefined) foldStartup(bag, ev.startup, version)
+      foldLiveRiders(counter(bag), DIM_NONE, ev)
       return true
     default:
       return false
@@ -827,7 +938,10 @@ export function rollupBatch(batch: TelemetryBatch, ctx: RollupContext): RollupRe
   return {
     counters,
     funnels: foldFunnels(batch.events, batch.env.appVersion),
-    errors: foldErrors(batch.events, batch.env.appVersion)
+    errors: foldErrors(batch.events, batch.env.appVersion),
+    // THIS BATCH'S OWN SNAPSHOT WINS over the install row's stored dims: it is the newer fact,
+    // and a machine that just changed its EQ window mode says so in the launch that noticed.
+    perf: foldPerfCube(batch.events, perfDimsFromEvents(batch.events) ?? ctx.perf ?? UNKNOWN_PERF_DIMS)
   }
 }
 

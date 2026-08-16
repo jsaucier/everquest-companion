@@ -20,6 +20,7 @@ import type {
   TriageFunnelStepRow,
   TriageLiveSessions,
   TriageMixRow,
+  TriagePerfSlice,
   TriageStartupRow
 } from '../src/shared/triage'
 
@@ -111,6 +112,11 @@ function adoptionLines(d: TriageAnalyticsData): string[] {
     ...mixBlock(a.overlays),
     '  voice engine',
     ...mixBlock(a.voice),
+    // JOS-364. Sixteen rows is the realistic ceiling here (eight metrics, a couple of populated
+    // buckets each), so the block is given room the other mixes do not need — a GPU vendor list
+    // truncated at ten is a list with the interesting tail cut off.
+    '  machine class (JOS-364 - the axis stall readings get sliced by)',
+    ...mixBlock(a.machine, 24, '(nothing reported yet)'),
     `  alerts fired ${String(a.alertsFired)} · spoken ${String(a.alertsSpoken)}`,
   ]
 }
@@ -204,6 +210,82 @@ function startupLines(d: TriageAnalyticsData): string[] {
     ...mixBlock(s.logSizes),
     '  new bytes since that install last exited cleanly (all builds)',
     ...mixBlock(s.newBytes, 10, '(no launch has reported one yet)'),
+  ]
+}
+
+/**
+ * THE LIVE SESSION (JOS-367) — the section above asks how launches went; this one asks what
+ * happened for the hours afterwards, and it is the only place the ~1 s freeze reports have a
+ * number to argue with.
+ *
+ * THE TWO RATES ARE THE SECTION. `late/report` and `machine/report` cover the same interval, so
+ * reading them against each other is the whole verdict: late moments a second, idle thread ALSO
+ * saw are the machine (paging, a driver reset, a disk), and the app was a victim beside the game;
+ * late moments only main saw are ours. `machine/report` prints a dash rather than a zero when no
+ * report carried a verdict, because "no second clock ran" and "two clocks never agreed" are
+ * opposite findings and only one of them is an accusation.
+ */
+function liveStallLines(d: TriageAnalyticsData): string[] {
+  const l = d.live
+  const head = ['', 'LIVE SESSIONS (how smoothly the app ran; percentiles are bucket ranges)']
+  if (l.reports === 0) return [...head, '  (no session has reported a stall reading yet)']
+  const rate = (v: number | null): string => (v === null ? '-' : v.toFixed(2))
+  return [
+    ...head,
+    `  ${String(l.reports).padStart(6)} reports · ${String(l.samples)} probe ticks` +
+      ` · lateness p50 ${l.p50StallLabel ?? '-'} p95 ${l.p95StallLabel ?? '-'}` +
+      ` · worst tick p95 ${l.maxStallLabel ?? '-'}`,
+    `  late ticks: ${String(l.over100)} over 100ms · ${String(l.over500)} over 500ms` +
+      ` · ${rate(l.latePerReport)} late/report`,
+    `  VERDICT: ${String(l.coincident)} windows both our clocks saw, over ${String(l.verdicts)}` +
+      ` reports that could answer · ${rate(l.machinePerReport)} machine/report` +
+      ' (read against late/report above: the gap is us)',
+    l.tailReports === 0
+      ? '  tail reads: (no session has reported one yet)'
+      : `  tail reads: ${String(l.tailReads)} over ${String(l.tailReports)} reports` +
+        ` · ${String(l.tailReopens)} reopens · read p95 ${l.p95TailLabel ?? '-'}` +
+        ` worst ${l.maxTailLabel ?? '-'} · ${String(l.tailOver100)} over 100ms` +
+        ` · ${String(l.tailOver500)} over 500ms`,
+    '  fattest single read',
+    ...mixBlock(l.tailDeltas, 10, '(no session has reported one yet)'),
+    '  size of the logs being tailed',
+    ...mixBlock(l.tailLogSizes, 10, '(no session has reported one yet)'),
+    '  what was switched on while all of the above was measured',
+    ...mixBlock(l.state, 24, '(nothing reported yet)'),
+  ]
+}
+
+/**
+ * STALLS BY … (JOS-372) — the cross-tab, printed directly under the Live section whose fleet-wide
+ * rate every row here is read against.
+ *
+ * THREE CUTS OF ONE POPULATION, NEVER SUMMED ACROSS: the same session reports sliced by EQ window
+ * mode, by machine class and by locked overlay, so adding a row from one list to a row from
+ * another counts reports twice. Each row prints its own denominator, because a slice of four
+ * reports at 100% is noise and a slice of four hundred at 12% is a lead — and the lists are
+ * ordered by that denominator rather than by rate for exactly that reason.
+ */
+function perfLines(d: TriageAnalyticsData): string[] {
+  const p = d.perf
+  const head = ['', `STALLS BY … (worst tick ${p.stallLabel}; three cuts of ONE population, never summed)`]
+  if (p.reports === 0) {
+    return [...head, '  (the perf cube has no rows in this window - there is no backfill: JOS-372)']
+  }
+  const block = (title: string, rows: readonly TriagePerfSlice[]): string[] => [
+    `  ${title}`,
+    ...rows.map(
+      (r) =>
+        `  ${r.id.padEnd(22)} ${String(r.stalls).padStart(7)} / ${String(r.reports).padEnd(7)}` +
+        ` ${(r.rate === null ? '-' : pct(r.rate)).padStart(7)}`
+    ),
+  ]
+  return [
+    ...head,
+    `  fleet: ${String(p.stalls)} of ${String(p.reports)} reports · ${p.rate === null ? '-' : pct(p.rate)}` +
+      ' - every rate below is read against this one',
+    ...block('by EQ window mode', p.byWindowMode),
+    ...block('by machine class (tier is the WEAKER of cores/RAM x integrated|discrete GPU)', p.byMachineClass),
+    ...block('by locked overlay (locked = the process-wide mouse hook is ARMED)', p.byLocked),
   ]
 }
 
@@ -386,6 +468,8 @@ export function renderAnalyticsDigest(
     ...funnelLines(d),
     ...healthLines(d),
     ...startupLines(d),
+    ...liveStallLines(d),
+    ...perfLines(d),
     ...versionLines(d),
     ...downloadsLines(downloads),
     ...coverageLines(d, downloads),

@@ -27,6 +27,7 @@ import type { GraphicsEnvironment } from '@shared/wineDetect'
 import type { CursorRingPrefs, OverlayAutoHidePrefs } from '@shared/presencePrefs'
 import type { OverlaySnapPrefs } from '@shared/overlaySnap'
 import type { PerfHudPrefs, StartupProfile } from '@shared/perf'
+import type { ProcessPriorityPrefs } from '@shared/processPriority'
 import type { TelemetryPayloadView } from '@shared/telemetry'
 import type { AlertDef, EqConfig, OverlayConfig, OverlayKind, UpdateStatus, VoicePrefs } from '@shared/types'
 
@@ -71,6 +72,10 @@ export interface PrefsSnapshot {
   /** Performance — the HUD switch and this launch's startup breakdown. */
   perfHud: PerfHudPrefs
   startup: StartupProfile
+  /** Performance — "yield CPU to the game" (JOS-366). ON by default, which is exactly why it has
+   *  to come through the gate: a switch whose default is `true` flashing OFF is the JOS-340
+   *  defect wearing its loudest clothes. */
+  processPriority: ProcessPriorityPrefs
   /** Updates — the version row and the status chip's starting value (pushes follow). */
   version: string
   updateStatus: UpdateStatus
@@ -101,6 +106,7 @@ export interface PrefsReader {
   getTelemetryPayload: () => Promise<TelemetryPayloadView>
   getPerfPrefs: () => Promise<PerfHudPrefs>
   getStartupProfile: () => Promise<StartupProfile>
+  getProcessPriority: () => Promise<ProcessPriorityPrefs>
   getAppVersion: () => Promise<string>
   getUpdateStatus: () => Promise<UpdateStatus>
   listAlerts: () => Promise<AlertDef[]>
@@ -130,6 +136,7 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     telemetry,
     perfHud,
     startup,
+    processPriority,
     version,
     updateStatus,
     alerts
@@ -148,6 +155,7 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     eq.getTelemetryPayload(),
     eq.getPerfPrefs(),
     eq.getStartupProfile(),
+    eq.getProcessPriority(),
     eq.getAppVersion(),
     eq.getUpdateStatus(),
     eq.listAlerts()
@@ -167,6 +175,7 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     telemetry,
     perfHud,
     startup,
+    processPriority,
     version,
     updateStatus,
     alertCount: alerts.length

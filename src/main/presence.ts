@@ -40,6 +40,7 @@
 
 import { join } from 'path'
 import { Worker } from 'node:worker_threads'
+import { screen } from 'electron'
 import { E2E } from './e2e'
 import { logError, logInfo } from './errorLog'
 import { notePresenceRestart } from './telemetry'
@@ -55,6 +56,7 @@ import {
   WATCHER_STALE_MS,
   WATCHER_STOP_MESSAGE,
   describeRestartCause,
+  eqBoundsInDip,
   eqRootPrefix,
   focusCountsAsEq,
   focusDebounceStep,
@@ -233,7 +235,33 @@ function applyFocus(observed: boolean): void {
  *
  * Bounds are updated ONLY for a genuine EQ window: our own windows can be EQ-side for the FOCUS
  * question but they are not where the game is, and the ring must not jump onto them.
+ *
+ * AND THIS IS WHERE THEY BECOME DIP (JOS-376). The watcher speaks physical pixels — see
+ * `eqBoundsInDip` in presenceProtocol.ts for why the wire stays that way — and every consumer of
+ * `state.eqBounds` is Electron-side and therefore DIP: `createCursorRingWindow`/
+ * `setCursorRingBounds` (windows.ts) set `BrowserWindow` bounds with it, and the 8 ms sampler
+ * (presenceEffects.ts) subtracts the window origin from `screen.getCursorScreenPoint()`, which is
+ * already DIP and is deliberately left alone. One line converts, so from here on the state, the
+ * window and the sampler agree — INCLUDING any future reader (JOS-370's hit test): whatever asks
+ * `eqBounds` gets DIP.
+ *
+ * THE CONSEQUENCE WORTH STATING, because it is the reported defect's other half: a DIP rectangle
+ * no longer over-sizes the ring window onto the neighbouring monitor, so the sampler's existing
+ * "is the cursor inside these bounds" test PARKS the halo when the pointer leaves the game's
+ * screen instead of tracking it, at an offset, across the second one.
  */
+/**
+ * The physical-pixel → DIP conversion, bound to Electron (JOS-376). Windows-only by construction:
+ * `screenToDipRect` exists on Windows, and so does the watcher — nothing else ever reaches this
+ * line, so it needs no platform branch of its own beyond the one that gates presence.
+ *
+ * No "is `screen` ready" guard, deliberately: the watcher is started from `refreshPresenceEffects`
+ * long after `app.whenReady()`, and a guard that can never fire is a claim that it can.
+ */
+function toDip(rect: ScreenRect): ScreenRect {
+  return eqBoundsInDip(rect, (r) => screen.screenToDipRect(null, r))
+}
+
 function applyRecord(rec: PresenceRecord): void {
   // The heartbeat is LIVENESS, not an observation. It says the loop is turning, which is exactly
   // what `noteSignal` already recorded; it deliberately does not set `observed`, because a beat
@@ -259,7 +287,7 @@ function applyRecord(rec: PresenceRecord): void {
     { pid: process.pid, appWindowFocused: mainWindowFocused() },
     effectiveEqRoot()
   )
-  update(side === 'eq' ? { observed: true, eqBounds: rec.rect } : { observed: true })
+  update(side === 'eq' ? { observed: true, eqBounds: toDip(rec.rect) } : { observed: true })
   applyFocus(focusCountsAsEq(side))
 }
 

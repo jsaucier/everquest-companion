@@ -36,7 +36,7 @@ import {
   speechCacheKey,
   speechCachePath
 } from '../src/main/speech/cache'
-import { createSpeechEngine, resolveKokoroVoice } from '../src/main/speech/engine'
+import { createSpeechEngine, kokoroSessionOptions, resolveKokoroVoice } from '../src/main/speech/engine'
 import { KOKORO_ASSETS, KOKORO_DEFAULT_VOICE, KOKORO_TOTAL_BYTES } from '../src/main/speech/pinned'
 import { assetPath, isKokoroInstalled, kokoroDir, provisionKokoro } from '../src/main/speech/provision'
 import type { SpeechInstallProgress } from '../src/shared/alertTypes'
@@ -449,6 +449,28 @@ test('an unknown voice id falls back to the tier default rather than refusing to
   assert.equal(resolveKokoroVoice('urn:moz-tts:sapi:Microsoft David'), KOKORO_DEFAULT_VOICE)
   assert.equal(resolveKokoroVoice(null), KOKORO_DEFAULT_VOICE)
   assert.equal(resolveKokoroVoice('af_heart'), 'af_heart')
+})
+
+test('the inference session is bounded to one core — the game is on this box (JOS-365)', () => {
+  // The one thing in the Kokoro tier that costs the user something they can FEEL while it is
+  // working perfectly. Left at onnxruntime's defaults the pool is sized to the physical core
+  // count and each uncached phrase burned ~21 CPU-seconds (measured, 24 cores) for audio that
+  // one thread produces in the same wall time, byte for byte. A future edit that raises either
+  // number, or lets the execution mode go parallel, is a stutter in EverQuest at the exact
+  // moment an alert fires — so the numbers are pinned here rather than left inside a native
+  // call no test can see.
+  const options = kokoroSessionOptions()
+  assert.equal(options.intraOpNumThreads, 1)
+  assert.equal(options.interOpNumThreads, 1)
+  assert.equal(options.executionMode, 'sequential')
+  // Pure: no hidden state, and nothing the caller can mutate into the next session.
+  const second = kokoroSessionOptions()
+  assert.notEqual(options, second)
+  assert.deepEqual(options, second)
+  // `session.intra_op.allow_spinning` is deliberately ABSENT: onnxruntime-node 1.20.1 does not
+  // read `SessionOptions.extra` at all (its typings say WebAssembly-only, and passing it changed
+  // nothing when measured). One intra-op thread means no pool, hence nothing to spin.
+  assert.equal(options.extra, undefined)
 })
 
 test('the pinned assets are two immutable, hash-pinned https URLs', () => {

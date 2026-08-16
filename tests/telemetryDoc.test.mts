@@ -23,20 +23,32 @@ import {
   ALERT_COUNT_EDGES,
   CHAR_COUNT_EDGES,
   COLD_START_MS_EDGES,
+  CPU_COUNT_EDGES,
+  DISPLAY_COUNT_EDGES,
   LOG_SIZE_BYTES_EDGES,
   NEW_BYTES_EDGES,
+  PRIMARY_SCALE_EDGES,
   SESSION_AGE_MS_EDGES,
   STUTTER_MS_EDGES,
   TELEMETRY_BUFFER_CAP,
+  TELEMETRY_EQ_WINDOW_MODES,
   TELEMETRY_EVENT_KINDS,
   TELEMETRY_FEATURES,
   TELEMETRY_FUNNELS,
   TELEMETRY_FLIP_KINDS,
   TELEMETRY_FUNNEL_STEPS,
+  TELEMETRY_GPU_COMPOSITING,
+  TELEMETRY_GPU_VENDORS,
   TELEMETRY_OVERLAY_KINDS,
   TELEMETRY_VIEWS,
+  TOTAL_MEM_GB_EDGES,
   bucketRange
 } from '../src/shared/telemetry'
+import {
+  FREE_MEM_GB_EDGES,
+  LIVE_STALL_MS_EDGES,
+  WORKING_SET_MB_EDGES
+} from '../src/shared/telemetryLive'
 import {
   DOC_EVENT_KINDS,
   TELEMETRY_DOC_BUCKETS,
@@ -87,7 +99,12 @@ test('SUBSTANCE: the page names every enum member the schema can emit', () => {
     ...TELEMETRY_OVERLAY_KINDS,
     ...TELEMETRY_FEATURES,
     ...TELEMETRY_FUNNELS,
-    ...TELEMETRY_FUNNELS.flatMap((f) => TELEMETRY_FUNNEL_STEPS[f])
+    ...TELEMETRY_FUNNELS.flatMap((f) => TELEMETRY_FUNNEL_STEPS[f]),
+    // JOS-364's three machine-class enums. They name hardware and a game setting rather than a
+    // feature of this app, which is exactly why the page has to spell every member they can hold.
+    ...TELEMETRY_GPU_VENDORS,
+    ...TELEMETRY_GPU_COMPOSITING,
+    ...TELEMETRY_EQ_WINDOW_MODES
   ]
   for (const value of closed) {
     assert.ok(md.includes(`\`${value}\``), `TELEMETRY.md never mentions \`${value}\``)
@@ -113,7 +130,20 @@ test('SUBSTANCE: the page prints every bucket RANGE, from the schema’s own edg
     // reaches a user as a RANGE and therefore owes this page the table it can be read off.
     NEW_BYTES_EDGES,
     STUTTER_MS_EDGES,
-    STUTTER_MS_EDGES
+    STUTTER_MS_EDGES,
+    // JOS-364's machine class — four more ladders, and each one reaches a user as a RANGE, so
+    // each owes this page the table the range can be read off.
+    CPU_COUNT_EDGES,
+    TOTAL_MEM_GB_EDGES,
+    DISPLAY_COUNT_EDGES,
+    PRIMARY_SCALE_EDGES,
+    // JOS-367's live-session riders. THREE ladders for FOUR fields: the stall ladder is printed
+    // once under all four field names that share it (two clock readings, two read latencies),
+    // because four identical tables are four chances to read one of them as a different ladder.
+    LIVE_STALL_MS_EDGES,
+    NEW_BYTES_EDGES,
+    FREE_MEM_GB_EDGES,
+    WORKING_SET_MB_EDGES
   ]
   assert.equal(TELEMETRY_DOC_BUCKETS.length, edgeSets.length, 'every bucket field is documented')
   for (const b of TELEMETRY_DOC_BUCKETS) {

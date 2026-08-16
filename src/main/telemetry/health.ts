@@ -46,7 +46,7 @@
  *  itself, and the validator would reject the event anyway. */
 const MAX_HEALTH_COUNT = 1_000_000
 
-/** The eight fields, spelled once. Mirrors `HEALTH_FIELDS` in shared/telemetryValidate.ts. */
+/** The ten fields, spelled once. Mirrors `HEALTH_FIELDS` in shared/telemetryValidate.ts. */
 export interface HealthDelta {
   rendererCrashes: number
   mainErrorLogLines: number
@@ -56,6 +56,8 @@ export interface HealthDelta {
   imageFetchFailures: number
   suppressedErrorLines: number
   imageCacheReadFailures: number
+  gpuProcessGone: number
+  utilityProcessGone: number
 }
 
 const zero = (): HealthDelta => ({
@@ -66,7 +68,9 @@ const zero = (): HealthDelta => ({
   speechFailures: 0,
   imageFetchFailures: 0,
   suppressedErrorLines: 0,
-  imageCacheReadFailures: 0
+  imageCacheReadFailures: 0,
+  gpuProcessGone: 0,
+  utilityProcessGone: 0
 })
 
 let pending: HealthDelta = zero()
@@ -216,6 +220,38 @@ export function noteImageCacheReadFailure(n = 1): void {
  */
 export function noteSuppressedErrorLine(n = 1): void {
   bump('suppressedErrorLines', n)
+}
+
+/**
+ * THE GPU PROCESS DIED and Chromium restarted it (JOS-364, `child-process-gone` with
+ * `type: 'GPU'` — src/main/childProcessGone.ts).
+ *
+ * IT IS `noteRendererCrash`'S ARGUMENT ABOUT A DIFFERENT PROCESS. The app survives, so nothing
+ * else in this codebase would ever have said anything about it; what the user gets is every
+ * window's compositor torn down and rebuilt, which is a black frame or a freeze, and "EverQuest
+ * hitches for about a second when an overlay appears" is the report this counter exists to test
+ * against. It IS summed into the release error rate.
+ *
+ * COUNTED AT THE EVENT, not via `logError`, for `noteRendererCrash`'s reason exactly: the handler
+ * logs one line per loss so the error store gets an exemplar carrying the reason and the exit
+ * code, and counting log lines instead would tie this number to how chatty that handler is.
+ */
+export function noteGpuProcessGone(n = 1): void {
+  bump('gpuProcessGone', n)
+}
+
+/**
+ * A UTILITY PROCESS died the same way (`type: 'Utility'`) — audio, networking, storage.
+ *
+ * NOT AN ERROR (`HEALTH_NON_ERROR_FIELDS`, shared/telemetryRollup.ts), and counted anyway, which
+ * is `imageFetchFailures`' shape a third time: Chromium starts and stops these by design and
+ * nothing here can tell an ordinary teardown from a kill beyond the clean-exit filter its
+ * producer applies, so summing it into the rate would report a normal browser as a bad release.
+ * What it is FOR is the correlation — a fleet where this climbs beside `gpuProcessGone` is a
+ * fleet where something outside this app is killing our children.
+ */
+export function noteUtilityProcessGone(n = 1): void {
+  bump('utilityProcessGone', n)
 }
 
 /**

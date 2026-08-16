@@ -43,6 +43,7 @@ const POPOVER = '[data-testid="perf-popover"]'
 const PANE = '[data-testid="pref-perf"]'
 const SWITCH = '[data-testid="pref-perf-enabled"] input'
 const BREAKDOWN = '[data-testid="perf-startup"]'
+const YIELD_SWITCH = '[data-testid="pref-yield-enabled"] input'
 /** The sampler pushes every 2 s and emits one immediately on start; be generous anyway. */
 const SAMPLE_WAIT_MS = 6_000
 /** A full historical scan of a months-old live log takes seconds; be generous, fail loudly. */
@@ -150,6 +151,41 @@ async function stepPopover(page: Page): Promise<void> {
   )
   await page.keyboard.press('Escape')
   await settleGone(page, POPOVER, { timeoutMs: 8_000 })
+}
+
+/** How this spec reads the stored "yield CPU to the game" answer, from inside the running app. */
+function storedYield(page: Page): Promise<{ yieldToGame: boolean }> {
+  return page.evaluate(() =>
+    (
+      window as unknown as { eq: { getProcessPriority: () => Promise<{ yieldToGame: boolean }> } }
+    ).eq.getProcessPriority()
+  )
+}
+
+/**
+ * "Yield CPU to the game" (JOS-366) — the ONE targeted step this feature earns here.
+ *
+ * WHAT IT CAN AND CANNOT ASSERT. The mechanism itself is a deliberate no-op under EQ_E2E (an
+ * integration test must not reprioritise the machine running it), so this step is about the SEAM
+ * the setting lives on and nothing else: the toggle exists, it paints the shipped default without
+ * a flash, and a change survives into the next launch. The priority classes themselves are unit
+ * work over a stubbed `os` (tests/processPriority.test.mts) and, in the end, Task Manager.
+ *
+ * IT TURNS THE SETTING OFF, which is the direction that proves something: `false` is the value a
+ * default cannot produce, so a second launch reading `false` can only have read the file.
+ */
+async function stepYieldToGame(page: Page): Promise<void> {
+  await page.waitForSelector(YIELD_SWITCH, { timeout: 15_000 })
+  const shown = await page.evaluate(
+    (sel) => (document.querySelector(sel) as HTMLInputElement | null)?.checked,
+    YIELD_SWITCH
+  )
+  check('Performance offers the game-priority switch, ON as shipped', shown === true, String(shown))
+  check('…and the stored answer agrees', (await storedYield(page)).yieldToGame === true)
+
+  await page.click(YIELD_SWITCH)
+  const stored = await settle(() => storedYield(page), (p) => !p.yieldToGame, { timeoutMs: 8_000 })
+  check('turning it off is stored immediately, not at the next launch', stored.yieldToGame === false)
 }
 
 /**
@@ -292,6 +328,13 @@ async function stepSecondLaunch(log: FixtureLog, userData: string, errors: strin
     // fixture this small — so wait for the window to be usable before quitting, or the file this
     // asserts against would be the incomplete flush instead.
     await page.waitForSelector('[data-testid="nav-preferences"]', { timeout: 60_000 })
+    // …and the other thing a second launch on the same userData is the only proof of: the
+    // game-priority switch the first launch turned off is still off. `false` is not a value any
+    // default can produce here (the setting ships ON), so this can only have come off disk.
+    check(
+      'the game-priority switch survives a relaunch, off as the last launch left it',
+      (await storedYield(page)).yieldToGame === false
+    )
     await closeWindows(app)
   } finally {
     await close()
@@ -329,6 +372,8 @@ async function main(): Promise<void> {
       await stepChipReadsNumbers(page)
       await stepPopover(page)
     }
+    // Same section, same pane, already open — so this costs a click rather than a navigation.
+    await stepYieldToGame(page)
     await stepStartupPane(page)
     // LAST, because it reloads the window: everything above measures the launch that is already
     // running, and a reload would put those steps' subjects back through a fresh mount.

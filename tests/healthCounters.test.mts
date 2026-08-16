@@ -63,7 +63,10 @@ const NO_HEALTH = {
   // is added without being thought about. It has now done that job twice.
   imageFetchFailures: 0,
   suppressedErrorLines: 0,
-  imageCacheReadFailures: 0
+  imageCacheReadFailures: 0,
+  // …and JOS-364's two lost-child counters, which is the third time this literal has done its job.
+  gpuProcessGone: 0,
+  utilityProcessGone: 0
 }
 
 test('the health drain is a DELTA — a drain zeroes what it took, so nothing counts twice', () => {
@@ -265,7 +268,7 @@ test('JOS-266 wired the eighth, and it is the third count on a path that used to
   assert.match(img, /onError\(`\[everquest-companion:error\] image cache: could not store/)
 })
 
-test('the three optional fields are OPTIONAL on the wire — an old client must not fail a batch', () => {
+test('the five optional fields are OPTIONAL on the wire — an old client must not fail a batch', () => {
   // THE DEPLOY-SKEW HALF (the additive-field rule, shared/telemetry.ts). This validator also runs
   // in the ingest Lambda, which reads events from clients both newer and older than itself. If the
   // fields were required, a client predating them would be told 400 for the whole batch, and
@@ -274,6 +277,8 @@ test('the three optional fields are OPTIONAL on the wire — an old client must 
   delete old.imageFetchFailures
   delete old.suppressedErrorLines
   delete old.imageCacheReadFailures
+  delete old.gpuProcessGone
+  delete old.utilityProcessGone
   const v = validateTelemetryEvent(old)
   assert.ok(v.ok && v.value.t === 'healthCounters')
   // Absent means ABSENT, not zero: the value is constructed field by field, so an older client's

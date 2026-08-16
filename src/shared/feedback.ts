@@ -14,9 +14,9 @@
 // cannot act on.
 //
 // LAWS THIS FILE OBEYS:
-//   * PURE. Its ONLY import is the pure sibling `./sanitizeText` — no `node:`, no Electron, no
-//     DOM. `src/shared/**` compiles under BOTH tsconfigs and this module additionally has to
-//     bundle into a Lambda.
+//   * PURE. Its only imports are the pure siblings `./sanitizeText` and `./feedbackPerf` — no
+//     `node:`, no Electron, no DOM. `src/shared/**` compiles under BOTH tsconfigs and this module
+//     additionally has to bundle into a Lambda.
 //   * REJECT, NEVER TRUNCATE (§8.3 step 2). A description that is too long is an error the
 //     user is told about; silently cutting it is a lie to both parties. The validators trim
 //     SURROUNDING whitespace (normalization) and never shorten content.
@@ -44,6 +44,7 @@
 //
 // Plan of record: docs/plans/feedback-triage.md §3.1 (shape), §8.3 (handler contract).
 
+import { validatePerf, type FeedbackPerf } from './feedbackPerf'
 import { hasWireControls, sanitizeMultiline } from './sanitizeText'
 
 /** Bumped only for a BREAKING wire change; the server rejects anything else outright.
@@ -113,6 +114,22 @@ export interface FeedbackEnv {
   electron: string // process.versions.electron
   chrome: string // process.versions.chrome
   node: string // process.versions.node
+  /**
+   * THE LAST TEN MINUTES OF STALL AND TAIL-READ TIMING (JOS-369) — the one field here that is not
+   * a runtime string, and the reason is that it is not a fact about the BUILD, it is a fact about
+   * the SESSION being complained about (`shared/feedbackPerf.ts` states why it is raw rather than
+   * bucketed).
+   *
+   * IT RIDES `env` RATHER THAN GETTING A COLUMN, and that is the whole design: `env_json` is
+   * already `JSON.stringify(req.env)` in the ingest INSERT, so a sub-object here reaches the
+   * database with NO schema change and NO Lambda change beyond this validator. What it does cost
+   * is the ordering law JOS-296 wrote down — the SERVER (which bundles this file) must ship before
+   * a client that sends the field, or the field is dropped on the way in.
+   *
+   * ABSENT is the normal state, not an error: a report composed before `replayDone`, or on a build
+   * with no probe, has no timeline, and an empty block is not a block.
+   */
+  perf?: FeedbackPerf
 }
 
 /** Metadata about an attached slice. The BYTES go to S3, never through this JSON. */
@@ -465,6 +482,14 @@ export function validateDraft(input: unknown): Validated<FeedbackDraft> {
   }
 }
 
+/**
+ * The free-form runtime strings on `env` (`process.platform`, `os.release()`,
+ * `process.versions.*`): present, bounded, and SINGLE-LINE — `lineText` rejects any control or
+ * invisible character outright, because these values are printed straight into the owner's
+ * terminal by the triage CLI and none of them can legitimately carry one.
+ */
+const ENV_LINE_FIELDS = ['platform', 'osRelease', 'arch', 'electron', 'chrome', 'node'] as const
+
 /** What the client says about itself. Every field is required — main always knows all of them. */
 export function validateEnv(input: unknown): Validated<FeedbackEnv> {
   if (!isRecord(input)) return fail('env', 'env is required.')
@@ -485,22 +510,20 @@ export function validateEnv(input: unknown): Validated<FeedbackEnv> {
   )
   if (!updateChannel.ok) return updateChannel
 
-  // The remaining fields are free-form runtime strings (`process.platform`, `os.release()`,
-  // `process.versions.*`): present, bounded, and SINGLE-LINE — `lineText` rejects any control
-  // or invisible character outright, because these values are printed straight into the owner's
-  // terminal by the triage CLI and none of them can legitimately carry one.
-  const platform = lineText(input.platform, 'env.platform', MAX_ENV_FIELD)
-  if (!platform.ok) return platform
-  const osRelease = lineText(input.osRelease, 'env.osRelease', MAX_ENV_FIELD)
-  if (!osRelease.ok) return osRelease
-  const arch = lineText(input.arch, 'env.arch', MAX_ENV_FIELD)
-  if (!arch.ok) return arch
-  const electron = lineText(input.electron, 'env.electron', MAX_ENV_FIELD)
-  if (!electron.ok) return electron
-  const chrome = lineText(input.chrome, 'env.chrome', MAX_ENV_FIELD)
-  if (!chrome.ok) return chrome
-  const node = lineText(input.node, 'env.node', MAX_ENV_FIELD)
-  if (!node.ok) return node
+  // The six free-form runtime strings, read in ONE loop rather than six copies of the same three
+  // lines. They are validated identically by construction, so the loop is not a compression of
+  // six decisions — it is the honest spelling of one decision applied six times.
+  const runtime = {} as Record<(typeof ENV_LINE_FIELDS)[number], string>
+  for (const key of ENV_LINE_FIELDS) {
+    const value = lineText(input[key], `env.${key}`, MAX_ENV_FIELD)
+    if (!value.ok) return value
+    runtime[key] = value.value
+  }
+
+  // The perf timeline (JOS-369), validated where its shape is DECLARED. Absent reads as null and
+  // the field is then omitted below — the additive spelling, same as both attachments.
+  const perf = validatePerf(input.perf)
+  if (!perf.ok) return perf
 
   return {
     ok: true,
@@ -508,12 +531,8 @@ export function validateEnv(input: unknown): Validated<FeedbackEnv> {
       appVersion: appVersion.value,
       channel: channel.value,
       updateChannel: updateChannel.value,
-      platform: platform.value,
-      osRelease: osRelease.value,
-      arch: arch.value,
-      electron: electron.value,
-      chrome: chrome.value,
-      node: node.value,
+      ...runtime,
+      ...(perf.value === null ? {} : { perf: perf.value }),
     },
   }
 }

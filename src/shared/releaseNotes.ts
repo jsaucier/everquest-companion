@@ -125,6 +125,51 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '1.0.1',
+    date: '2026-08-15',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'The cursor ring lines up with the pointer under Windows display scaling and on multi-monitor setups, and it stays on the monitor the game is on - it no longer shows up offset when the pointer crosses to a second screen.',
+        fromReport: true
+      }
+    ]
+  },
+  {
+    version: '1.0.0',
+    date: '2026-08-15',
+    entries: [
+      {
+        kind: 'new',
+        text: 'A Performance setting, on by default, has the companion yield the CPU to EverQuest: every companion window runs at below-normal priority, so a busy moment on this side is never a fair fight with the game for a frame. Preferences, Performance, if you ever want it off.'
+      },
+      {
+        kind: 'new',
+        text: 'A bug report now carries a ten-minute performance timeline - how late the companion ran, how long each read of your log took, and what was open at the time - shown in the report preview before it goes, so "it hitched" can actually be diagnosed.'
+      },
+      {
+        kind: 'changed',
+        text: 'The log is read through one open handle in small bounded slices instead of being reopened up to twice a second and read in one gulp - less contention with the game writing the same file, and less for antivirus to look at again.'
+      },
+      {
+        kind: 'changed',
+        text: 'The natural voice speaks from a single core. It used to take every core for a second per new phrase and finish no sooner; a new phrase now arrives just as fast and leaves the rest of the machine to the game.'
+      },
+      {
+        kind: 'changed',
+        text: 'Overlays re-assert "always on top" only when Windows has actually taken it away, not on every show and hide - fewer window-order changes over the game.'
+      },
+      {
+        kind: 'changed',
+        text: 'Anonymous usage counts gain a few bucketed machine facts (cores, memory, graphics vendor, displays, the game display mode) and per-session smoothness numbers - still nothing from your log, still nothing typed. What this app measures lists every field.'
+      },
+      {
+        kind: 'fixed',
+        text: 'A name with an accented or non-Latin character can no longer be garbled when the first read of your history happens to split it across a read boundary.'
+      }
+    ]
+  },
+  {
     version: '0.28.0',
     date: '2026-08-14',
     entries: [

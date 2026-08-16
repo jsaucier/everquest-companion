@@ -13,6 +13,11 @@
 //   * `linesParsed` (2026-08-06) — the rule's first customer, and where it was learned.
 //   * `startup` (JOS-57) — the startup replay reading, all six fields or none, with three later
 //     discriminators each independently optional inside it.
+//   * `live` / `tail` / `state` (JOS-367) — what a RUNNING session did between two reports: how
+//     late our two clocks ran (and whether they went late TOGETHER, which is the machine-or-us
+//     verdict), what the tail's reads cost, and what was switched on while both were measured.
+//     Three independent groups, each all-or-nothing inside itself, declared in
+//     `./telemetryLive.ts` because the contract file is at its factoring ceiling.
 //
 // Why the rule: a NEW EVENT KIND fails the whole batch on a server that has not been redeployed,
 // and `telemetryPermanentRefusal` classes that 400 as "these bytes will never be accepted" and
@@ -33,6 +38,7 @@ import {
   MAX_REPLAY_EVENTS,
   NEW_BYTES_EDGES,
   STUTTER_MS_EDGES,
+  TELEMETRY_OVERLAY_KINDS,
   TELEMETRY_VIEWS,
   type EvSessionEnd,
   type EvSessionHeartbeat,
@@ -40,7 +46,15 @@ import {
   type StartupStutterStats,
   type TelemetryEvent
 } from './telemetry'
-import { bucket, fail, whole, type Validated } from './telemetryValidateBase'
+import {
+  FREE_MEM_GB_EDGES,
+  LIVE_STALL_MS_EDGES,
+  WORKING_SET_MB_EDGES,
+  type LiveStallStats,
+  type SessionStateStats,
+  type TailReadStats
+} from './telemetryLive'
+import { bucket, fail, flag, whole, type Validated } from './telemetryValidateBase'
 
 export function vSessionStart(o: Record<string, unknown>): Validated<TelemetryEvent> {
   const b = bucket(o.coldStartMsBucket, 'coldStartMsBucket', COLD_START_MS_EDGES)
@@ -160,6 +174,148 @@ function optionalStutter(raw: unknown): Validated<StartupStutterStats | undefine
   return { ok: true, value: { p50Bucket: p50.value, p95Bucket: p95.value, latePct: latePct.value } }
 }
 
+/**
+ * THE LIVE STALL READING (JOS-367), the third rider on these two events and the same deal as the
+ * two above: absent and null both mean "nothing to report in this one".
+ *
+ * ALL SIX OR NONE, `coincident` excepted. Every number describes the SAME interval, and a p95
+ * with no sample count under it is not a percentile of anything — the refusal `optionalStartup`
+ * makes about its six, made here about these.
+ *
+ * `coincident` IS INDEPENDENTLY OPTIONAL because absent and zero are opposite facts: absent means
+ * the probe worker was not running (no second clock, no verdict available), zero means two clocks
+ * were compared and never went late together — which is the reading that says the fault is OURS.
+ */
+function optionalLive(o: Record<string, unknown>): Validated<LiveStallStats | undefined> {
+  const raw = o.live
+  if (raw === undefined || raw === null) return { ok: true, value: undefined }
+  if (!isTelemetryObject(raw)) return fail('live', 'live must be an object.')
+  const samples = whole(raw.samples, 'live.samples', MAX_COUNT)
+  if (!samples.ok) return samples
+  const p95 = bucket(raw.p95Bucket, 'live.p95Bucket', LIVE_STALL_MS_EDGES)
+  if (!p95.ok) return p95
+  const max = bucket(raw.maxBucket, 'live.maxBucket', LIVE_STALL_MS_EDGES)
+  if (!max.ok) return max
+  const over100 = whole(raw.over100, 'live.over100', MAX_COUNT)
+  if (!over100.ok) return over100
+  const over500 = whole(raw.over500, 'live.over500', MAX_COUNT)
+  if (!over500.ok) return over500
+  const coincident = optionalWhole(raw.coincident, 'live.coincident', MAX_COUNT)
+  if (!coincident.ok) return coincident
+  const value: LiveStallStats = {
+    samples: samples.value,
+    p95Bucket: p95.value,
+    maxBucket: max.value,
+    over100: over100.value,
+    over500: over500.value
+  }
+  if (coincident.value !== undefined) value.coincident = coincident.value
+  return { ok: true, value }
+}
+
+/**
+ * WHAT THE LIVE TAIL'S READS COST (JOS-367). All eight or none, for the same reason: they are one
+ * interval's account of one file, and a read count with no latency beside it describes nothing.
+ *
+ * The whole group is absent on a session with no character attached — which is a REAL state, not
+ * a failure, and is why this is optional rather than zero-filled.
+ */
+function optionalTail(o: Record<string, unknown>): Validated<TailReadStats | undefined> {
+  const raw = o.tail
+  if (raw === undefined || raw === null) return { ok: true, value: undefined }
+  if (!isTelemetryObject(raw)) return fail('tail', 'tail must be an object.')
+  const reads = whole(raw.reads, 'tail.reads', MAX_COUNT)
+  if (!reads.ok) return reads
+  const reopens = whole(raw.reopens, 'tail.reopens', MAX_COUNT)
+  if (!reopens.ok) return reopens
+  const p95 = bucket(raw.p95Bucket, 'tail.p95Bucket', LIVE_STALL_MS_EDGES)
+  if (!p95.ok) return p95
+  const max = bucket(raw.maxBucket, 'tail.maxBucket', LIVE_STALL_MS_EDGES)
+  if (!max.ok) return max
+  const over100 = whole(raw.over100, 'tail.over100', MAX_COUNT)
+  if (!over100.ok) return over100
+  const over500 = whole(raw.over500, 'tail.over500', MAX_COUNT)
+  if (!over500.ok) return over500
+  return tailBytes(raw, { reads: reads.value, reopens: reopens.value, p95Bucket: p95.value, maxBucket: max.value, over100: over100.value, over500: over500.value })
+}
+
+/** The tail group's two SIZE buckets, split off so neither function is past the repo's factoring
+ *  ceilings. Both are required members of the group — see `optionalTail`. */
+function tailBytes(
+  raw: Record<string, unknown>,
+  base: Omit<TailReadStats, 'deltaBytesBucket' | 'logSizeBucket'>
+): Validated<TailReadStats> {
+  const delta = bucket(raw.deltaBytesBucket, 'tail.deltaBytesBucket', NEW_BYTES_EDGES)
+  if (!delta.ok) return delta
+  const size = bucket(raw.logSizeBucket, 'tail.logSizeBucket', LOG_SIZE_BYTES_EDGES)
+  if (!size.ok) return size
+  return { ok: true, value: { ...base, deltaBytesBucket: delta.value, logSizeBucket: size.value } }
+}
+
+/**
+ * WHAT THE APP WAS DOING while the two groups above were measured (JOS-367). All six or none.
+ *
+ * `overlaysOpen` and `overlaysLocked` are counts of WINDOWS, so their ceiling is the number of
+ * overlay kinds the schema knows — not `MAX_COUNT`. A number above it is not a busy install, it
+ * is a client this server should not believe.
+ */
+function optionalState(o: Record<string, unknown>): Validated<SessionStateStats | undefined> {
+  const raw = o.state
+  if (raw === undefined || raw === null) return { ok: true, value: undefined }
+  if (!isTelemetryObject(raw)) return fail('state', 'state must be an object.')
+  const open = whole(raw.overlaysOpen, 'state.overlaysOpen', TELEMETRY_OVERLAY_KINDS.length)
+  if (!open.ok) return open
+  const locked = whole(raw.overlaysLocked, 'state.overlaysLocked', TELEMETRY_OVERLAY_KINDS.length)
+  if (!locked.ok) return locked
+  const presence = flag(raw.presenceOn, 'state.presenceOn')
+  if (!presence.ok) return presence
+  const ring = flag(raw.ringOn, 'state.ringOn')
+  if (!ring.ok) return ring
+  const freeMem = bucket(raw.freeMemBucket, 'state.freeMemBucket', FREE_MEM_GB_EDGES)
+  if (!freeMem.ok) return freeMem
+  const workingSet = bucket(raw.workingSetBucket, 'state.workingSetBucket', WORKING_SET_MB_EDGES)
+  if (!workingSet.ok) return workingSet
+  return {
+    ok: true,
+    value: {
+      overlaysOpen: open.value,
+      overlaysLocked: locked.value,
+      presenceOn: presence.value,
+      ringOn: ring.value,
+      freeMemBucket: freeMem.value,
+      workingSetBucket: workingSet.value
+    }
+  }
+}
+
+/**
+ * The three JOS-367 riders, validated together and spread onto whichever session report carried
+ * them — one helper so `vSessionHeartbeat` and `vSessionEnd` cannot drift apart, and so neither
+ * of them is past the repo's complexity ceiling.
+ *
+ * Each group is INDEPENDENTLY optional: a client with no tail attached sends `live` and `state`
+ * and no `tail`, and an older server that has never heard of any of them copies none of them
+ * across and accepts the batch exactly as before (THE ADDITIVE-FIELD RULE).
+ */
+function liveRiders(
+  o: Record<string, unknown>
+): Validated<Pick<EvSessionHeartbeat, 'live' | 'tail' | 'state'>> {
+  const live = optionalLive(o)
+  if (!live.ok) return live
+  const tail = optionalTail(o)
+  if (!tail.ok) return tail
+  const state = optionalState(o)
+  if (!state.ok) return state
+  return {
+    ok: true,
+    value: {
+      ...(live.value === undefined ? {} : { live: live.value }),
+      ...(tail.value === undefined ? {} : { tail: tail.value }),
+      ...(state.value === undefined ? {} : { state: state.value })
+    }
+  }
+}
+
 export function vSessionHeartbeat(o: Record<string, unknown>): Validated<TelemetryEvent> {
   const ms = whole(o.uptimeMs, 'uptimeMs', MAX_DURATION_MS)
   if (!ms.ok) return ms
@@ -167,7 +323,9 @@ export function vSessionHeartbeat(o: Record<string, unknown>): Validated<Telemet
   if (!lines.ok) return lines
   const startup = optionalStartup(o)
   if (!startup.ok) return startup
-  const value: EvSessionHeartbeat = { t: 'sessionHeartbeat', uptimeMs: ms.value }
+  const riders = liveRiders(o)
+  if (!riders.ok) return riders
+  const value: EvSessionHeartbeat = { t: 'sessionHeartbeat', uptimeMs: ms.value, ...riders.value }
   if (lines.value !== undefined) value.linesParsed = lines.value
   if (startup.value !== undefined) value.startup = startup.value
   return { ok: true, value }
@@ -182,10 +340,13 @@ export function vSessionEnd(o: Record<string, unknown>): Validated<TelemetryEven
   if (!lines.ok) return lines
   const startup = optionalStartup(o)
   if (!startup.ok) return startup
+  const riders = liveRiders(o)
+  if (!riders.ok) return riders
   const value: EvSessionEnd = {
     t: 'sessionEnd',
     durationMs: ms.value,
-    viewsVisited: views.value
+    viewsVisited: views.value,
+    ...riders.value
   }
   if (lines.value !== undefined) value.linesParsed = lines.value
   if (startup.value !== undefined) value.startup = startup.value

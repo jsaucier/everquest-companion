@@ -205,6 +205,11 @@ test('an EMPTY pre-framework store migrates to a valid current store, not to jun
     // Wine detection finds nothing (shared/graphicsPrefs.ts `resolveGraphics`), which is all of
     // them here. What it buys is the ability to say 'off' and MEAN it, which a boolean could not.
     graphics: { safeMode: 'auto', opaqueOverlays: 'auto' },
+    // ON (v12, JOS-366), and the only blob in this shape whose default is `true`. It is a
+    // statement about what this app is next to the game it sits beside — never the foreground
+    // experience, nothing it does latency-critical — rather than an instrument or a workaround,
+    // which is why it does not ship off like the two above it.
+    processPriority: { yieldToGame: true },
     [SCHEMA_VERSION_KEY]: CURRENT_SCHEMA_VERSION
   })
 })

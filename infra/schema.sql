@@ -244,6 +244,16 @@ CREATE TABLE IF NOT EXISTS usage_funnel_daily (
 -- down is real and a row written before it ran has NULL. Every reader normalizes
 -- NULL to 'user' (`cohortOf` in src/shared/telemetryRollup.ts), which is the
 -- fail-safe direction — an install nobody has marked is a user.
+--
+-- `machine_class` / `window_mode` (JOS-372) are nullable for the same reason `cohort` is, plus
+-- one of their own: they are written only when a `setupSnapshot` arrives, and an install that has
+-- never sent one — or that runs a client predating those fields — legitimately has neither. Both
+-- are CLOSED SETS spelled in src/shared/telemetryPerfCube.ts ('low-igpu' … 'unknown';
+-- 'exclusive' | 'windowed' | 'unknown'), and every reader normalizes anything else to 'unknown',
+-- which is a real class rather than a missing value. They live on this row because the stall
+-- readings they slice arrive on EVERY session report while a snapshot arrives once per launch:
+-- the row is where the two dims wait between launches. This is the whole per-install footprint
+-- the perf cube adds — two enums on a row that already existed.
 CREATE TABLE IF NOT EXISTS analytics_install (
   analytics_id   text   NOT NULL,
   first_seen_day text   NOT NULL,
@@ -254,6 +264,8 @@ CREATE TABLE IF NOT EXISTS analytics_install (
   cohort         text,
   quota_day      text   NOT NULL,
   quota_n        bigint NOT NULL,
+  machine_class  text,
+  window_mode    text,
   PRIMARY KEY (analytics_id)
 );
 
@@ -303,6 +315,69 @@ CREATE TABLE IF NOT EXISTS error_report (
   PRIMARY KEY (day, cohort, version, fingerprint)
 );
 
+-- ---- the perf cube (JOS-372) -------------------------------------------------
+--
+-- THE ONE CROSS-TAB, AND STILL NO RAW EVENT STORE. `usage_daily` is (day, cohort, metric, dim, n)
+-- — ONE dimension per row — so it can say "how many session reports saw a stall over 500 ms" and
+-- it structurally CANNOT say "is that rate higher on exclusive-fullscreen installs, or on 8 GB
+-- boxes, or when an overlay is locked". Those are the questions the ~1 s freeze reports actually
+-- pose, and only a cube answers one. This is that cube and it is deliberately the only one.
+--
+-- WHAT A ROW IS: one SESSION REPORT that carried a live stall reading (a `sessionHeartbeat` or a
+-- `sessionEnd` — both carry the identical rider for the interval since the last report). That is
+-- the SAME population as `usage_daily`'s `liveStallP95` histogram, on purpose: the cube's rates
+-- and the Live section's fleet-wide figures then share a denominator and can be read against each
+-- other instead of being two numbers nobody can reconcile.
+--
+-- EVERY DIM IS A CLOSED ENUM OR A BUCKET INDEX, which is what keeps this inside the telemetry
+-- bright line. The vocabulary is declared once, in src/shared/telemetryPerfCube.ts, which both
+-- the ingest handler and the triage readout import:
+--   * `window_mode`   'exclusive' | 'windowed' | 'unknown'
+--   * `machine_class` 'low-igpu' | 'low-dgpu' | 'mid-igpu' | 'mid-dgpu' | 'high-igpu' |
+--                     'high-dgpu' | 'unknown' — cores × memory collapsed to a TIER (the weaker
+--                     axis wins) crossed with integrated-vs-discrete graphics. 27 raw
+--                     combinations folded to 7 so the cube stays readable.
+--   * `locked`        'on' | 'off' | '-' — was any overlay click-through (so the process-wide
+--                     WH_MOUSE_LL hook was armed) at report time; '-' when the report carried no
+--                     session-state rider to ask.
+--   * `stall_bucket`  index into LIVE_STALL_MS_EDGES — the report's WORST probe tick (9 buckets).
+--   * `tail_bucket`   the same ladder, the worst tail READ, or '-' when the session tailed
+--                     nothing. A session with no character attached is a real and common state,
+--                     and it is a different fact from "its reads were fast".
+--
+-- CARDINALITY BUDGET, stated because a cube is the one shape in this schema that can run away:
+-- 3 window modes × 7 classes × 3 locked × 9 stall buckets × 10 tail values = 5,670 POSSIBLE rows
+-- per day per cohort — the absolute ceiling, reached only by a fleet that is simultaneously every
+-- machine there is. Realistically a day is a few hundred rows: a small fleet occupies a handful
+-- of (mode, class) pairs and its stall/tail readings cluster in two or three buckets each. Note
+-- what CANNOT grow it: every dim above is a closed set, so the only way this table gains a new
+-- distinct row shape is a code change in this repo.
+--
+-- THE WHOLE ROW IS THE PRIMARY KEY, minus `n`, and that is not a preference: the ingest path's
+-- `ON CONFLICT (day, cohort, window_mode, machine_class, locked, stall_bucket, tail_bucket)`
+-- needs those seven columns to BE the uniqueness rule. As with `usage_daily` and `error_report`,
+-- THIS TABLE IS BORN WITH ITS KEY — Aurora DSQL has no ALTER path to a primary key — so a
+-- re-shape later would need the copy-first staging runbook in infra/README.md.
+--
+-- `n` is bigint like every other count here: it is a sum of session reports and this table is
+-- keyed on a day, so it is small, and a narrower type would be a saving nobody can spend.
+--
+-- NO BACKFILL IS POSSIBLE, and none is attempted. The pipeline keeps no raw events (T6), so
+-- yesterday's heartbeats no longer exist in any form that could be re-folded into a cube. This
+-- table starts on the day the Lambda that writes it is deployed, and the readouts render an empty
+-- window as "nothing reported yet" rather than as zeros.
+CREATE TABLE IF NOT EXISTS perf_daily (
+  day           text   NOT NULL,
+  cohort        text   NOT NULL,
+  window_mode   text   NOT NULL,
+  machine_class text   NOT NULL,
+  locked        text   NOT NULL,
+  stall_bucket  text   NOT NULL,
+  tail_bucket   text   NOT NULL,
+  n             bigint NOT NULL,
+  PRIMARY KEY (day, cohort, window_mode, machine_class, locked, stall_bucket, tail_bucket)
+);
+
 -- The kill switch and the cap for the TELEMETRY route, added to the existing
 -- config row rather than a second table: one row is where an operator already
 -- looks, and `triage-feedback` already reads and writes it.
@@ -343,6 +418,22 @@ ALTER TABLE analytics_install ADD COLUMN cohort text;
 ALTER TABLE report ADD COLUMN inventory_json text;
 
 ALTER TABLE report ADD COLUMN inventory_key text;
+
+-- The perf cube's two install-level dims on a LIVE cluster (JOS-372). Nullable, never dropped,
+-- and the same shape of migration as the four above — a row written before this ran has NULL in
+-- both, which every reader spells 'unknown' (a real class in the cube, not a missing value).
+--
+-- THESE MUST LAND BEFORE THE LAMBDA THAT NAMES THEM. `INSTALL_SQL` in infra/lambda/telemetry.ts
+-- lists `machine_class, window_mode` unconditionally, and naming a column that does not exist is
+-- `42703` on EVERY batch — the same trap the inventory columns document above. So the order is:
+-- `migrate` first, `terraform apply` (the new telemetry bundle) second. There is no client step:
+-- nothing new crosses the wire for this feature, both dims are DERIVED server-side from
+-- `setupSnapshot` fields that shipped with JOS-364.
+-- On a cluster created from today's file the CREATE TABLE already has them and these report
+-- `exists` (42701 duplicate_column).
+ALTER TABLE analytics_install ADD COLUMN machine_class text;
+
+ALTER TABLE analytics_install ADD COLUMN window_mode text;
 
 -- ---- indexes ----------------------------------------------------------------
 --
@@ -455,3 +546,10 @@ GRANT SELECT, INSERT, UPDATE ON analytics_install TO telemetry_ingest;
 -- Still NO DELETE — a compromised telemetry Lambda can add rows to this table and
 -- can neither read the feedback backlog nor destroy an error history.
 GRANT SELECT, INSERT, UPDATE ON error_report TO telemetry_ingest;
+
+-- The perf cube (JOS-372). SELECT rides along with INSERT/UPDATE for the third time and for the
+-- same reason: `ON CONFLICT DO UPDATE SET n = perf_daily.n + EXCLUDED.n` reads the existing row
+-- to evaluate the sum. Still NO DELETE, so this role can add anonymous cube rows and can neither
+-- read the feedback backlog nor destroy a history. The TRIAGE reader needs no grant here — it
+-- connects as `admin` (src/main/triage/store.ts).
+GRANT SELECT, INSERT, UPDATE ON perf_daily TO telemetry_ingest;

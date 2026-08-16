@@ -57,6 +57,7 @@ import { useTriageCall } from './useTriage'
 import {
   DownloadsSection,
   HealthSection,
+  LiveSection,
   MixList,
   RetentionSection,
   Section,
@@ -65,6 +66,7 @@ import {
   VersionsSection
 } from './AnalyticsBits'
 import { CoverageSection } from './CoverageSection'
+import { PerfSection } from './PerfSection'
 import { ReleaseHealthSection } from './ReleaseHealthSection'
 import {
   durationLabel,
@@ -170,6 +172,17 @@ function AdoptionSection({ data }: { data: TriageAnalyticsData }): JSX.Element {
             empty="No setup snapshot recorded."
           />
         </Stack>
+        {/* THE MACHINE CLASS (JOS-364) — cores, memory, GPU, compositing, safe mode, displays,
+            scaling and EverQuest's own window mode, in one block because that is how it is read:
+            not "what is the GPU mix" but "what does this fleet's hardware look like", while
+            holding a stall report. The labels arrive rendered from analytics.ts, which is where
+            the schema's bucket edges live. */}
+        <Stack spacing={0.5}>
+          <Typography variant="caption" color="text.secondary">
+            Machine class
+          </Typography>
+          <MixList rows={a.machine} empty="No machine class reported yet." />
+        </Stack>
       </Box>
       <Typography variant="caption" color="text.secondary">
         Alerts fired {formatNum(a.alertsFired)} · spoken {formatNum(a.alertsSpoken)}
@@ -250,6 +263,15 @@ function Readout({
       <HealthSection data={data} />
       {/* Beside Health and above Versions: it is a health fact, read per build. */}
       <StartupSection data={data} />
+      {/* …and directly under it, because it is the same question asked of the rest of the session
+          (JOS-367): Startup says how the launch went, Live says how the hours after it went, and
+          the freeze reports this fleet files are about the hours. */}
+      <LiveSection data={data} />
+      {/* …and immediately under it (JOS-372), because it answers the question a reader has the
+          moment they have read one: the section above says how often sessions stalled, this says
+          WHERE — on which window mode, which class of box, and with an overlay locked or not.
+          A daily counter cannot cross two facts; this is the one cube that can. */}
+      <PerfSection data={data} />
       {/*
         JOS-96, and it sits HERE rather than at the end for a reason: Health above says what goes
         wrong across the fleet, and this says which build it started going wrong in. Reading the

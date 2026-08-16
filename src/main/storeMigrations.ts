@@ -65,6 +65,10 @@ import { normalizePerfHudPrefs } from '../shared/perf'
 // ZERO-IMPORT graphics-compatibility contract, and its normalizer is the one answer to "what is a
 // valid graphics pref block" that the store, the IPC handler and this migration all share.
 import { normalizeGraphicsPrefs } from '../shared/graphicsPrefs'
+// The SIXTH, and identical in kind to the third, fourth and fifth: shared/processPriority.ts is a
+// pure, ZERO-IMPORT contract, and its normalizer is the one answer to "what is a valid
+// process-priority pref block" that the store, the IPC handler and this migration all share.
+import { normalizeProcessPriorityPrefs } from '../shared/processPriority'
 
 /** A store file, parsed. Deliberately untyped: a migration's INPUT is a shape the current
  *  code no longer describes, so `StoreShape` would be a lie at every step but the last. */
@@ -77,7 +81,7 @@ export const SCHEMA_VERSION_KEY = 'schemaVersion'
  * The schema the code running right now expects. Bump by exactly one whenever a persisted
  * shape changes, and add the matching MIGRATIONS entry in the same commit.
  */
-export const CURRENT_SCHEMA_VERSION = 11
+export const CURRENT_SCHEMA_VERSION = 13
 
 export interface Migration {
   /** Version this step produces. Steps run in ascending `to` order, contiguously. */
@@ -548,6 +552,63 @@ const migrateToV11: Migration = {
   }
 }
 
+// ------------------------------- 11 → 12: the companion yields the CPU to the game (JOS-366)
+//
+// ONE new top-level blob, holding one boolean:
+//
+//   `processPriority` {yieldToGame:true}
+//
+// ON IS THE POLICY, and it is the opposite call from the two blobs above it — which is worth
+// stating plainly, because "a new switch ships off" is otherwise the house rule. `perfHud` and
+// `graphics` are INSTRUMENTS and WORKAROUNDS: a HUD is something you reach for, a software
+// renderer is a fix for a driver most machines do not have, and shipping either one on would be
+// charging everybody for a minority's need. This is neither. Below-normal priority is a statement
+// about what this app IS relative to the game it sits beside — it is never the foreground
+// experience, and nothing it does is latency-critical — so the honest default is the one the
+// player would pick if they knew the question existed. The people it helps most are precisely the
+// ones who will never open Preferences → Performance.
+//
+// EXISTING INSTALLS GET `true` TOO, deliberately: an absent key normalizes to the default, so
+// this step writes `true` into every store that predates the feature. That is not overruling
+// anybody — nobody has ever expressed a preference here, because there was no control to express
+// it with. The moment there is one, a stored `false` is a decision, and no future step gets to
+// reinterpret it (the 8 → 9 step's promise, kept).
+const migrateToV12: Migration = {
+  to: 12,
+  describe: 'add the processPriority prefs blob (yield CPU to the game, on by default)',
+  migrate(data) {
+    data.processPriority = normalizeProcessPriorityPrefs(data.processPriority)
+    return data
+  }
+}
+
+// ------------------------------- 12 → 13: the exclusive-fullscreen note's memory (JOS-375)
+//
+// ONE key deleted: `eqExclusiveNoticeDismissedVersion`, the app version at which an install
+// dismissed the JOS-368 Preferences note about EverQuest running in exclusive fullscreen.
+//
+// THE NOTE WAS WRONG, NOT MERELY UNWANTED. It told a player their game was in an EXCLUSIVE
+// display mode — the one an always-on-top overlay cannot share — on the strength of
+// `Fullscreen=1` in `eqclient.ini`. On the current client that setting is a BORDERLESS
+// fullscreen WINDOW, which shares the screen with an overlay perfectly well, so the sentence
+// could never be true for anybody it was shown to. It was removed rather than reworded, and its
+// memory has nothing left to remember.
+//
+// A STEP RATHER THAN A TOLERATED ORPHAN, which is this file's standing answer for a key whose
+// reader is gone (1 → 2's `liveLoot`, verbatim): a dead key left in the file is a thing a future
+// reader has to look up before they can rule it out, and the whole point of a versioned chain is
+// that the file on disk matches the shape the code believes in. `delete` on a key that is not
+// there is a no-op, so this is a no-op for every install that never dismissed the note — which,
+// since JOS-368 shipped in no release at all, is every install outside the dev cohort.
+const migrateToV13: Migration = {
+  to: 13,
+  describe: "drop eqExclusiveNoticeDismissedVersion (the note it remembered is gone)",
+  migrate(data) {
+    delete data.eqExclusiveNoticeDismissedVersion
+    return data
+  }
+}
+
 /**
  * The chain, ascending. APPEND ONLY — never renumber, never edit a shipped step (a store
  * out there was migrated by the old text and will never run it again), never delete one:
@@ -563,7 +624,9 @@ export const MIGRATIONS: readonly Migration[] = [
   migrateToV8,
   migrateToV9,
   migrateToV10,
-  migrateToV11
+  migrateToV11,
+  migrateToV12,
+  migrateToV13
 ]
 
 /** Version recorded in `data`; anything absent, non-integer or < 1 means "pre-framework" ⇒ 1. */

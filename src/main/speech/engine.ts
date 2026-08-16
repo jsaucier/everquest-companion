@@ -58,6 +58,7 @@ import { Worker } from 'node:worker_threads'
 import { eqSpeechUrl, speechCacheDir, speechCacheKey, speechCachePath } from './cache'
 import { isKokoroInstalled, kokoroDir } from './provision'
 import { KOKORO_ASSETS, KOKORO_DEFAULT_VOICE, kokoroVoiceLang } from './pinned'
+import type * as ort from 'onnxruntime-node'
 import type { SpeechSayResult } from '../../shared/types'
 
 // ---- the worker's message contract (shared with worker.ts) ------------------------------
@@ -82,6 +83,52 @@ export interface SpeechWorkerJob {
 export type SpeechWorkerReply =
   | { readonly id: number; readonly ok: true }
   | { readonly id: number; readonly ok: false; readonly error: string }
+
+// ---- the inference session's shape (JOS-365) --------------------------------------------
+
+/**
+ * The onnxruntime session options the worker creates its session with — a PURE function so the
+ * numbers below can be pinned by a unit instead of living inside a native call nobody can see.
+ * It lives here, not in worker.ts, because worker.ts loads onnxruntime at import time and a test
+ * that dlopens a 92 MB native runtime is not a unit test.
+ *
+ * WHY THESE NUMBERS — THE GAME IS ON THIS BOX. onnxruntime's default intra-op pool is sized to
+ * the machine's PHYSICAL CORES and spin-waits between ops, so every uncached phrase was a
+ * full-machine CPU burst for the ~1.4 s it takes to speak one — on the same box, in the same
+ * second, that EverQuest's render thread needs a core. MEASURED here (24 physical cores,
+ * 5 alert phrases, cold session per configuration, median of 5):
+ *
+ *     intra-op threads │ median wall │ median CPU burned
+ *     ─────────────────┼─────────────┼──────────────────
+ *     default (24)     │    1423 ms  │   20 984 ms  ← 15 cores' worth, per phrase
+ *     4                │    1097 ms  │    1 703 ms
+ *     2                │    1211 ms  │      687 ms
+ *     1                │    1405 ms  │      500 ms
+ *
+ * The parallelism was buying nothing: the int8 model's default pool spent 42x the CPU to finish
+ * no sooner than one thread does. So one thread it is — same latency the field already hears,
+ * one core instead of the machine. (Rule applied: the smallest count within 1.5x of the default's
+ * median; 1405 ms is 0.99x.) The audio is unaffected — the wav for a fixed phrase is BYTE-IDENTICAL
+ * at 1, 2, 4 and default threads, so the cache cannot hear this change.
+ *
+ * `intraOpNumThreads: 1` also settles the spin-waiting: at one thread onnxruntime runs the op on
+ * the calling thread and never creates the pool, so there is no spinning to disable. That matters
+ * because it CANNOT be disabled from here — the `session.intra_op.allow_spinning` config entry is
+ * only reachable through `SessionOptions.extra`, which onnxruntime-node 1.20.1 does not read
+ * (its own typings say "WebAssembly backend" only; the string `extra` does not appear in
+ * `onnxruntime_binding.node`, and passing it measurably changed nothing). Setting it would have
+ * been a comment pretending to be code.
+ *
+ * Composes with the process priority work: this pool's threads live in the main process and
+ * inherit its priority class, so a below-normal main process makes a bounded burst politer still.
+ */
+export function kokoroSessionOptions(): ort.InferenceSession.SessionOptions {
+  return {
+    intraOpNumThreads: 1,
+    interOpNumThreads: 1,
+    executionMode: 'sequential'
+  }
+}
 
 // ---- the engine -------------------------------------------------------------------------
 

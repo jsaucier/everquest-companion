@@ -30,6 +30,7 @@ import type {
   ReportStatus,
   Severity
 } from '../../shared/feedback'
+import { validatePerf, type FeedbackPerf } from '../../shared/feedbackPerf'
 import { sanitizeAndFlag, sanitizeMultiline, sanitizeOneLine } from '../../shared/sanitizeText'
 import { scrubLines } from '../../shared/logScrub'
 
@@ -68,6 +69,9 @@ const optNum = (v: unknown): number | undefined => (typeof v === 'number' ? v : 
  */
 export function parseEnv(raw: unknown): Record<string, string> {
   if (typeof raw !== 'string' || raw.trim().length === 0) return {}
+  // `perf` is the one key that is NOT a one-line runtime string (JOS-369) — it is a sixty-row
+  // timeline, and flattening it here would put five kilobytes of JSON in a caption cell. It gets
+  // its own parsed field on the detail (`parsePerf`), so it is skipped rather than stringified.
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
@@ -77,9 +81,32 @@ export function parseEnv(raw: unknown): Record<string, string> {
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
   const out: Record<string, string> = {}
   for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+    if (k === 'perf') continue
     out[sanitizeOneLine(k)] = sanitizeOneLine(typeof v === 'string' ? v : JSON.stringify(v))
   }
   return out
+}
+
+/**
+ * The perf timeline off `env_json` (JOS-369), or `undefined`.
+ *
+ * TOTAL, like `parseEnv`, and RE-VALIDATED rather than trusted: the rows in this table were
+ * accepted by `validatePerf` at ingest, but a table also holds rows written by older code and
+ * rows an owner has hand-edited, and the panel reconstructs the block field by field so a
+ * malformed one renders as absence instead of as a broken grid. Nothing here is sanitized because
+ * nothing here is text — every field the validator returns is a whole number, a boolean, or a
+ * member of a closed enum.
+ */
+export function parsePerf(raw: unknown): FeedbackPerf | undefined {
+  if (typeof raw !== 'string' || raw.trim().length === 0) return undefined
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== 'object' || parsed === null) return undefined
+    const checked = validatePerf((parsed as { perf?: unknown }).perf)
+    return checked.ok && checked.value !== null ? checked.value : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** `log_json` holds the LogSliceMeta the client sent. Total, like parseEnv. */
@@ -137,12 +164,14 @@ export function toDetail(row: Row, logLanded: boolean): TriageDetail {
   const issueUrl = opt(row.issue_url)
   const note = opt(row.disposition)
   const redactedAt = optNum(row.redacted_at)
+  const perf = parsePerf(row.env_json)
   const log: TriageLogState = !declaresLog(row) && !key ? 'none' : logLanded ? 'present' : 'missing'
   return {
     row: toRow(row),
     installId: str(row.install_id),
     clientTs: num(row.client_ts),
     env: parseEnv(row.env_json),
+    ...(perf === undefined ? {} : { perf }),
     ...(dupeOf ? { dupeOf } : {}),
     ...(issueUrl ? { issueUrl } : {}),
     ...(note ? { note } : {}),

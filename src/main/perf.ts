@@ -61,9 +61,13 @@ import {
 } from '../shared/perf'
 import { startupReplayStats } from '../shared/telemetryStartup'
 import { logError, logInfo } from './errorLog'
+// THE LIVE HALF of the same subject (JOS-367), in its own leaf module for `tailIoStats.ts`'s two
+// reasons: it is plain data that knows nothing about telemetry, and a leaf cannot join the import
+// cycle that would otherwise form between this file and the seam that drains it.
+import { startLiveProbe, stopLiveProbe } from './livePerfProbe'
 // The fleet half of the same measurement (JOS-57). Through the telemetry FAÇADE, like every other
 // producer in this app — the wiring may not reach around it into the ring.
-import { noteStartupReplay } from './telemetry'
+import { noteStartupReplay, scheduleSetupSnapshot } from './telemetry'
 import { sendToMain } from './windows'
 
 const PROFILE_FILE = 'perf-startup.json'
@@ -246,6 +250,21 @@ export function markStartupPhase(phase: StartupPhase, opts: MarkOptions = {}): v
     stopStartupBlockProbe()
     stopStutterProbe()
     reportStartupReplay(at)
+    // …and THIS is where the setup snapshot is armed (JOS-364). It belongs to this mark for the
+    // same reason the probes do: `replayDone` is the one moment the app agrees its launch is
+    // over, and a machine-class reading taken during the replay would both steal from the launch
+    // it is measured beside and describe an app that is still booting. It is armed rather than
+    // taken — the producer waits out a short delay of its own and never blocks this call.
+    //
+    // NOT gated on `replayStats` like the reading above: an install with no log to replay still
+    // has a machine, and it is disproportionately the install something is wrong with.
+    scheduleSetupSnapshot()
+    // …and the LIVE probes take over from the startup ones at the same instant (JOS-367). The
+    // handover is the point: the two startup probes have just been closed, and everything after
+    // this mark is a running app rather than a boot. Two clocks from here to quit — main's, and
+    // one on a thread of its own — because a single clock can prove it was late and can never say
+    // who made it late, and the freezes this hunts are reported on a machine we do not own.
+    startLiveProbe()
   }
   if (startupProfile().complete) writeStartupProfile()
 }
@@ -531,8 +550,11 @@ export function stopPerfSampler(): void {
   if (wasRunning) sendToMain(IPC.onPerfSample, null)
 }
 
-/** Teardown from `window-all-closed`: stop the timers and make sure the launch left a profile. */
+/** Teardown from `window-all-closed`: stop the timers and make sure the launch left a profile.
+ *  The live probes go with them — including the worker thread, which `stopLiveProbe` terminates
+ *  rather than leaving to an `unref`'d handle nobody closed. */
 export function stopPerf(): void {
   stopPerfSampler()
+  stopLiveProbe()
   flushStartupProfile()
 }

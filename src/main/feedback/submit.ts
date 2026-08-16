@@ -45,6 +45,7 @@ import {
   type InventoryAttachment,
   type InventoryResult
 } from './inventory'
+import { feedbackPerfBlock } from './perf'
 import { buildSlice, sliceMeta, type FeedbackSlice } from './slice'
 import { enqueue, installId, type QueuedReport } from './state'
 
@@ -75,8 +76,15 @@ const failure = (
  * deliberately NOT containing: character name, server, EQ install path, machine name, user
  * name, or any progress state (§3.1). The character name does survive inside an ATTACHED
  * slice — which is disclosed in the dialog and previewable before it leaves the machine.
+ *
+ * IT IS ASYNC FOR ONE FIELD (JOS-369): `perf.state.gpuVendor` comes from `app.getGPUInfo`, which
+ * is a promise to the GPU process. The alternative — a sync env plus a second async call the
+ * dialog and the submit path would each have to remember to make — is how a preview and a payload
+ * come to disagree about what was sent, which is the one thing this feature promises cannot happen.
+ * The vendor is memoized per process, so only the first caller ever waits.
  */
-export function feedbackEnv(): FeedbackEnv {
+export async function feedbackEnv(): Promise<FeedbackEnv> {
+  const perf = await feedbackPerfBlock()
   return {
     appVersion: app.getVersion(),
     // 'e2e' is not a legal tag and can never be sent: the guard in `submitFeedback` fires first.
@@ -87,7 +95,10 @@ export function feedbackEnv(): FeedbackEnv {
     arch: process.arch,
     electron: process.versions.electron,
     chrome: process.versions.chrome,
-    node: process.versions.node
+    node: process.versions.node,
+    // OMITTED, not null, when the rings are empty — an empty attachment is not an attachment
+    // (slice.ts's rule, one artifact over), and absent is the spelling the validator reads.
+    ...(perf === null ? {} : { perf })
   }
 }
 
@@ -299,15 +310,15 @@ export async function sendReport(
 // ---- the public submit --------------------------------------------------------------------------
 
 /** Assemble a `SubmitRequest` for a draft + whichever attachments were built. */
-function requestFor(
+async function requestFor(
   draft: FeedbackDraft,
   meta: { log: LogSliceMeta | null; inventory: InventoryDumpMeta | null },
   clientReportId: string
-): SubmitRequest {
+): Promise<SubmitRequest> {
   return {
     v: 1,
     draft,
-    env: feedbackEnv(),
+    env: await feedbackEnv(),
     installId: installId(),
     clientReportId,
     clientTs: Date.now(),
@@ -411,7 +422,7 @@ export async function submitFeedback(
   if (!valid.ok) return failure('invalid_payload', valid.message, { field: valid.field })
 
   const built = await buildAttachments(opts)
-  const req = requestFor(valid.value, built.meta, randomUUID())
+  const req = await requestFor(valid.value, built.meta, randomUUID())
 
   const res = await attemptSend(req, built.gz)
   if (res.ok) {

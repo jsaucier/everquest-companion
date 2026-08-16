@@ -138,6 +138,43 @@ export function parsePresenceLine(line: string): PresenceRecord | null {
   return null
 }
 
+// ------------------------------------------------------- physical pixels → DIP
+
+/**
+ * The conversion that turns a watcher rectangle into a rectangle main can use, injected.
+ *
+ * In the app this is `screen.screenToDipRect` (Electron, Windows); in a test it is a fake, which
+ * is the only reason it is a parameter at all — this file is the half that runs with no Electron
+ * in sight, and the seam that uses it (presence.ts `applyRecord`) cannot be imported without one.
+ */
+export type PhysicalToDip = (rect: ScreenRect) => ScreenRect
+
+/**
+ * THE WIRE IS PHYSICAL PIXELS AND EVERYTHING ELSE IS DIP — this is where that stops being true
+ * (JOS-376).
+ *
+ * `GetWindowRect` answers in physical pixels because this process is per-monitor-DPI aware, and
+ * the worker that calls it has no `screen` module to convert with, so the protocol carries what
+ * the OS said. `BrowserWindow` bounds and `screen.getCursorScreenPoint()` are DIP. At 100% scale
+ * on the primary monitor the two numbers are equal, which is why nothing converted for a year and
+ * the ring was still right — and why the report that found it (01M037P83Z3KK4379WWET159B2) came
+ * from a two-monitor desk: on a scaled or non-origin monitor the ring window was placed at the
+ * wrong origin and oversized, spilled onto the neighbour, and drew its halo at an offset.
+ *
+ * The result is ROUNDED because it becomes `BrowserWindow` bounds (`setCursorRingBounds`), and a
+ * scale factor that is not a whole ratio — 150% turns an odd physical coordinate into a half — has
+ * no reason to hand a window manager a fractional rectangle.
+ */
+export function eqBoundsInDip(rect: ScreenRect, toDip: PhysicalToDip): ScreenRect {
+  const dip = toDip(rect)
+  return {
+    x: Math.round(dip.x),
+    y: Math.round(dip.y),
+    width: Math.round(dip.width),
+    height: Math.round(dip.height)
+  }
+}
+
 // ------------------------------------------------------- is this window EverQuest?
 
 /** `<root>\` — a separator-terminated prefix, so `…\EverQuest Legends2` never matches

@@ -47,7 +47,7 @@ export default defineConfig({
         include: ['pg', '@aws-sdk/client-s3', '@aws-sdk/credential-providers', '@aws-sdk/dsql-signer']
       },
       rollupOptions: {
-        // THREE main-process bundles. `index` is the app; the other two are worker_threads,
+        // FOUR main-process bundles. `index` is the app; the other three are worker_threads,
         // and each is a separate entry for the same reason: `new Worker(path)` loads a FILE, so
         // rolling one into index.js would give the worker no file to load, and bundling it as a
         // data-url string would put a native `require` inside an eval. Each is emitted beside
@@ -60,10 +60,16 @@ export default defineConfig({
         //     its 5 s process scan is a measured 8.4 ms of `EnumProcesses`, which main cannot
         //     spend. It replaced a `powershell.exe` child, and this entry is what lets that
         //     child's job move in-process without moving onto main's thread.
+        //   * perfProbeWorker — the SECOND CLOCK (JOS-367). Not offloaded work: it is a 250 ms
+        //     timer measuring its own lateness, and its whole value is that it runs somewhere
+        //     main does not. Two threads late in the same half second means the MACHINE stalled;
+        //     only main late means we did. A rollup into index.js would leave the verdict
+        //     unmeasurable, which is the strongest form of "this needs its own entry".
         input: {
           index: resolve(__dirname, 'src/main/index.ts'),
           speechWorker: resolve(__dirname, 'src/main/speech/worker.ts'),
-          presenceWorker: resolve(__dirname, 'src/main/presenceWorker.ts')
+          presenceWorker: resolve(__dirname, 'src/main/presenceWorker.ts'),
+          perfProbeWorker: resolve(__dirname, 'src/main/perfProbeWorker.ts')
         }
       }
     }

@@ -25,6 +25,7 @@ import type {
   ReportStatus,
   Severity
 } from './feedback'
+import type { FeedbackPerf } from './feedbackPerf'
 
 // ---- filters --------------------------------------------------------------------------
 
@@ -92,6 +93,11 @@ export interface TriageDetail {
   /** `env_json`, parsed. TEXT-holding-JSON in the schema, so the parse is total: an
    *  unparseable blob yields `{}` rather than throwing across IPC. */
   env: Record<string, string>
+  /** `env_json.perf`, parsed and re-validated (JOS-369) — the ten-minute stall/tail timeline the
+   *  reporter saw before they sent it. Absent on every report from a client that predates the
+   *  field, and on every report composed before the probe started. It is lifted OUT of `env`
+   *  because it is the one key there that is not a one-line string. */
+  perf?: FeedbackPerf
   dupeOf?: string
   issueUrl?: string
   note?: string
@@ -289,6 +295,17 @@ export interface TriageAnalyticsAdoption {
   voice: TriageMixRow[]
   cursorRing: TriageMixRow[]
   autoHide: TriageMixRow[]
+  /**
+   * THE MACHINE CLASS (JOS-364) — the eight `setupSnapshot` readings that describe the box rather
+   * than the install, already labelled and folded into ONE list (`cpus 4-5`, `gpu nvidia`,
+   * `EQ fullscreen`, …).
+   *
+   * One list rather than eight fields because of what it is FOR: nobody asks "what is the GPU
+   * mix" on its own — they read the whole shape of the fleet's hardware at once while looking at
+   * a stall report, and a panel section is a shape. Each row is already a rendered label, because
+   * a bucket INDEX is meaningless to a reader and the edges live in the schema, not in the UI.
+   */
+  machine: TriageMixRow[]
   alertsFired: number
   alertsSpoken: number
 }
@@ -401,6 +418,59 @@ export interface TriageAnalyticsStartup {
    * 40 MB it has never seen are the same row in `logSizes` and different rows here.
    */
   newBytes: TriageMixRow[]
+}
+
+/**
+ * HOW THE FLEET'S SESSIONS ACTUALLY RAN (JOS-367) — the live half of the section above.
+ *
+ * `startup` asks how launches went; this asks what happened for the hours afterwards, and it is
+ * the readout the ~1 s freeze reports have never had a number to argue with.
+ *
+ * THE VERDICT IS THE POINT. `coincident` counts windows in which BOTH of our clocks — main and a
+ * worker thread that does nothing else — were at least 100 ms late inside the same half second,
+ * i.e. the MACHINE stalled. Read as a rate it separates "this app stalls people" from "this app
+ * runs on machines that stall", and those two readings lead to opposite work.
+ */
+export interface TriageAnalyticsLive {
+  /** Session reports that carried a stall reading — the denominator for the sums below. */
+  reports: number
+  /** Probe ticks behind those reports (about four a second, per reporting session). */
+  samples: number
+  /** p50 / p95 ACROSS REPORTS of each report's own p95 lateness, as bucket ranges. */
+  p50StallLabel: string | null
+  p95StallLabel: string | null
+  /** p95 across reports of each report's WORST tick — the freeze end of the distribution. */
+  maxStallLabel: string | null
+  /** Ticks at least 100 ms / 500 ms late, summed over `reports`. */
+  over100: number
+  over500: number
+  /** `over100` per report — the comparable form, since reports are a fixed interval. */
+  latePerReport: number | null
+  /**
+   * Reports that carried a VERDICT at all (the probe worker was running). A SUBSET of `reports`,
+   * and the divisor for `machinePerReport` — dividing by every report would deflate the rate on
+   * exactly the machines where a second thread would not start, which are not a random sample.
+   */
+  verdicts: number
+  /** Windows both clocks agreed on: the machine, not us. */
+  coincident: number
+  /** `coincident` per report that could answer — read beside `latePerReport`, same interval. */
+  machinePerReport: number | null
+  /** Reports that carried a tail reading (a character was attached and something was read). */
+  tailReports: number
+  tailReads: number
+  tailReopens: number
+  /** p95 across reports of the read leg, and of the worst read — the same ladder as the stalls. */
+  p95TailLabel: string | null
+  maxTailLabel: string | null
+  tailOver100: number
+  tailOver500: number
+  /** The fattest single delta read, and how big the tailed logs are. Bucket LABELS. */
+  tailDeltas: TriageMixRow[]
+  tailLogSizes: TriageMixRow[]
+  /** What was switched on while all of the above was measured — one labelled list, in reading
+   *  order, the shape `adoption.machine` uses for the same reason. */
+  state: TriageMixRow[]
 }
 
 export interface TriageVersionRow {
@@ -690,6 +760,50 @@ export interface TriageAnalyticsCoverage {
   anyFlips: boolean
 }
 
+/**
+ * ONE SLICE OF THE PERF CUBE (JOS-372) — a dim's value, how many session reports fell in it, and
+ * how many of those reported a bad stall.
+ *
+ * THE RATE IS THE POINT, AND `n` IS WHAT MAKES IT READABLE. A slice of four reports at 100% is
+ * noise and a slice of four hundred at 12% is a lead, so nothing renders the rate without the
+ * count beside it. `rate` is null — never 0 — for a slice with no reports at all, the same refusal
+ * `ratio` makes everywhere else in this readout: an unmeasured rate is not a clean bill.
+ */
+export interface TriagePerfSlice {
+  /** The dim's value, already labelled: `fullscreen`, `low-igpu`, `overlay locked`. */
+  id: string
+  /** Session reports in this slice — the denominator, and the honesty term. */
+  reports: number
+  /** …of which this many reported a worst tick at or past the heavy-stall rung. */
+  stalls: number
+  /** stalls / reports, or null when the slice is empty. */
+  rate: number | null
+}
+
+/**
+ * STALLS BY WINDOW MODE, BY MACHINE CLASS, BY LOCKED OVERLAY (JOS-372) — the cross-tab
+ * `usage_daily` structurally cannot answer, because a counter keyed on one `dim` cannot cross two
+ * facts.
+ *
+ * THE THREE LISTS ARE NEVER ADDED TOGETHER. Each is the SAME population of session reports sliced
+ * a different way, so summing across two of them would count every report twice; they are read one
+ * against another (does the locked-overlay rate exceed the fleet rate? does fullscreen?)
+ * and each against `rate` below.
+ */
+export interface TriageAnalyticsPerf {
+  /** Session reports in the cube for this window — every slice list sums to this. */
+  reports: number
+  /** …of which this many reported a heavy stall. The fleet-wide rate every slice is read against. */
+  stalls: number
+  rate: number | null
+  /** What "a heavy stall" means, as the ladder's own range (`≥ 500 ms`) — rendered here so no
+   *  surface hardcodes a millisecond figure that could drift from the edges in the schema. */
+  stallLabel: string
+  byWindowMode: TriagePerfSlice[]
+  byMachineClass: TriagePerfSlice[]
+  byLocked: TriagePerfSlice[]
+}
+
 export interface TriageAnalyticsData {
   windowDays: number
   /** The day keys the window covers, ascending — the x-axis every series is aligned to. */
@@ -702,6 +816,11 @@ export interface TriageAnalyticsData {
   health: TriageAnalyticsHealth
   /** How the fleet's launches actually went — the startup replay, per build (JOS-57). */
   startup: TriageAnalyticsStartup
+  /** …and how its SESSIONS went, for the hours after the launch (JOS-367). */
+  live: TriageAnalyticsLive
+  /** …and WHERE those stalls landed: by EQ window mode, machine class and locked overlay
+   *  (JOS-372). Empty until the cube has rows — there is no backfill and cannot be. */
+  perf: TriageAnalyticsPerf
   /** Error rate per build over time, against adoption and release dates (JOS-96). */
   releaseHealth: TriageAnalyticsReleaseHealth
   /** What this pipeline can and cannot see: opt-out flips, and the reporting base (JOS-109). */

@@ -54,6 +54,7 @@ import {
   missingTable,
   readAnalyticsInstalls,
   readErrorReports,
+  readPerfDaily,
   readReportVersions,
   readUsageDaily,
   readUsageFunnelDaily,
@@ -77,6 +78,7 @@ import {
   toErrorIssueRows,
   toFunnelRows,
   toInstallRows,
+  toPerfRows,
   toUsageRows
 } from './usageRows'
 import type { UsageCohort } from '../../shared/telemetryRollup'
@@ -193,7 +195,7 @@ async function readAnalytics(
   const nowMs = Date.now()
   const since = addDays(dayOf(nowMs), -(days - 1))
   try {
-    const [rawUsage, rawFunnels, rawInstalls, rawBugs, rawIssues] = await Promise.all([
+    const [rawUsage, rawFunnels, rawInstalls, rawBugs, rawIssues, rawPerf] = await Promise.all([
       readUsageDaily(c, since),
       readUsageFunnelDaily(c, since),
       readAnalyticsInstalls(c),
@@ -212,13 +214,19 @@ async function readAnalytics(
       // `error_report` degrades through the identical `missingTable` arm and the whole tab
       // says which table is missing, rather than this one read failing quietly and the panel
       // simply never listing an issue.
-      readErrorReports(c, since)
+      readErrorReports(c, since),
+      // THE SIXTH READ (JOS-372): the perf cube. Same window, same `Promise.all`, same `try`, so
+      // a cluster that has not run the migration adding `perf_daily` degrades through the
+      // identical `missingTable` arm and the tab names the missing table — rather than this one
+      // read failing quietly and the cross-tab simply never showing a row.
+      readPerfDaily(c, since)
     ])
     const usage = toUsageRows(rawUsage)
     const funnels = toFunnelRows(rawFunnels)
     const installs = toInstallRows(rawInstalls)
     const bugReports = toBugReportRows(rawBugs)
     const issues = toErrorIssueRows(rawIssues)
+    const perf = toPerfRows(rawPerf)
     const build = (cohort: UsageCohort): TriageAnalyticsData =>
       buildAnalytics({
         usage: ofCohort(usage, cohort),
@@ -226,6 +234,7 @@ async function readAnalytics(
         installs: ofCohort(installs, cohort),
         bugReports: ofCohort(bugReports, cohort),
         issues: ofCohort(issues, cohort),
+        perf: ofCohort(perf, cohort),
         windowDays: days,
         nowMs
       })

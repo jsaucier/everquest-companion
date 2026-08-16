@@ -199,6 +199,8 @@ test('THE COMPANION WINDOW IS ASKED OF ELECTRON, and only ever read', () => {
     .map((l) => l.trim())
   assert.deepEqual(calls, ['{ pid: process.pid, appWindowFocused: mainWindowFocused() },'])
   assert.match(presence, /applyFocus\(focusCountsAsEq\(side\)\)/)
-  // Bounds still come from the game alone — an overlay's rectangle must never become the ring's.
-  assert.match(presence, /side === 'eq' \? \{ observed: true, eqBounds: rec\.rect \}/)
+  // Bounds still come from the game alone — an overlay's rectangle must never become the ring's —
+  // and they are converted to DIP on the way in (JOS-376; the conversion itself is driven with a
+  // fake `screen` in tests/presenceDip.test.mts).
+  assert.match(presence, /side === 'eq' \? \{ observed: true, eqBounds: toDip\(rec\.rect\) \}/)
 })

@@ -238,12 +238,21 @@ test('an image fetch failure is COUNTED but is not an ERROR — the release rate
   // The reading decision, pinned where it can be argued with. `errors / healthReports` per build
   // answers "did I release buggy code"; 17,632 failed downloads of somebody else's images would
   // swamp every real signal in it and would move with a wiki's uptime rather than with a release.
-  assert.deepEqual([...HEALTH_NON_ERROR_FIELDS], ['imageFetchFailures', 'imageCacheReadFailures'])
+  assert.deepEqual(
+    [...HEALTH_NON_ERROR_FIELDS],
+    ['imageFetchFailures', 'imageCacheReadFailures', 'utilityProcessGone']
+  )
   assert.equal(isErrorHealthField('imageFetchFailures'), false)
   // JOS-266's, exempt for the same reason with a stronger claim: a cached image that will not read
   // back is evicted and re-fetched, so the condition ends with the user seeing the picture. What it
   // measures is a machine whose cache folder is being fought over, not a build that went wrong.
   assert.equal(isErrorHealthField('imageCacheReadFailures'), false)
+  // JOS-364's utility-process counter, exempt on the same shape of argument: Chromium starts and
+  // stops audio/network/storage helpers by design, so a rate that summed them would report an
+  // ordinary browser as a bad release. Its GPU sibling is NOT exempt — that one took every
+  // window's compositor with it, which is `rendererCrashes` about a different process.
+  assert.equal(isErrorHealthField('utilityProcessGone'), false)
+  assert.equal(isErrorHealthField('gpuProcessGone'), true)
   // A DENY LIST, so a field added later and forgotten counts as an error — noisy and visible,
   // rather than silently vanishing from the rate.
   assert.equal(isErrorHealthField('somethingAddedNextYear'), true)

@@ -23,10 +23,21 @@
 //
 // It is installed BEFORE the two handlers below purely so that no window exists in which this
 // module is loaded and the promotion can still happen.
+import { app } from 'electron'
+import { watchChildProcessGone } from './childProcessGone'
 import { silenceStdioErrors } from './deadPipe'
 import { logError } from './errorLog'
 
 silenceStdioErrors()
+
+// THE CHILDREN, beside the two process-level handlers below and for the same reason they are here
+// rather than in a window module: `child-process-gone` is about processes this app never created
+// and does not own — the GPU process, the audio and network utilities — and losing one is
+// invisible everywhere else in the codebase (JOS-364). Installed from module scope, so the
+// listener exists before `ready`, before the first window, and before anything can die unheard.
+watchChildProcessGone(app, (info) => {
+  logError('main:gpu-process-gone', info)
+})
 
 // EPIPE IS NOT SPECIAL-CASED HERE, deliberately. A broken pipe that reaches this handler came from
 // somewhere that is NOT our own stdio — a child process, a socket, the updater — and those are real

@@ -49,6 +49,16 @@
 //
 //   * The validators are TOTAL and side-effect free: every failure is a typed value, nothing
 //     throws, and the same call on the same input always returns the same answer.
+//
+// THE LIVE-SESSION RIDERS LIVE NEXT DOOR TOO, in `./telemetryLive.ts` (JOS-367) — the three
+// optional groups `sessionHeartbeat` / `sessionEnd` carry about a RUNNING session (how late our
+// clocks ran, what the tail's reads cost, what was switched on) plus their three ladders. Split
+// for the same factoring reason the validators were, and reached DIRECTLY by its importers rather
+// than re-exported from here, so every one of those names is spelled in exactly one place. The
+// import below is TYPE-ONLY: this file still emits no runtime import, which is the property the
+// Lambda bundle and `storeMigrations.ts`'s module-scope read both depend on.
+
+import type { LiveStallStats, SessionStateStats, TailReadStats } from './telemetryLive'
 
 /** Bumped only for a BREAKING wire change; the server rejects anything else outright. */
 export const TELEMETRY_API_VERSION = 1
@@ -183,6 +193,65 @@ export type TelemetryFeature = (typeof TELEMETRY_FEATURES)[number]
  */
 export const TELEMETRY_VOICE_ENGINES = ['system', 'kokoro', 'off'] as const
 export type TelemetryVoiceEngine = (typeof TELEMETRY_VOICE_ENGINES)[number]
+
+// ---------------------------------------------------------------- the machine class (JOS-364)
+//
+// THE AXIS EVERY PERFORMANCE NUMBER GETS SLICED BY, and it exists because a field report this
+// app could not answer: "EverQuest freezes for about a second when an overlay shows". Nothing
+// in the fleet said what the machine WAS — how many cores, how much memory, whose GPU, whether
+// Chromium was compositing in hardware at all, how many displays, or whether the game was
+// running fullscreen rather than windowed. Every reading below is a CLOSED ENUM or a BUCKET
+// INDEX: none of them can carry a path, a device string or a name.
+
+/**
+ * Who made the GPU, from `app.getGPUInfo('basic')`'s PCI vendor id — 0x10de, 0x1002, 0x8086 and
+ * then 'other'. `unknown` is a real member and is not a failure: the call is asynchronous and is
+ * given a hard cap, and a machine that has not answered in time is honestly unknown rather than
+ * quietly filed under 'other'.
+ *
+ * A VENDOR IS NOT A DEVICE. The model name Chromium also offers ('NVIDIA GeForce RTX 4070 Ti
+ * SUPER') is a far narrower fingerprint than this app has any use for, so the schema cannot
+ * express it — three ids and a fallback is the whole vocabulary.
+ */
+export const TELEMETRY_GPU_VENDORS = ['nvidia', 'amd', 'intel', 'other', 'unknown'] as const
+export type TelemetryGpuVendor = (typeof TELEMETRY_GPU_VENDORS)[number]
+
+/**
+ * How Chromium is compositing, folded from `app.getGPUFeatureStatus().gpu_compositing` — whose
+ * raw vocabulary ('enabled', 'disabled_software', 'enabled_readback', 'unavailable_off', …) is
+ * neither closed nor stable across Chromium versions, which is exactly why it is folded into
+ * three named states plus `unknown` HERE rather than sent verbatim.
+ *
+ * It is the reading that separates two machines with the same GPU: a driver that has fallen back
+ * to software compositing draws every overlay show on the CPU, and that is a different app.
+ */
+export const TELEMETRY_GPU_COMPOSITING = ['hardware', 'software', 'off', 'unknown'] as const
+export type TelemetryGpuCompositing = (typeof TELEMETRY_GPU_COMPOSITING)[number]
+
+/**
+ * How EverQuest itself is drawing, read ONCE per session from the install's `eqclient.ini`
+ * (`WindowedMode=TRUE` ⇒ windowed, `FALSE` ⇒ fullscreen; the live Legends client writes no such
+ * key and is read from `Fullscreen=1|0` instead — see `eqWindowModeOf`).
+ *
+ * `fullscreen` MEANS THE GAME'S OWN FULLSCREEN SETTING IS ON, AND NOTHING MORE (JOS-375). On the
+ * current client that setting produces a BORDERLESS FULLSCREEN WINDOW, not an exclusive display
+ * mode: an always-on-top window shares the screen with it, and showing one costs no mode switch.
+ * The member was called `exclusive` when this field was written (JOS-364) on the assumption that
+ * it was the DirectX-era exclusive mode, and the name was a claim the reading could not support
+ * — the ini says which setting is on, never which of the two kinds of fullscreen the client
+ * implements. It was renamed rather than kept, because a dimension that lies is worse than one
+ * that is coarse.
+ *
+ * IT IS A DISPLAY SETTING, NOT GAMEPLAY. Nothing about a character, a server or a log line is
+ * involved — the file is read for one boolean and nothing else is retained. The reason it is
+ * worth a field at all is that it is still the best axis the fleet has for "the game froze for a
+ * second when the overlay appeared": how the game presents itself is the other half of every
+ * z-order stall, whichever kind of fullscreen turns out to be behind it. `unknown` when there is
+ * no install dir, no file, or no key — the honest answer, and the common one on a machine where
+ * discovery never found EverQuest.
+ */
+export const TELEMETRY_EQ_WINDOW_MODES = ['fullscreen', 'windowed', 'unknown'] as const
+export type TelemetryEqWindowMode = (typeof TELEMETRY_EQ_WINDOW_MODES)[number]
 
 /** The auto-update release channel. */
 export const TELEMETRY_UPDATE_CHANNELS = ['main', 'stable'] as const
@@ -377,13 +446,9 @@ export const COLD_START_MS_EDGES = [1_000, 2_500, 5_000, 10_000, 20_000] as cons
 /** How many character logs the install can see. 1 is the overwhelming common case. */
 export const CHAR_COUNT_EDGES = [1, 2, 3, 5, 9] as const
 /** Size of the tailed log on disk. A raw byte count is a fingerprint; a decade is not. */
-export const LOG_SIZE_BYTES_EDGES = [
-  1_048_576,
-  10_485_760,
-  104_857_600,
-  536_870_912,
-  2_147_483_648
-] as const
+// (1 MB / 10 MB / 100 MB / 512 MB / 2 GB — spelled on one line so the section stays inside the
+//  repo's 400-code-line ceiling now that JOS-364's four ladders share it. Same numbers.)
+export const LOG_SIZE_BYTES_EDGES = [1_048_576, 10_485_760, 104_857_600, 536_870_912, 2_147_483_648] as const
 /** How many alert definitions the user keeps. */
 export const ALERT_COUNT_EDGES = [1, 5, 10, 25, 50] as const
 /**
@@ -396,15 +461,7 @@ export const ALERT_COUNT_EDGES = [1, 5, 10, 25, 50] as const
  * It is bucketed for the same reason the size is — a raw byte count is a fingerprint of one
  * player's evening; a decade is not.
  */
-export const NEW_BYTES_EDGES = [
-  65_536,
-  262_144,
-  1_048_576,
-  4_194_304,
-  16_777_216,
-  67_108_864,
-  268_435_456
-] as const
+export const NEW_BYTES_EDGES = [65_536, 262_144, 1_048_576, 4_194_304, 16_777_216, 67_108_864, 268_435_456] as const
 /**
  * OBSERVED TIMER DRIFT DURING THE REPLAY (JOS-57 scope addition) — 2 / 5 / 10 / 25 / 50 / 100 /
  * 250 ms ⇒ eight buckets.
@@ -415,6 +472,26 @@ export const NEW_BYTES_EDGES = [
  * edges bracket what a person feels a whole system do — a hitch, and a freeze.
  */
 export const STUTTER_MS_EDGES = [2, 5, 10, 25, 50, 100, 250] as const
+
+// --- the machine class's four ladders (JOS-364). Raw values are not sent: a core count beside a
+// --- memory size beside a scale factor is a machine fingerprint, and the questions these exist to
+// --- answer ("do stalls cluster on 4-core boxes", "on 4K displays") are answered by ranges.
+
+/** Logical processors (`os.cpus().length`) — 2 / 4 / 6 / 8 / 12 / 16 / 24 ⇒ eight buckets. The
+ *  low edges are where the answer is: a 4-thread machine running EQ, a browser and this app is a
+ *  different world from a 16-thread one, and the top edges only have to say "plenty". */
+export const CPU_COUNT_EDGES = [2, 4, 6, 8, 12, 16, 24] as const
+/** Installed memory in WHOLE GIBIBYTES (`os.totalmem()` folded down) — 4 / 8 / 12 / 16 / 24 / 32
+ *  / 64 ⇒ eight buckets. Gibibytes rather than bytes so the ladder is readable and so the number
+ *  that crosses the wire cannot be a byte-exact machine signature. */
+export const TOTAL_MEM_GB_EDGES = [4, 8, 12, 16, 24, 32, 64] as const
+/** Attached displays (`screen.getAllDisplays().length`) ⇒ four buckets. Bucket 0 means the app
+ *  saw NO display, which is not a number of monitors — it is a machine that answered strangely. */
+export const DISPLAY_COUNT_EDGES = [1, 2, 3] as const
+/** The primary display's scale factor × 100 — 100% / 125% / 150% / 175% / 200% ⇒ six buckets.
+ *  Overlay work is done in device pixels, so a 4K display at 150% is drawing 2.25× the pixels a
+ *  100% display is, and that belongs beside every stall reading. */
+export const PRIMARY_SCALE_EDGES = [100, 125, 150, 175, 200] as const
 
 /** The bucket index of `value` under `edges`. Non-finite input lands in bucket 0. */
 export function bucketOf(value: number, edges: readonly number[]): number {
@@ -613,6 +690,12 @@ export interface EvSessionHeartbeat {
   linesParsed?: number
   /** This launch's startup replay, if it has not been reported yet. Optional, same rule. */
   startup?: StartupReplayStats
+  /** How late our own two clocks ran since the previous report (JOS-367). Optional, same rule. */
+  live?: LiveStallStats
+  /** What the live tail's reads cost over the same interval. Absent when nothing is attached. */
+  tail?: TailReadStats
+  /** What the app was doing while the two above were measured. */
+  state?: SessionStateStats
 }
 export interface EvSessionEnd {
   t: 'sessionEnd'
@@ -622,6 +705,10 @@ export interface EvSessionEnd {
   linesParsed?: number
   /** This launch's startup replay, if no heartbeat carried it first. Optional, same rule. */
   startup?: StartupReplayStats
+  /** The tail of the live readings, on the same terms as `linesParsed` beside them (JOS-367). */
+  live?: LiveStallStats
+  tail?: TailReadStats
+  state?: SessionStateStats
 }
 
 export interface EvViewDwell {
@@ -655,6 +742,28 @@ export interface EvSetupSnapshot {
   voiceEngine: TelemetryVoiceEngine
   soundPackCount: number
   updateChannel: TelemetryUpdateChannel
+  // ---- THE MACHINE CLASS (JOS-364). Every one of these is OPTIONAL, under THE ADDITIVE-FIELD
+  // ---- RULE stated above: they ride an event KIND that has been in the contract since wave A1,
+  // ---- so an ingest that has never heard of them simply does not copy them across and keeps
+  // ---- counting everything else — which is what lets the client half ship before the deploy.
+  // ---- The producer (src/main/telemetry/setupSnapshot.ts) sends all eight on every launch,
+  // ---- with `unknown` where the machine would not answer; optional here is about SKEW, not
+  // ---- about a client that measures some launches and not others.
+  /** Logical processors, as an index into `CPU_COUNT_EDGES`. */
+  cpuCountBucket?: number
+  /** Installed memory, as an index into `TOTAL_MEM_GB_EDGES`. */
+  totalMemBucket?: number
+  gpuVendor?: TelemetryGpuVendor
+  gpuCompositing?: TelemetryGpuCompositing
+  /** Graphics safe mode is ON for this launch — the app is drawing without hardware
+   *  acceleration (src/main/graphics.ts). The one setting of ours that changes the answer to
+   *  every question the four readings above are asked. */
+  safeMode?: boolean
+  /** Attached displays, as an index into `DISPLAY_COUNT_EDGES`. */
+  displayCountBucket?: number
+  /** The primary display's scale factor × 100, as an index into `PRIMARY_SCALE_EDGES`. */
+  primaryScaleBucket?: number
+  eqWindowMode?: TelemetryEqWindowMode
 }
 export interface EvFunnelStep {
   t: 'funnelStep'
@@ -701,6 +810,29 @@ export interface EvHealthCounters {
    * ./telemetryRollup.ts — so it is counted and rendered without moving the release error rate.
    */
   imageCacheReadFailures?: number
+  /**
+   * THE GPU PROCESS DIED (JOS-364) — `child-process-gone` with `type: 'GPU'` and a reason that is
+   * not a clean exit. Optional for the same deploy-skew reason as the three fields above.
+   *
+   * IT IS AN ERROR, and counted as one exactly like `rendererCrashes`: Chromium restarts the GPU
+   * process, so the app survives, but every window it was compositing goes through a black frame
+   * and an overlay show around that moment is the ~1 s freeze this app has field reports of and
+   * no evidence for. The matching `logError('main:gpu-process-gone')` gives the fleet's error
+   * store an exemplar carrying the reason and the exit code, which a count cannot.
+   *
+   * A CLEAN EXIT IS NOT COUNTED. The GPU process also goes away when the app is shutting down,
+   * and a counter that included that would report one loss on every ordinary quit.
+   */
+  gpuProcessGone?: number
+  /**
+   * A UTILITY PROCESS died the same way (`type: 'Utility'`), and it is NOT an error — it is in
+   * `HEALTH_NON_ERROR_FIELDS` (./telemetryRollup.ts). Chromium runs utility processes for audio,
+   * networking and storage, they come and go by design, and nothing here can tell a torn-down one
+   * from a crashed one beyond the clean-exit filter the field above describes. It is counted
+   * because a fleet where this climbs beside `gpuProcessGone` is a fleet with a driver or a
+   * security product killing our children — which is the whole reason both numbers exist.
+   */
+  utilityProcessGone?: number
 }
 export interface EvUpdateOutcome {
   t: 'updateOutcome'

@@ -26,6 +26,7 @@ import { Tailer } from './log/Tailer'
 import { parseEvent, parseLine } from './log/parser'
 import { installCharacterName } from './log/rulesets'
 import { scanLog } from './log/scanHistory'
+import { formatTailIoSummary, takeTailIoSummary } from './log/tailIoStats'
 import { createSlicer } from './log/replaySlicer'
 import { saveUserOverlay } from './data/overlayPersistence'
 import { loadInventory } from './inventory/parseInventory'
@@ -692,4 +693,24 @@ export function stopSession(): void {
   inventoryWatch?.close()
   stopWatchingForFirstLog()
   stopHeartbeat()
+  logTailIo()
+}
+
+/**
+ * WHAT THE LIVE TAIL'S FILE I/O COST THIS SESSION (JOS-363), on one line, to dev stdout.
+ *
+ * The heartbeat rider that puts these numbers on the wire is a separate ticket; until it lands
+ * this line is the whole readership, and it exists so the owner reproducing the ~1s EverQuest
+ * render freezes can say what the tail was doing rather than guess. `reopens` is the claim the
+ * persistent handle makes — steady-state tailing opens once and never again — and `over100` /
+ * `over500` are the reads long enough to be the stall.
+ *
+ * `null` when the tail never read anything (the app launched, the player never typed `/log on`),
+ * and then nothing is printed: a row of zeros from a session with no tail in it describes nothing.
+ * It is the ONLY drain in the app today, so the summary's interval really is the session — a
+ * property the heartbeat ticket takes over rather than one this line may assume forever.
+ */
+function logTailIo(): void {
+  const io = takeTailIoSummary()
+  if (io) logInfo('[everquest-companion] tail io —', formatTailIoSummary(io))
 }

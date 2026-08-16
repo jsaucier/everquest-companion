@@ -1633,7 +1633,11 @@ plumbing proven). Reuses the tier-2 lifecycle via
 `scripts/sandbox/sandbox-lifecycle.ps1`.
 - Overlay: Electron suffices for windowed/borderless EQ; exclusive
   fullscreen cannot be overlaid by anything (native-helper escape hatch:
-  feed it the same snapshot IPC). ONE overlay.html bundle, kind read from
+  feed it the same snapshot IPC) — but the live client HAS no exclusive
+  mode: its own Fullscreen setting is a BORDERLESS fullscreen window
+  (owner-verified, JOS-375), so the escape hatch has never been needed and
+  the telemetry member is named `fullscreen`, not `exclusive`. ONE
+  overlay.html bundle, kind read from
   `?kind=`; each kind has its own persisted config (`store overlays.<kind>`)
   and can run simultaneously; all overlay IPC channels take the kind as
   first arg. Interactive mode adds a dense selector + a mini drill-down;

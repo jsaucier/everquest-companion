@@ -73,6 +73,9 @@ import {
   viewsVisited
 } from './collector'
 import { markFunnelStep } from './funnels'
+// The live-session riders (JOS-367) — the probe, the tail and the window layer, gathered behind
+// one call so neither session report can drain a different set than the other.
+import { liveRiderFields } from './liveRiders'
 import { takeHealth } from './health'
 import { takeErrorReports } from './errorReports'
 import { readRing, writeRing } from './ring'
@@ -231,7 +234,12 @@ function startTimers(prefs: TelemetryPrefs): void {
       // HEARTBEAT DOES NOT ENDANGER THAT — the drain is a race between this and `sessionEnd`,
       // whichever fires first, and `takeStartupReplay` empties the slot either way. A longer
       // heartbeat only shifts WHICH of the two carries it; it can never lose or duplicate it.
-      ...startupField()
+      ...startupField(),
+      // …and how the LAST TEN MINUTES ACTUALLY WENT (JOS-367): how late our two clocks ran and
+      // whether they went late together, what the tail's reads cost, and what was switched on
+      // while both were measured. Drained here on the same terms as the line delta above — one
+      // interval is reported once, by whichever of these two events gets to it first.
+      ...liveRiderFields()
     })
     reportHealth()
     reportErrors()
@@ -371,7 +379,12 @@ export function stopTelemetry(): void {
       linesParsed: takeLinesParsed(),
       // …and the startup reading, if no heartbeat got there first — which is the common case, and
       // more common still now: most sessions end before the ten-minute mark.
-      ...startupField()
+      ...startupField(),
+      // The tail of the live readings too, and for the SAME reason the line delta needs one: most
+      // sessions end before a heartbeat ever fires, so without this drain the stall numbers would
+      // describe only the sessions that lasted ten minutes — a population selected against
+      // precisely the short, bad session this measurement exists to catch.
+      ...liveRiderFields()
     })
     // The tail of the health deltas, on the same terms as the line delta beside it. Inside the
     // `uptime > 0` guard deliberately: a process that never started collecting has no session to

@@ -51,6 +51,12 @@ import type {
   TriageVersionRow
 } from '../../shared/triage'
 import { buildCoverage } from './coverage'
+// JOS-364's machine class, in its own file for the reason that file's header states — this
+// section pushed this one past the 400-line ceiling, and the answer is a split.
+import { buildMachineClass } from './machineClass'
+import { buildLiveStalls } from './liveStalls'
+// …and the cross-tab over the same reports (JOS-372), in its own file for the same reason.
+import { buildPerfCube } from './perfCube'
 import { buildReleaseHealth } from './releaseHealth'
 import {
   addDays,
@@ -67,6 +73,7 @@ import {
   type ErrorIssueRow,
   type FunnelRow,
   type InstallRow,
+  type PerfRow,
   type UsageRow
 } from './usageRows'
 
@@ -85,6 +92,11 @@ export interface AnalyticsInput {
    *  existing caller and every existing fixture compiles unchanged, and a fleet with no error
    *  rows renders exactly as it did before this feature existed. */
   issues?: readonly ErrorIssueRow[]
+  /** The perf cube (JOS-372) — the SIXTH source, and the only one carrying more than one
+   *  dimension per row. Optional for the reason the two above are; absent renders as a section
+   *  that says nothing has been reported, which on a stack whose ingest predates the cube is
+   *  exactly the truth. */
+  perf?: readonly PerfRow[]
   windowDays: number
   nowMs: number
 }
@@ -186,6 +198,7 @@ function buildAdoption(usage: readonly UsageRow[], sessions: number): TriageAnal
     voice: mixRows(dimsOf(usage, USAGE_METRICS.setupVoice)),
     cursorRing: mixRows(dimsOf(usage, USAGE_METRICS.setupCursorRing)),
     autoHide: mixRows(dimsOf(usage, USAGE_METRICS.setupAutoHide)),
+    machine: buildMachineClass(usage),
     alertsFired: sumOf(usage, USAGE_METRICS.alertsFired),
     alertsSpoken: sumOf(usage, USAGE_METRICS.alertsSpoken)
   }
@@ -559,6 +572,14 @@ export function buildAnalytics(input: AnalyticsInput): TriageAnalyticsData {
     funnels: buildFunnels(input.funnels, input.usage),
     health: buildHealth(input.usage),
     startup: buildStartup(input.usage),
+    // …and the same question asked of the hours AFTER the launch (JOS-367): how late our own two
+    // clocks ran, whether they went late together (the machine-or-us verdict), what our reads of
+    // the log cost, and what was switched on while all of it was measured. Its own file, like the
+    // machine class, because this one is at the line ceiling.
+    live: buildLiveStalls(input.usage),
+    // …and WHERE those stalls landed (JOS-372). The section above counts them fleet-wide; this
+    // one crosses them with the three facts a counter table cannot cross them with.
+    perf: buildPerfCube(input.perf ?? []),
     // Beside Health and Startup, and reading the same rows from the other end: those two ask what
     // goes wrong and how launches went; this one asks WHICH BUILD, over time, against how many
     // people were on it. Its own file (./releaseHealth.ts) — this one is at the line ceiling.

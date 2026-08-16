@@ -48,7 +48,9 @@ zip, and CI runs it on every change to either side so the two cannot drift apart
 
 The telemetry handler additionally imports `src/shared/telemetryRollup.ts`, which is the ONE
 definition of what a batch becomes: the metric names it writes are the metric names the triage
-Analytics tab and `triage-feedback analytics digest` read back.
+Analytics tab and `triage-feedback analytics digest` read back. Since JOS-372 it also imports
+`src/shared/telemetryPerfCube.ts` on the same terms — the closed vocabulary of the one cross-tab
+(`perf_daily`), spelled once and imported by the handler and by both readouts.
 
 ## There is no database password
 
@@ -408,6 +410,66 @@ What the copy can and cannot recover: a row carries no id, so a **day** is label
 install's span covers that day, `user` otherwise. Days the owner shared with a real user stay
 folded into `user`. That is the honest limit, and it is the reason the split is a KEY from the
 swap onward rather than a filter applied at read time.
+
+## PENDING: the perf cube (JOS-372) — two steps, in this order, and NO client step
+
+`usage_daily` carries one dimension per row, so it can count stalls and can never say whether
+they cluster on exclusive-fullscreen installs, on small boxes, or while an overlay is locked.
+`perf_daily` is the one cube that can: five closed dims wide, one row per session report that
+carried a live stall reading, and **still no raw event store**. The reasoning and the cardinality
+budget are written where the table is, in `infra/schema.sql`.
+
+**Schema-first**, exactly as the inventory columns were, and for the same reason: `INSTALL_SQL`
+in `infra/lambda/telemetry.ts` names `machine_class, window_mode` unconditionally, and naming a
+column that does not exist is `42703` on **every batch**, instantly, with the endpoint open.
+
+1. **Schema.** `npx tsx scripts/triage-feedback.mts migrate --profile <profile>` — it applies, all
+   idempotent (`exists` on a cluster that already has them):
+
+   ```sql
+   CREATE TABLE IF NOT EXISTS perf_daily (
+     day           text   NOT NULL,
+     cohort        text   NOT NULL,
+     window_mode   text   NOT NULL,
+     machine_class text   NOT NULL,
+     locked        text   NOT NULL,
+     stall_bucket  text   NOT NULL,
+     tail_bucket   text   NOT NULL,
+     n             bigint NOT NULL,
+     PRIMARY KEY (day, cohort, window_mode, machine_class, locked, stall_bucket, tail_bucket)
+   );
+   ALTER TABLE analytics_install ADD COLUMN machine_class text;
+   ALTER TABLE analytics_install ADD COLUMN window_mode text;
+   GRANT SELECT, INSERT, UPDATE ON perf_daily TO telemetry_ingest;
+   ```
+
+   `SELECT` rides along with `INSERT`/`UPDATE` because `ON CONFLICT DO UPDATE SET n = perf_daily.n
+   + EXCLUDED.n` reads the existing row to evaluate the sum. **No `DELETE`**, like every other
+   telemetry grant. The TRIAGE reader needs no grant at all — it connects as `admin`.
+
+   The primary key is **seven columns**. That is one more than `usage_funnel_daily`'s six, so it is
+   the one statement here worth watching the `migrate` output for; the runner prints the failing
+   statement rather than half-applying anything.
+
+2. **Infra.** `node infra/build.mjs` (THE DEPLOY LAW — the plan hashes the zips), then
+   `terraform plan` / `terraform apply`. Only `source_code_hash` moves: no new resource, no new
+   permission, no Terraform change of any kind. The bundle is the telemetry Lambda, which then
+   starts writing the cube and the two install columns.
+
+**There is no client step, and there cannot be one to wait for.** Nothing new crosses the wire:
+both dims are derived **server-side** from `setupSnapshot` fields that shipped with JOS-364, and
+the stall/tail/state riders shipped with JOS-367. A client that predates either simply produces
+`unknown` dims, which is a real class in the cube rather than a missing value.
+
+**NO BACKFILL IS POSSIBLE.** The pipeline keeps no raw events (plan T6), so yesterday's heartbeats
+do not exist in any form that could be re-folded. The table starts on the day step 2 lands, and
+both readouts (Triage → Analytics → "Stalls by", and `analytics digest`) say "no rows in this
+window" rather than printing zeros.
+
+**Reading it:** `triage-feedback analytics digest` prints the three cross-tabs under the LIVE
+SESSIONS section — user cohort by default, `--cohort all` for both side by side, and as everywhere
+else nothing is ever summed across cohorts *or* across the three cuts (they are the same reports
+sliced three ways).
 
 ## PENDING: the inventory attachment (JOS-296) — three steps, in this order
 

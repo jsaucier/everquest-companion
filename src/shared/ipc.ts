@@ -571,6 +571,13 @@ export const IPC = {
   // startup phase, which only the renderer can observe. Sent once per window lifetime; a
   // repeat is refused by the phase accounting itself (shared/perf.ts `addMark`).
   perfRendererHydrated: 'perf:rendererHydrated',
+  // renderer -> main: the persisted "yield CPU to the game" pref ({yieldToGame}). ON by default.
+  // Returns ProcessPriorityPrefs.
+  processPriorityGet: 'processPriority:get',
+  // renderer -> main: flip it. The priority class of main + every renderer is re-applied in the
+  // SAME call, so the pref and this session's processes can never disagree (the `perf:setEnabled`
+  // discipline). A non-boolean leaves the pref alone. Arg: boolean. Returns ProcessPriorityPrefs.
+  processPrioritySet: 'processPriority:setYield',
 
   // ---- graphics compatibility (JOS-40 — shared/graphicsPrefs.ts) ------------------------
   //

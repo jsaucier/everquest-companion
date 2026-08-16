@@ -25,7 +25,10 @@ import {
   stopPerfSampler
 } from '../perf'
 import { getPerfHudPrefs, setPerfHudPrefs } from '../store'
+import { getProcessPriorityPrefs, setProcessPriorityPrefs } from '../storeProcessPriority'
+import { setYieldToGame } from '../processPriority'
 import type { PerfHudPrefs } from '../../shared/perf'
+import type { ProcessPriorityPrefs } from '../../shared/processPriority'
 
 /** Persist the switch AND bring this session's sampler into line with it. */
 export function applyPerfHudEnabled(enabled: boolean): PerfHudPrefs {
@@ -35,8 +38,31 @@ export function applyPerfHudEnabled(enabled: boolean): PerfHudPrefs {
   return next
 }
 
+/**
+ * Persist "yield CPU to the game" AND re-apply the priority class to every process this session
+ * owns, in the same call — the same seam `applyPerfHudEnabled` keeps for the sampler, and for the
+ * same reason: a setting that only takes effect at the next launch is a setting a player cannot
+ * A/B against a stutter they are looking at right now.
+ *
+ * `setYieldToGame` is the module's own no-op on any platform but Windows and under EQ_E2E, so the
+ * decision does not have to be restated here (two copies of a platform gate is how one drifts).
+ */
+export function applyYieldToGame(yieldToGame: boolean): ProcessPriorityPrefs {
+  const next = setProcessPriorityPrefs({ yieldToGame })
+  setYieldToGame(next.yieldToGame)
+  return next
+}
+
 export function registerPerfIpc(): void {
   ipcMain.handle(IPC.perfPrefsGet, () => getPerfHudPrefs())
+
+  ipcMain.handle(IPC.processPriorityGet, () => getProcessPriorityPrefs())
+
+  // VALIDATED AT THE HANDLER, never trusted because today's only caller is the app's own UI: a
+  // non-boolean is not a guess, it leaves the pref exactly as it was.
+  ipcMain.handle(IPC.processPrioritySet, (_e, yieldToGame: unknown) =>
+    typeof yieldToGame === 'boolean' ? applyYieldToGame(yieldToGame) : getProcessPriorityPrefs()
+  )
 
   ipcMain.handle(IPC.perfSetEnabled, (_e, enabled: unknown) =>
     typeof enabled === 'boolean' ? applyPerfHudEnabled(enabled) : getPerfHudPrefs()

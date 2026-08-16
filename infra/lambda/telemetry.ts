@@ -60,6 +60,12 @@ import {
   type UsageCohort,
   type UsageCounter
 } from '../../src/shared/telemetryRollup'
+import {
+  perfDimsFromEvents,
+  perfDimsOf,
+  type PerfCubeRow,
+  type PerfInstallDims
+} from '../../src/shared/telemetryPerfCube'
 
 /** Warm invocations reuse the CONFIG row for this long instead of re-reading it. */
 const CONFIG_CACHE_MS = 60_000
@@ -189,11 +195,24 @@ async function loadConfig(now: number): Promise<TelemetryConfig> {
  *     from a prod install, while a dev build re-asserts itself even if somebody `owner-rm`'d it.
  *   * `RETURNING cohort` hands back the RESOLVED value (postgres returns the post-update row),
  *     so the counter UPSERTs below key on the same answer this statement committed.
+ *
+ * IT ALSO CARRIES THE PERF CUBE'S TWO SETUP DIMS (JOS-372), for a sixth job and the same reason
+ * as the fifth: `machine_class` and `window_mode` are per-INSTALL facts that arrive once per
+ * launch on a `setupSnapshot`, while the stall readings they slice arrive on every session report
+ * for hours. `$8`/`$9` are what THIS batch's snapshot said, or NULL when it carried none, and
+ * `COALESCE(EXCLUDED.…, analytics_install.…)` is the whole resolution: a snapshot overwrites,
+ * anything else keeps what the row holds. `RETURNING` then hands back the resolved pair, so a
+ * batch with no snapshot of its own still folds its cube rows against the install's known box.
+ *
+ * THESE TWO COLUMNS MUST EXIST BEFORE THIS BUNDLE IS DEPLOYED. The statement names them
+ * unconditionally, and naming a column that does not exist is `42703` on EVERY batch — the trap
+ * infra/README.md's "adding a column is schema-first" section documents. Order: `migrate`, then
+ * `terraform apply`.
  */
 const INSTALL_SQL = `INSERT INTO analytics_install (
   analytics_id, first_seen_day, last_seen_day, days_seen, app_version, channel, cohort,
-  quota_day, quota_n)
-VALUES ($1, $2, $2, 1, $3, $4, $7, $2, $5)
+  quota_day, quota_n, machine_class, window_mode)
+VALUES ($1, $2, $2, 1, $3, $4, $7, $2, $5, $8, $9)
 ON CONFLICT (analytics_id) DO UPDATE
    SET last_seen_day = GREATEST(analytics_install.last_seen_day, $2),
        days_seen     = analytics_install.days_seen
@@ -202,16 +221,20 @@ ON CONFLICT (analytics_id) DO UPDATE
        channel       = EXCLUDED.channel,
        cohort        = (CASE WHEN EXCLUDED.cohort = 'owner' THEN 'owner'
                              ELSE COALESCE(analytics_install.cohort, 'user') END),
+       machine_class = COALESCE(EXCLUDED.machine_class, analytics_install.machine_class),
+       window_mode   = COALESCE(EXCLUDED.window_mode, analytics_install.window_mode),
        quota_day     = $2,
        quota_n       = (CASE WHEN analytics_install.quota_day = $2
                              THEN analytics_install.quota_n ELSE 0 END) + $5
  WHERE analytics_install.quota_day <> $2 OR analytics_install.quota_n < $6
-RETURNING first_seen_day, quota_n, cohort`
+RETURNING first_seen_day, quota_n, cohort, machine_class, window_mode`
 
 interface InstallRow {
   first_seen_day: string
   quota_n: number
   cohort: string | null
+  machine_class: string | null
+  window_mode: string | null
 }
 
 export interface InstallFacts {
@@ -221,6 +244,9 @@ export interface InstallFacts {
   upgraded: boolean
   /** Which side of the split every counter this batch produces is keyed on. */
   cohort: UsageCohort
+  /** The perf cube's two setup dims, RESOLVED (JOS-372): this batch's snapshot if it carried
+   *  one, else whatever the install row was already holding, else `unknown`. */
+  perf: PerfInstallDims
 }
 
 /**
@@ -270,6 +296,9 @@ async function touchInstall(
   prior: string | null
 ): Promise<InstallFacts | null> {
   const events = batch.events.length
+  // NULL when this batch carried no `setupSnapshot`, which is most of them — the UPSERT's
+  // `COALESCE` then keeps whatever the install row already knows about this box.
+  const stated = perfDimsFromEvents(batch.events)
   const rows = await withRetry('install', () =>
     query<InstallRow>(INSTALL_SQL, [
       batch.env.analyticsId,
@@ -278,7 +307,9 @@ async function touchInstall(
       batch.env.channel,
       events,
       config.maxEventsPerIdPerDay,
-      cohortForChannel(batch.env.channel)
+      cohortForChannel(batch.env.channel),
+      stated?.machineClass ?? null,
+      stated?.windowMode ?? null
     ])
   )
   const row = rows[0]
@@ -291,7 +322,10 @@ async function touchInstall(
     // changed build", and a rollback is the version of that fact most worth seeing. `prior ===
     // null` is a first-ever batch, which is a new install and not a change.
     upgraded: prior !== null && prior !== batch.env.appVersion,
-    cohort: cohortOf(row.cohort)
+    cohort: cohortOf(row.cohort),
+    // The POST-UPDATE row, so this is the same answer the statement just committed — the
+    // `cohort` argument above, applied to the two dims beside it.
+    perf: perfDimsOf(row.machine_class, row.window_mode)
   }
 }
 
@@ -351,6 +385,19 @@ const ERROR_TAIL =
   ' exemplar = COALESCE(error_report.exemplar, EXCLUDED.exemplar)'
 
 /**
+ * THE PERF CUBE (JOS-372). Additive like every counter here, and keyed on all five dims plus the
+ * day and the cohort — the whole row IS the primary key, which is what makes the `ON CONFLICT`
+ * target legal and what stops one day's fullscreen rows colliding with its windowed
+ * ones. `src/shared/telemetryPerfCube.ts` holds the vocabulary and the cardinality argument.
+ */
+const PERF_HEAD =
+  'INSERT INTO perf_daily (day, cohort, window_mode, machine_class, locked,' +
+  ' stall_bucket, tail_bucket, n) VALUES '
+const PERF_TAIL =
+  ' ON CONFLICT (day, cohort, window_mode, machine_class, locked, stall_bucket, tail_bucket)' +
+  ' DO UPDATE SET n = perf_daily.n + EXCLUDED.n'
+
+/**
  * Every counter for this batch, in ONE transaction so a batch is counted completely or not at
  * all — a half-applied batch would put a funnel step in the table with no session beside it and
  * quietly bend a conversion rate.
@@ -363,7 +410,15 @@ async function writeCounters(day: string, cohort: UsageCohort, roll: RollupResul
   const counterChunks = chunk<UsageCounter>(roll.counters, UPSERT_CHUNK)
   const funnelChunks = chunk<FunnelCounter>(roll.funnels, UPSERT_CHUNK)
   const errorChunks = chunk<ErrorReportRow>(roll.errors, UPSERT_CHUNK)
-  if (counterChunks.length === 0 && funnelChunks.length === 0 && errorChunks.length === 0) return
+  const perfChunks = chunk<PerfCubeRow>(roll.perf, UPSERT_CHUNK)
+  if (
+    counterChunks.length === 0 &&
+    funnelChunks.length === 0 &&
+    errorChunks.length === 0 &&
+    perfChunks.length === 0
+  ) {
+    return
+  }
   await withRetry('counters', () =>
     transaction(async (c) => {
       for (const rows of counterChunks) {
@@ -391,6 +446,16 @@ async function writeCounters(day: string, cohort: UsageCohort, roll: RollupResul
           params.push(r.appVersion, r.fingerprint, r.n, JSON.stringify(r.exemplar))
         }
         await c.query(`${ERROR_HEAD}${tuples(rows.length, 4, SHARED_PARAMS)}${ERROR_TAIL}`, params)
+      }
+      // …and the cube, in the SAME transaction for the same reason: its rows are a slice of the
+      // very `liveStallP95` histogram the counters above carry, so a batch that landed one and
+      // not the other would make the panel's cross-tab disagree with its own fleet-wide totals.
+      for (const rows of perfChunks) {
+        const params: unknown[] = [day, cohort]
+        for (const r of rows) {
+          params.push(r.windowMode, r.machineClass, r.locked, r.stallBucket, r.tailBucket, r.n)
+        }
+        await c.query(`${PERF_HEAD}${tuples(rows.length, 6, SHARED_PARAMS)}${PERF_TAIL}`, params)
       }
     })
   )
@@ -475,6 +540,9 @@ async function accept(batch: TelemetryBatch, now: number): Promise<HttpResult> {
     events: batch.events.length,
     counters: roll.counters.length,
     funnels: roll.funnels.length,
+    // A COUNT OF CUBE ROWS, never their dims: a machine class plus a timestamp in a log line is a
+    // narrower description of one install than this log is allowed to carry.
+    perf: roll.perf.length,
     // A COUNT OF ISSUES, never a fingerprint: a fingerprint plus a timestamp in a log line is
     // a join key back to one install's crash, which is the thing this log does not carry.
     errors: roll.errors.length,

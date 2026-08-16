@@ -81,6 +81,8 @@ import {
   type ReportStatus,
   type Severity,
 } from '../src/shared/feedback'
+import { formatPerfBlock } from '../src/shared/feedbackPerf'
+import { parsePerf } from '../src/main/triage/rows'
 import { sanitizeMultiline, sanitizeOneLine } from '../src/shared/sanitizeText'
 
 /**
@@ -281,6 +283,12 @@ async function cmdShow(ctx: Ctx): Promise<void> {
   const row = await getReport(c, reportId)
   if (!row) throw new Error(`no such report: ${reportId}`)
   console.log(JSON.stringify(row, sanitizingReplacer, 2))
+
+  // The perf timeline (JOS-369), printed as a table rather than left inside the `env_json` string
+  // the dump above escapes into one unreadable line. Same renderer as the dialog's preview and the
+  // triage panel, so what the owner reads is what the reporter saw. Silent when there is none.
+  const perf = parsePerf(row.env_json)
+  if (perf) console.log(`\n${formatPerfBlock(perf)}`)
 
   // BOTH attachments, downloaded and described by the store (JOS-296). The verdicts print
   // LOUDLY and only when there are any — both note builders are empty for an honest client,

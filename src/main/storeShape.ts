@@ -10,6 +10,7 @@ import type { CursorRingPrefs, OverlayAutoHidePrefs } from '../shared/presencePr
 import type { OverlaySnapPrefs } from '../shared/overlaySnap'
 import type { TelemetryPrefs } from '../shared/telemetry'
 import type { PerfHudPrefs } from '../shared/perf'
+import type { ProcessPriorityPrefs } from '../shared/processPriority'
 import type { GraphicsPrefs } from '../shared/graphicsPrefs'
 import type { BuffTrustPrefs } from '../shared/buffTrust'
 import type { RespawnPrefs } from '../shared/respawn'
@@ -147,6 +148,9 @@ export interface StoreShape {
    * `storeOverlaySnap.ts` because store.ts is at the 400-code-line ceiling.
    */
   overlaySnap?: OverlaySnapPrefs
+  // `eqExclusiveNoticeDismissedVersion` (JOS-368) LIVED HERE and was removed by JOS-375 with the
+  // note it remembered — the game's Fullscreen setting is a borderless window on this client, so
+  // the advice could never be true. Migration 12 → 13 deletes the key from any store that has it.
   /**
    * Usage-analytics prefs (schema migration 5→6; docs/plans/usage-analytics.md). Opt-OUT
    * (`enabled:true`) but `noticeShown:false` — the network gate requires BOTH — and no
@@ -158,6 +162,14 @@ export interface StoreShape {
    * default — an enabled HUD is the only thing that creates the metrics poll and the lag probe.
    */
   perfHud?: PerfHudPrefs
+  /**
+   * "Yield CPU to the game" (schema migration 11→12; JOS-366, shared/processPriority.ts). ON by
+   * default, and a MIGRATION rather than the additive-optional carve-out precisely because the
+   * default is on: every reader defaults to `true` anyway, but a v12 store is a promise that the
+   * key is present and complete, which is what lets a future step reason about whether a stored
+   * `false` was a person's decision or yesterday's default written down (the 8→9 / 10→11 lesson).
+   */
+  processPriority?: ProcessPriorityPrefs
   /**
    * Graphics compatibility (schema migrations 9→10 and 10→11; JOS-40, JOS-31). Both switches
    * default to 'auto' — see shared/graphicsPrefs.ts for why a compatibility switch that ships ON

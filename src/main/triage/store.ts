@@ -497,7 +497,7 @@ export {
   USAGE_ROW_LIMIT, INSTALL_ROW_LIMIT, OWNER_ROW_LIMIT,
   // reads
   readUsageDaily, readUsageFunnelDaily, readAnalyticsInstalls, readAnalyticsInstall,
-  readReportVersions, readErrorReports, readOwnerInstalls,
+  readReportVersions, readErrorReports, readOwnerInstalls, readPerfDaily,
   // writes
   setInstallCohort, deleteAnalyticsInstall, setTelemetryAccepting,
 } from './usageStore'

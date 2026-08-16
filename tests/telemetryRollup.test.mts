@@ -129,6 +129,47 @@ test('a setup snapshot becomes one row per FIELD, each dim a bucket index or an 
   assert.equal(c.get(`${USAGE_METRICS.setupAutoHide} off`), 1)
   assert.equal(c.get(`${USAGE_METRICS.setupVoice} kokoro`), 1)
   assert.equal(c.get(`${USAGE_METRICS.setupPacks} ${DIM_NONE}`), 4)
+  // A client that predates the machine class writes NO machine rows at all — not zero-index ones.
+  // Bucket 0 is a real bucket (fewer than two cores, no display), so folding an absent field into
+  // it would invent a population of impossible machines out of old clients.
+  assert.equal(c.get(`${USAGE_METRICS.setupCpu} 0`), undefined)
+  assert.equal(c.get(`${USAGE_METRICS.setupGpuVendor} unknown`), undefined)
+  assert.equal(c.get(`${USAGE_METRICS.setupSafeMode} off`), undefined)
+})
+
+test('THE MACHINE CLASS folds to one row per field — bucket index or enum member (JOS-364)', () => {
+  const c = counters(
+    batchOf([
+      {
+        t: 'setupSnapshot',
+        charCountBucket: 2,
+        logSizeBucket: 3,
+        alertCountBucket: 1,
+        overlaysEnabled: ['fight'],
+        cursorRing: true,
+        autoHide: false,
+        voiceEngine: 'off',
+        soundPackCount: 1,
+        updateChannel: 'main',
+        cpuCountBucket: 4,
+        totalMemBucket: 6,
+        gpuVendor: 'nvidia',
+        gpuCompositing: 'software',
+        safeMode: true,
+        displayCountBucket: 2,
+        primaryScaleBucket: 3,
+        eqWindowMode: 'fullscreen'
+      }
+    ])
+  )
+  assert.equal(c.get(`${USAGE_METRICS.setupCpu} 4`), 1)
+  assert.equal(c.get(`${USAGE_METRICS.setupMem} 6`), 1)
+  assert.equal(c.get(`${USAGE_METRICS.setupGpuVendor} nvidia`), 1)
+  assert.equal(c.get(`${USAGE_METRICS.setupCompositing} software`), 1)
+  assert.equal(c.get(`${USAGE_METRICS.setupSafeMode} on`), 1)
+  assert.equal(c.get(`${USAGE_METRICS.setupDisplays} 2`), 1)
+  assert.equal(c.get(`${USAGE_METRICS.setupScale} 3`), 1)
+  assert.equal(c.get(`${USAGE_METRICS.setupEqWindowMode} fullscreen`), 1)
 })
 
 const HEALTH: TelemetryEvent = {
@@ -393,22 +434,37 @@ test('the cohort is part of the counter KEY, in the handler and in schema.sql al
   assert.match(src, /writeCounters\(day, facts\.cohort, roll\)/)
 })
 
-test('THE FOUR TABLES, AND NO FIFTH: the handler writes exactly the plan’s storage shape', () => {
+test('THE FIVE TABLES, AND NO SIXTH: the handler writes exactly the plan’s storage shape', () => {
   // THIS TEST USED TO SAY "THE THREE TABLES, AND NO FOURTH", and JOS-100 added the fourth
   // deliberately rather than sneaking a row into `usage_daily`. The rename is the honest edit:
   // `error_report` keeps something that is not a bare count (an EXEMPLAR), which no counter
   // table can, and pretending otherwise by widening `dim` would have hidden that fact.
   //
+  // JOS-372 ADDED THE FIFTH, on the same terms and for the same kind of reason: `perf_daily`
+  // keeps a CROSS-TAB, which a table keyed on one `dim` structurally cannot, and widening `dim`
+  // into a five-part string would have been the same lie in the other direction. Every dim of it
+  // is a closed enum or a bucket index (src/shared/telemetryPerfCube.ts), and its rows are the
+  // same session reports `liveStallP95` already counts.
+  //
   // T6 IS STILL INTACT AND THAT IS WHAT THE ASSERTIONS BELOW CHECK. T6 refused a per-user event
-  // TRAIL; `error_report` is keyed on (day, cohort, version, FINGERPRINT) with no id in it at
-  // all, so a hundred installs hitting one bug write ONE row. There is still nothing here that
-  // could reconstruct what one install did.
+  // TRAIL; `error_report` is keyed on (day, cohort, version, FINGERPRINT) and `perf_daily` on
+  // seven dims with no id among them, so a hundred installs on the same class of box write ONE
+  // row. There is still nothing here that could reconstruct what one install did.
   const src = readFileSync(join(ROOT, 'infra', 'lambda', 'telemetry.ts'), 'utf8')
   const tables = [...src.matchAll(/INSERT INTO (\w+)/g)].map((m) => m[1])
   assert.deepEqual(
     [...new Set(tables)].sort(),
-    ['analytics_install', 'error_report', 'usage_daily', 'usage_funnel_daily']
+    ['analytics_install', 'error_report', 'perf_daily', 'usage_daily', 'usage_funnel_daily']
   )
+  // The cube's CONFLICT TARGET and the schema's PRIMARY KEY have to agree, or the UPSERT
+  // resolves against nothing (42P10, on a cluster, weeks later) — the pin the cohort test above
+  // makes for the two counter tables, made for the fifth.
+  const cubeKey = 'day, cohort, window_mode, machine_class, locked, stall_bucket, tail_bucket'
+  assert.ok(src.includes(`ON CONFLICT (${cubeKey})`))
+  assert.ok(readFileSync(join(ROOT, 'infra', 'schema.sql'), 'utf8').includes(`PRIMARY KEY (${cubeKey})`))
+  // The cube carries no id either, and the two install-level dims it needs live on the row that
+  // already exists rather than in a table of their own.
+  assert.equal(/perf_daily[^;]*analytics_id/.test(src), false, 'no id may reach the perf cube')
   // NO RAW EVENT STORE (T6): nothing inserts a per-event row, and no id is ever logged.
   assert.equal(/INSERT INTO (telemetry_event|usage_event|raw_)/.test(src), false)
   assert.equal(/log\(\{[^}]*analyticsId/.test(src), false)

@@ -233,6 +233,74 @@ export function StartupSection({ data }: { data: TriageAnalyticsData }): JSX.Ele
   )
 }
 
+/**
+ * THE LIVE SESSION (JOS-367) — Startup asks how launches went; this asks what happened for the
+ * hours afterwards, and it is the first readout in this tab that can answer the freeze reports.
+ *
+ * THE TWO RATES ARE THE SECTION, which is why they are on one line and in that order. Both count
+ * per report, so the same interval is under both: late moments a second idle thread ALSO saw are
+ * the machine (paging, a driver reset, a disk that stopped answering), and the gap between them
+ * is us. A dash on the machine rate means no session ran a second clock — not a clean bill.
+ */
+export function LiveSection({ data }: { data: TriageAnalyticsData }): JSX.Element {
+  const l = data.live
+  const rate = (v: number | null): string => (v === null ? '-' : v.toFixed(2))
+  return (
+    <Section title="Live sessions - how smoothly it ran">
+      <Typography variant="caption" color="text.secondary">
+        Two clocks, all session: the main thread&apos;s own 250 ms timer and the same timer on a
+        worker thread that does nothing else. A window BOTH went late in is the machine stalling -
+        paging, a driver reset, a disk - and the app was a victim beside the game; a window only
+        main saw is ours. Compare machine/report against late/report below: the gap is the part
+        this app is answerable for. Percentiles are bucket ranges, not exact figures. A dash is
+        never a clean bill - it means nothing reported.
+      </Typography>
+      {l.reports === 0 ? (
+        <Typography variant="caption" color="text.secondary" data-testid="analytics-live-empty">
+          No session has reported a stall reading yet.
+        </Typography>
+      ) : (
+        <Stack spacing={0.25} sx={{ fontVariantNumeric: 'tabular-nums' }}>
+          <Typography variant="caption" data-testid="analytics-live-stalls">
+            {formatNum(l.reports)} reports · {formatNum(l.samples)} probe ticks · lateness p50{' '}
+            {l.p50StallLabel ?? '-'} · p95 {l.p95StallLabel ?? '-'} · worst tick p95{' '}
+            {l.maxStallLabel ?? '-'}
+          </Typography>
+          <Typography variant="caption" data-testid="analytics-live-verdict">
+            {formatNum(l.over100)} ticks over 100 ms · {formatNum(l.over500)} over 500 ms ·{' '}
+            {rate(l.latePerReport)} late/report - of which {formatNum(l.coincident)} were seen by
+            BOTH clocks over {formatNum(l.verdicts)} reports that could answer ·{' '}
+            {rate(l.machinePerReport)} machine/report
+          </Typography>
+          <Typography variant="caption" data-testid="analytics-live-tail">
+            {l.tailReports === 0
+              ? 'No session has reported a tail read yet.'
+              : `${formatNum(l.tailReads)} tail reads over ${formatNum(l.tailReports)} reports · ` +
+                `${formatNum(l.tailReopens)} reopens · read p95 ${l.p95TailLabel ?? '-'} · worst ` +
+                `${l.maxTailLabel ?? '-'} · ${formatNum(l.tailOver100)} over 100 ms · ` +
+                `${formatNum(l.tailOver500)} over 500 ms`}
+          </Typography>
+        </Stack>
+      )}
+      <Stack spacing={0.5}>
+        <Typography variant="caption" color="text.secondary">
+          The fattest single read of each interval, and the size of the logs being tailed - the
+          game appends to that same file from its render thread, so this is the cost we could be
+          charging it.
+        </Typography>
+        <MixList rows={l.tailDeltas} empty="No session has reported a read yet." />
+        <MixList rows={l.tailLogSizes} empty="No session has reported a log size yet." />
+        <Typography variant="caption" color="text.secondary">
+          …and what was switched on while all of it was measured. A LOCKED overlay is the one to
+          watch: it arms a process-wide mouse hook, so every system mouse event waits on our
+          message loop.
+        </Typography>
+        <MixList rows={l.state} empty="No session has reported its state yet." />
+      </Stack>
+    </Section>
+  )
+}
+
 export function VersionsSection({ data }: { data: TriageAnalyticsData }): JSX.Element {
   return (
     <Section title="Versions">

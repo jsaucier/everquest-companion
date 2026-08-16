@@ -79,12 +79,19 @@ function inventoryMtime(path: string): number | null {
   }
 }
 
-/** Header context for the dialog. Cheap enough to call on every open; nothing here is cached. */
-export function feedbackContext(): FeedbackContext {
+/**
+ * Header context for the dialog. Cheap enough to call on every open; nothing here is cached.
+ *
+ * ASYNC SINCE JOS-369, because `feedbackEnv()` now folds the perf timeline and one of its eleven
+ * state fields is a promise to the GPU process (capped at a second, memoized after the first).
+ * The dialog's preview and the payload therefore come out of the SAME assembly — the alternative
+ * was a second call the two paths could answer differently.
+ */
+export async function feedbackContext(): Promise<FeedbackContext> {
   const dump = activeInventoryPath()
   const updatedAt = dump === null ? null : inventoryMtime(dump.path)
   return {
-    env: feedbackEnv(),
+    env: await feedbackEnv(),
     endpointConfigured: feedbackEndpointConfigured(),
     queued: queuedCount(),
     logAvailable: activeLog() !== null,

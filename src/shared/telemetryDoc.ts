@@ -26,10 +26,13 @@ import {
   ALERT_COUNT_EDGES,
   CHAR_COUNT_EDGES,
   COLD_START_MS_EDGES,
+  CPU_COUNT_EDGES,
+  DISPLAY_COUNT_EDGES,
   LOG_SIZE_BYTES_EDGES,
   MAX_TZ_OFFSET_HOURS,
   MIN_TZ_OFFSET_HOURS,
   NEW_BYTES_EDGES,
+  PRIMARY_SCALE_EDGES,
   SESSION_AGE_MS_EDGES,
   STUTTER_MS_EDGES,
   TELEMETRY_API_VERSION,
@@ -37,9 +40,11 @@ import {
   TELEMETRY_EVENT_KINDS,
   TELEMETRY_FUNNELS,
   TELEMETRY_FUNNEL_STEPS,
+  TOTAL_MEM_GB_EDGES,
   bucketRange,
   type TelemetryEventKind
 } from './telemetry'
+import { FREE_MEM_GB_EDGES, LIVE_STALL_MS_EDGES, WORKING_SET_MB_EDGES } from './telemetryLive'
 import { TELEMETRY_DOC_EVENTS, type DocEvent, type DocField } from './telemetryDocEvents'
 
 export { TELEMETRY_DOC_EVENTS }
@@ -51,7 +56,12 @@ export interface DocBucket {
   /** The field name the bucket index appears under. */
   field: string
   edges: readonly number[]
-  format: 'count' | 'ms' | 'bytes'
+  /** `gb` and `percent` arrived with JOS-364's machine class: memory is declared in whole
+   *  gibibytes (a byte ladder would print `4 GB – 8 GB` from numbers nobody wrote) and a display
+   *  scale is a percentage, which no existing format spells. `mb` arrived with JOS-367's working
+   *  set for the same reason in the other direction — that ladder is declared in mebibytes, and
+   *  `gb` would print `0 GB` for its first three rungs. */
+  format: 'count' | 'ms' | 'bytes' | 'gb' | 'mb' | 'percent'
   what: string
 }
 
@@ -108,6 +118,60 @@ export const TELEMETRY_DOC_BUCKETS: readonly DocBucket[] = [
     edges: STUTTER_MS_EDGES,
     format: 'ms',
     what: 'The same, at the worse end (one beat in twenty).'
+  },
+  // JOS-364's machine class. Each of these is a range for the same reason every row above is one:
+  // the exact figures together would describe one machine, and the questions they exist to answer
+  // ("do the freezes cluster on four-core boxes, or on scaled 4K displays") only need the range.
+  {
+    field: 'cpuCountBucket',
+    edges: CPU_COUNT_EDGES,
+    format: 'count',
+    what: 'How many processor cores the machine has.'
+  },
+  {
+    field: 'totalMemBucket',
+    edges: TOTAL_MEM_GB_EDGES,
+    format: 'gb',
+    what: 'How much memory the machine has.'
+  },
+  {
+    field: 'displayCountBucket',
+    edges: DISPLAY_COUNT_EDGES,
+    format: 'count',
+    what: 'How many monitors are attached.'
+  },
+  {
+    field: 'primaryScaleBucket',
+    edges: PRIMARY_SCALE_EDGES,
+    format: 'percent',
+    what: 'The main monitor’s display scaling.'
+  },
+  // JOS-367's live-session riders. The stall ladder is printed ONCE and named for the four fields
+  // that share it (two clock readings, two read-latency readings): four identical tables would be
+  // four chances for one of them to be read as a different ladder than it is.
+  {
+    field: 'live.p95Bucket · live.maxBucket · tail.p95Bucket · tail.maxBucket',
+    edges: LIVE_STALL_MS_EDGES,
+    format: 'ms',
+    what: 'How late the app’s own timers ran, and how long its reads of the log took.'
+  },
+  {
+    field: 'tail.deltaBytesBucket',
+    edges: NEW_BYTES_EDGES,
+    format: 'bytes',
+    what: 'The biggest single chunk of new log read at once.'
+  },
+  {
+    field: 'state.freeMemBucket',
+    edges: FREE_MEM_GB_EDGES,
+    format: 'gb',
+    what: 'How much free memory the computer had.'
+  },
+  {
+    field: 'state.workingSetBucket',
+    edges: WORKING_SET_MB_EDGES,
+    format: 'mb',
+    what: 'How much memory this app was using.'
   }
 ]
 
@@ -125,6 +189,9 @@ function fmtBytes(n: number): string {
 function fmtValue(n: number, format: DocBucket['format']): string {
   if (format === 'bytes') return fmtBytes(n)
   if (format === 'ms') return n >= 1000 ? `${String(n / 1000)} s` : `${String(n)} ms`
+  if (format === 'gb') return `${String(n)} GB`
+  if (format === 'mb') return `${String(n)} MB`
+  if (format === 'percent') return `${String(n)}%`
   return String(n)
 }
 

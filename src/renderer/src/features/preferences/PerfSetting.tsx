@@ -28,6 +28,7 @@ import {
   type StartupPhase,
   type StartupProfile
 } from '@shared/perf'
+import type { ProcessPriorityPrefs } from '@shared/processPriority'
 import { formatDateTime } from '../../lib/formatDate'
 import { recordPref, usePrefsSeed } from './prefsHydration'
 import type { PrefSection } from './PreferencesView'
@@ -63,6 +64,61 @@ function usePerfHudPrefs(): [PerfHudPrefs, (enabled: boolean) => void] {
   }, [])
 
   return [prefs, setEnabled]
+}
+
+/** The yield switch, seeded and written back exactly like the one above it — main's reply is
+ *  authoritative (it is what was actually stored AND what the running processes were just set to),
+ *  the local set is optimistic so the toggle never lags an IPC round trip. */
+function useProcessPriority(): [ProcessPriorityPrefs, (enabled: boolean) => void] {
+  const [prefs, setPrefs] = useState<ProcessPriorityPrefs>(usePrefsSeed().processPriority)
+
+  const setYield = useCallback((enabled: boolean) => {
+    setPrefs({ yieldToGame: enabled })
+    void window.eq.setYieldToGame(enabled).then((stored) => {
+      setPrefs(stored)
+      recordPref('processPriority', stored)
+    })
+  }, [])
+
+  return [prefs, setYield]
+}
+
+/**
+ * "Yield CPU to the game" (JOS-366) — the one control in this section that changes how the app
+ * BEHAVES rather than what it shows, which is why it sits above the HUD.
+ *
+ * STATE, NEVER PROCESS: the caption says what the machine does, not how it is done. It does not
+ * mention priority classes, which processes are touched, or which are deliberately not — all of
+ * that is in src/main/processPriority.ts, where it belongs. The one piece of jargon that survives
+ * is in the switch's own label, in brackets, because "below-normal priority" is the exact phrase
+ * a player will read in Task Manager if they go looking, and matching it is what makes the
+ * setting checkable.
+ */
+function YieldCpuSetting(): JSX.Element {
+  const [prefs, setYield] = useProcessPriority()
+
+  return (
+    <Stack spacing={0.5} data-testid="pref-yield">
+      <FormControlLabel
+        control={
+          <Switch
+            size="small"
+            data-testid="pref-yield-enabled"
+            checked={prefs.yieldToGame}
+            onChange={(e) => setYield(e.target.checked)}
+          />
+        }
+        label={
+          <Typography variant="body2">Yield CPU to the game (below-normal priority)</Typography>
+        }
+      />
+      <Typography variant="caption" color="text.secondary">
+        {prefs.yieldToGame
+          ? 'EverQuest gets the processor first whenever this app and the game want it at the same moment.'
+          : 'Off. This app and EverQuest compete for the processor on equal terms.'}
+      </Typography>
+    </Stack>
+  )
 }
 
 /** One phase's row: its name, a bar proportional to its share of the launch, and its duration. */
@@ -232,6 +288,13 @@ export function perfSection(): PrefSection {
     label: 'Performance',
     icon: <SpeedIcon fontSize="small" />,
     items: [
+      {
+        id: 'yield-cpu',
+        label: 'Game priority',
+        keywords:
+          'priority cpu processor yield game foreground below normal lag stutter freeze hitch fps performance smooth background scheduling',
+        content: <YieldCpuSetting />
+      },
       {
         id: 'perf-hud',
         label: 'Performance HUD',
