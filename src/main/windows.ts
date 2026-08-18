@@ -27,11 +27,17 @@ import { IPC } from '../shared/ipc'
 import { installBackButton } from './appBack'
 import { E2E } from './e2e'
 import { logError } from './errorLog'
-import { OVERLAY_MIN_SIZE, OVERLAY_TITLE, overlayDefaultSize } from './overlayLayout'
+import { OVERLAY_MIN_SIZE, OVERLAY_TITLE, isStripKind, overlayDefaultSize } from './overlayLayout'
 // WHERE AN OVERLAY IS, HOW TALL IT IS, AND WHICH OF THAT IS WRITTEN DOWN (JOS-187 + JOS-386). Its
 // own module for the reason overlaySnapDrag.ts and OVERLAY_TITLE are: this file is at the
 // 400-code-line ceiling, and a persistence policy over pure geometry was never its subject.
-import { RECT_KEYS, applyOverlayBounds, installOverlayBounds, markAppliedBounds } from './overlayBounds'
+import {
+  RECT_KEYS,
+  applyOverlayBounds,
+  installOverlayBounds,
+  markAppliedBounds,
+  overlayAppliedBounds
+} from './overlayBounds'
 // THE CURSOR WATCHDOG, and it is two modules for the reason this one is (JOS-381): the DECISION is
 // electron-free and node-tested (pointerWatch.ts, which also states the whole performance
 // contract), and overlayPointerWatch.ts is the half that reads `screen` and pushes the leave. It
@@ -46,7 +52,7 @@ import { installOverlaySnap } from './overlaySnapDrag'
 // consulted here any more: both questions this file asks of it — where an overlay opens, where the
 // main window opens — are decided in windowPlacement.ts over the pure geometry in displayFit.ts,
 // so the policy is testable and both windows can never drift into two answers.
-import { mainWindowBounds, overlayFittedBounds } from './windowPlacement'
+import { mainWindowBounds } from './windowPlacement'
 import { overlayMouseForward, windowsMayShow } from './replayGate'
 import { allowedExternalUrl, isInternalPageUrl } from './security'
 // WHAT THE X MEANS (JOS-139). One predicate, asked FIRST by the main window's `close` handler
@@ -84,17 +90,13 @@ const overlayWindows = Object.fromEntries(OVERLAY_KINDS.map((k) => [k, null])) a
   BrowserWindow | null
 >
 
-/**
- * THE STRIP KINDS: the three overlays whose resting state is an EMPTY window — the celebration
- * toast, the alert banner (JOS-378) and the con card (JOS-383). Every other kind is a panel that
- * fills its window.
- *
- * The distinction earns a name because opacity means something different for them (below) and
- * because none pays for a mouse-forwarding hook (replayGate.ts `overlayForwardsMouse`).
- */
-function isStripKind(kind: OverlayKind): boolean {
-  return kind === 'toast' || kind === 'alertBanner' || kind === 'conCard'
-}
+// THE STRIP KINDS — the three overlays whose resting state is an EMPTY window (the celebration
+// toast, the alert banner — JOS-378 — and the con card — JOS-383); every other kind is a panel that
+// fills its window. The distinction earns a name because opacity means something different for
+// them (below), because none pays for a mouse-forwarding hook (replayGate.ts
+// `overlayForwardsMouse`), and — since JOS-406 — because a strip's WINDOW scales with its text
+// while a panel's does not. `isStripKind` is imported from overlayLayout.ts, which is where that
+// last one made it a geometry fact rather than a local convenience.
 
 /**
  * Which LIVE strip windows were built OPAQUE (the JOS-40 compatibility switch)?
@@ -670,7 +672,7 @@ const sameRect = (a: Electron.Rectangle, b: ScreenRect): boolean =>
  * overlays never open exactly on top of each other.
  */
 function overlayPlacement(kind: OverlayKind) {
-  const b = overlayFittedBounds(kind, getOverlayConfig(kind).bounds)
+  const b = overlayAppliedBounds(kind)
   if (!b) return overlayDefaultSize(kind) // no display info (headless/e2e) — size only
   markAppliedBounds(kind, b)
   return b
@@ -688,7 +690,7 @@ export function reconcileOverlayDisplays(): void {
   for (const kind of OVERLAY_KINDS) {
     const w = overlayWindows[kind]
     if (!w || w.isDestroyed()) continue
-    const b = overlayFittedBounds(kind, getOverlayConfig(kind).bounds)
+    const b = overlayAppliedBounds(kind)
     if (b) applyOverlayBounds(kind, b)
   }
 }
@@ -720,8 +722,13 @@ export function createOverlayWindow(kind: OverlayKind): void {
     // overlay geometry — and beside the argument for it — in overlayLayout.ts.
     minWidth: OVERLAY_MIN_SIZE.width,
     minHeight: OVERLAY_MIN_SIZE.height,
-    maxWidth: 720,
-    maxHeight: 820,
+    // THE CEILING IS THE SCREEN FOR A STRIP (JOS-406). 720x820 is a sane ceiling for a PANEL — a
+    // meter dragged past it is a window nobody wanted — but a strip's window is its card times the
+    // text scale, and the con card's 530 at 2.0 is 1060: the cap would silently refuse the second
+    // half of a text size the app itself offers. The work-area clamp in `scaledStripBounds` is the
+    // real ceiling for these three, and it is the honest one — it knows how wide the screen is.
+    maxWidth: isStripKind(kind) ? undefined : 720,
+    maxHeight: isStripKind(kind) ? undefined : 820,
     // The toast strip is a fixed-width card LANE, not a resizable panel: the card sizes itself
     // and everything around it is transparent, so resizing that window would only change how
     // much invisible nothing surrounds the card. It still MOVES, and its bounds still persist —

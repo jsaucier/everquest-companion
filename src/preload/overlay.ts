@@ -13,6 +13,8 @@ import type {
   OverlayKind
 } from '../shared/types'
 import { OVERLAY_KINDS } from '../shared/types'
+import type { OverlayTextSizePrefs } from '../shared/overlayTextScale'
+import type { OverlayBgAlphaPrefs } from '../shared/overlayBgAlpha'
 import type { ScopeSelection } from '../shared/scopeSelection'
 import type { BuffAllowPrefs } from '../shared/buffAllow'
 import type { ToastPayload } from '../shared/toast'
@@ -105,6 +107,45 @@ const overlayApi = {
    */
   setConfig: (patch: Partial<OverlayConfig>): Promise<OverlayConfig> =>
     ipcRenderer.invoke(IPC.overlaySetConfig, KIND, patch),
+  /**
+   * THE OVERLAYS' TEXT SIZE, which is not this window's config (JOS-405).
+   *
+   * `{ shared, independent }` is one preference for all twelve windows, so it is read here rather
+   * than off `getConfig()` — and a window resolves what IT draws at by handing both this and its
+   * own `config.textScale` to `effectiveOverlayTextScale`. While the switch is off the per-kind
+   * field is not consulted at all, which is exactly how it survives being synced.
+   *
+   * THE SAME TWO NAMES AS THE APP BRIDGE (preload/overlayTextSize.ts), by the fight-selection
+   * trio's argument: one signal, one name, or the windows disagree about it.
+   */
+  getTextSize: (): Promise<OverlayTextSizePrefs> => ipcRenderer.invoke(IPC.overlayTextSizeGet),
+  /**
+   * Main's push, and the half without which a PINNED overlay could not follow anything: a locked
+   * window shows no chrome, so it has no stepper of its own and every change it obeys was made
+   * somewhere else — Preferences, or another window's A+.
+   */
+  onTextSize: (cb: (p: OverlayTextSizePrefs) => void): (() => void) => {
+    const listener = (_e: unknown, p: OverlayTextSizePrefs): void => cb(p)
+    ipcRenderer.on(IPC.onOverlayTextSize, listener)
+    return () => ipcRenderer.removeListener(IPC.onOverlayTextSize, listener)
+  },
+  /**
+   * THE OVERLAYS' BACKGROUND TRANSPARENCY, which is not this window's config either (JOS-407).
+   *
+   * The two members above, one field over and under the same two names on the app bridge
+   * (preload/windows.ts): `{ shared, independent }` is one preference for all twelve windows, and a
+   * window resolves what IT paints with by handing this and its own `config.bgAlpha` to
+   * `effectiveOverlayBgAlpha`. While the switch is off the per-kind field is not consulted at all,
+   * which is exactly how it survives being synced.
+   */
+  getBgAlpha: (): Promise<OverlayBgAlphaPrefs> => ipcRenderer.invoke(IPC.overlayBgAlphaGet),
+  /** Main's push — and, as with the text size, the half without which a PINNED overlay could not
+   *  follow anything: a locked window shows no chrome and has no slider of its own. */
+  onBgAlpha: (cb: (p: OverlayBgAlphaPrefs) => void): (() => void) => {
+    const listener = (_e: unknown, p: OverlayBgAlphaPrefs): void => cb(p)
+    ipcRenderer.on(IPC.onOverlayBgAlpha, listener)
+    return () => ipcRenderer.removeListener(IPC.onOverlayBgAlpha, listener)
+  },
   /** Subscribe to config changes pushed from main; ignores pushes for the other kind. */
   onConfig: (cb: (c: OverlayConfig) => void): (() => void) => {
     const listener = (_e: unknown, payload: { kind: OverlayKind; config: OverlayConfig }): void => {

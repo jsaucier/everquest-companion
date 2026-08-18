@@ -31,12 +31,21 @@
  * in the way and every count this spec asserts is arithmetic this file performed on purpose.
  *
  * THE ARITHMETIC, SPELLED OUT ONCE (count source `both`, the shipped default — `max(dump, log less
- * the turn-ins)`, each witness discounted on its own terms):
+ * the turn-ins)`, each witness discounted on its own terms). The dump is READ at launch, so its
+ * instant precedes everything this spec does and every subtraction below is stamped after it:
  *
- *   after the turn-in   log 0 - 1 turn-in = 0 · dump 1                       -> x1
- *   loot 3 more         log 3 - 1 turn-in = 2 · dump 1                       -> x2
- *   destroy 1           log 3-1 = 2, -1 turn-in = 1 · dump 1-1 = 0           -> x1
+ *   after the turn-in   log 0 - 1 turn-in = 0 · dump 1 - 1 turn-in = 0       -> no row
+ *   loot 3             log 3 - 1 turn-in = 2 · dump 0                        -> x2
+ *   destroy 1           log 3-1 = 2, -1 turn-in = 1 · dump 0                 -> x1
  *   destroy 5 more      log floors at 0 · dump floors at 0                   -> no row
+ *
+ * THE FIRST LINE IS JOS-403, AND IT USED TO READ `x1`. The spec asserted that a turn-in leaves the
+ * dump's copy on the tab, on JOS-141's "a dump owes nothing" — which is true of the turn-ins made
+ * BEFORE the file was written and false of the one this spec CLICKS afterwards. That was the
+ * reporter's second complaint verbatim (v1.4.0, feedback 01M081TPHPGB173YCC4YH7AMZB: the Cleanup tab
+ * kept listing copies he no longer held), and the tab is now empty until the player farms a copy the
+ * turn-in did not eat. The arithmetic is pinned unit-side in tests/skyTurnInAfterDump.test.mts; what
+ * this spec adds is that the whole live path agrees.
  *
  * The last line is the floor doing its job in public: five destroyed where two were held is not
  * -3, and the row simply ends. Both witnesses are discounted, which is why the last step needs the
@@ -297,36 +306,66 @@ async function stepNothingSpareYet(page: Page): Promise<boolean> {
 }
 
 /**
- * STEP 2 — ONE TURN-IN FLIPS IT, and the row states everything the decision needs.
+ * STEP 2 — THE TURN-IN ATE THE DUMP'S COPY (JOS-403), so the tab stays empty.
  *
- * The count does NOT drop to zero with the turn-in, and that is `reconcile`'s dump rule in public:
- * a dump is an observation of what you are holding, written after every turn-in, so it owes no
- * subtraction. The player really is still carrying the skin, which is exactly why this screen
- * exists.
+ * The copy the file vouched for is the copy the player just handed to Animist Kratho. This spec
+ * used to assert the opposite here — one row, x1 — on JOS-141's "a dump is written after every
+ * turn-in, so it owes no subtraction". That holds for the turn-ins made BEFORE the file, and the
+ * one this step CLICKS is stamped after the app read it: reconcile discounts the dump witness by
+ * the turn-ins recorded strictly after its instant, exactly as it already does for destroys.
+ *
+ * Asserted as an ABSENCE THAT SETTLES rather than a bare read, because the empty tab is also what
+ * the previous step saw: the click has to travel the store → the ledger → reconcile before this
+ * means anything, and the Quests tab reading 0/1 is the positive half of the same claim.
  */
-async function stepTurnInMakesItSpare(page: Page): Promise<boolean> {
+async function stepTurnInEatsTheDumpsCopy(page: Page): Promise<boolean> {
   if (!(await reopenTheQuestPanel(page))) return false
   await page.click(RECORD_TURNIN, { timeout: 15_000 })
-  if (!(await openCleanup(page))) return false
-  const listed = await settleCountOf(page, 1)
+  const spent = await settle(() => haveText(page, ITEM), (v) => v === '0/1', { timeoutMs: 20_000 })
   if (
     !check(
-      'RECORDING THE TURN-IN PUTS THE ITEM ON THE TAB — every quest that wants it is now done',
-      listed.length === 1,
-      `${String(listed.length)} rows`
+      'THE TURN-IN SPENDS THE COPY THE DUMP VOUCHED FOR — the quest reads 0/1 with no fresh dump',
+      spent === '0/1',
+      String(spent)
     )
   ) {
     return false
   }
+  if (!(await openCleanup(page))) return false
+  const listed = await settleCountOf(page, null)
   check(
-    '…named, and counted with the tab`s own held count',
-    listed[0].item === ITEM && listed[0].count === 1,
-    `${listed[0].item} x${String(listed[0].count)}`
+    '…so nothing is spare: an item you no longer hold is not on the Cleanup tab',
+    listed.length === 0,
+    listed.map((r) => `${r.item} x${String(r.count)}`).join(', ')
   )
+  return check('…and the tab still wears no count', (await tabLabel(page)) === 'Cleanup', await tabLabel(page))
+}
+
+/**
+ * STEP 3 — THE REFARM PUTS IT BACK, and the row states everything the decision needs.
+ *
+ * Three loots arrive in the tailed log. The dump witness stays at 0 (its one copy is spent), so the
+ * row is the LOG's answer: three looted less the one the turn-in ate. This is the Sky refarm story
+ * on the tab that exists for it — hand it in, farm more, and the spares show up.
+ */
+async function stepRefarmMakesItSpare(page: Page, log: FixtureLog): Promise<boolean> {
+  log.append(`--You have looted 3 ${ITEM} from a spiroc guardian's corpse.--`)
+  const listed = await settleCountOf(page, 2)
+  if (
+    !check(
+      'A LOOT LINE ARRIVING IN THE TAILED LOG PUTS THE ITEM ON THE TAB — every quest that wants it is done',
+      listed.length === 1 && listed[0].count === 2,
+      listed.map((r) => `${r.item} x${String(r.count)}`).join(', ')
+    )
+  ) {
+    return false
+  }
+  check('…named with the tab`s own held count', listed[0].item === ITEM, listed[0].item)
   // MEMBERSHIP AND PLACE SETTLE SEPARATELY, and that is not padding. The row exists the moment the
-  // turn-in lands; where it SITS is a second read (`character:sheet` → the dump → `carryAll`) that
-  // resolves on its own clock, so waiting on the row and then reading the place is a race the row
-  // wins. Each claim waits for itself.
+  // count crosses zero; where it SITS is a second read (`character:sheet` → the dump → `carryAll`)
+  // that resolves on its own clock, so waiting on the row and then reading the place is a race the
+  // row wins. Each claim waits for itself. The place still comes from the DUMP — a file that no
+  // longer vouches for the count can still say which bag slot it was in, and does.
   const placed = await settle(
     () => rows(page),
     (r) => r.length === 1 && r[0].where !== NO_PLACE,
@@ -340,8 +379,8 @@ async function stepTurnInMakesItSpare(page: Page): Promise<boolean> {
       row.turnIns[0].startsWith(`Animist Kratho - Beastlord Test of Azarack (Beastlord) · turned in 1 time · reward: ${REWARD}`),
     row.turnIns.join(' | ')
   )
-  // The other half of the decision. One skin and no wind rune is not another set, so the row says
-  // what it would take rather than arguing to keep something that cannot be handed in yet.
+  // The other half of the decision. Skins and no wind rune is not another set, so the row says what
+  // it would take rather than arguing to keep something that cannot be handed in yet.
   check(
     '…and the decision line states the gap toward running it again',
     row.turnIns[0].endsWith('you hold 1 of the 2 needed for another turn-in'),
@@ -351,7 +390,7 @@ async function stepTurnInMakesItSpare(page: Page): Promise<boolean> {
 }
 
 /**
- * STEP 3 — EVERY NAME ON THE ROW IS THE ITEM CARD'S ANCHOR (the owner's third ask).
+ * STEP 4 — EVERY NAME ON THE ROW IS THE ITEM CARD'S ANCHOR (the owner's third ask).
  *
  * "for quest reward, we need the tooltip on hover on that." Both names — the item and the reward —
  * are the same component now (`ItemNameLink`), so hovering the LAST link on the row is the reward's
@@ -392,26 +431,13 @@ async function stepRewardHovers(page: Page): Promise<void> {
 }
 
 /**
- * STEP 4 — THE LOG SAYS YOU DESTROYED ONE, AND THE COUNT GOES DOWN. Live, with no button.
+ * STEP 5 — THE LOG SAYS YOU DESTROYED ONE, AND THE COUNT GOES DOWN. Live, with no button.
  *
- * Three loots first, so both witnesses have something to lose and the log is not simply agreeing
- * with the dump: the row reads x2 (log 3 less the turn-in, against the dump's 1), and one destroy
- * line takes it to x1 — the log witness by the fold, the dump witness by the discount reconcile
- * applies for destroys stamped after the file was written.
+ * The refarm left the row at x2 (three looted less the turn-in), so there is something for both
+ * witnesses to lose: one destroy line takes it to x1 — the log witness by the fold, the dump
+ * witness by the discount reconcile applies for destroys stamped after the file was written.
  */
 async function stepDestroyLowersIt(page: Page, log: FixtureLog): Promise<boolean> {
-  log.append(`--You have looted 3 ${ITEM} from a spiroc guardian's corpse.--`)
-  const farmed = await settleCountOf(page, 2)
-  if (
-    !check(
-      'a LOOT line arriving in the tailed log raises the count with no reload',
-      farmed.length === 1 && farmed[0].count === 2,
-      farmed.map((r) => `${r.item} x${String(r.count)}`).join(', ')
-    )
-  ) {
-    return false
-  }
-
   log.append(`You successfully destroyed 1 ${ITEM}.`)
   const after = await settleCountOf(page, 1)
   if (
@@ -433,7 +459,7 @@ async function stepDestroyLowersIt(page: Page, log: FixtureLog): Promise<boolean
 }
 
 /**
- * STEP 5 — DESTROY MORE THAN YOU HAVE AND THE ROW ENDS AT ZERO, never below it.
+ * STEP 6 — DESTROY MORE THAN YOU HAVE AND THE ROW ENDS AT ZERO, never below it.
  *
  * Five where two are held. The fold floors per row, so the log witness lands on 0 rather than -3 —
  * which matters because a negative would silently eat the next copy the player farms. The dump
@@ -467,13 +493,14 @@ async function stepFloorEndsTheRow(page: Page, log: FixtureLog): Promise<void> {
 }
 
 /**
- * The five steps, each gating the next — written as early returns rather than as nested ifs, which
+ * The six steps, each gating the next — written as early returns rather than as nested ifs, which
  * is also what keeps this file inside the measured `max-depth`. A step that could not establish its
  * own precondition has already said so through `check`; there is nothing to add here.
  */
 async function arc(page: Page, app: ElectronApplication, log: FixtureLog): Promise<void> {
   if (!(await stepNothingSpareYet(page))) return
-  if (!(await stepTurnInMakesItSpare(page))) return
+  if (!(await stepTurnInEatsTheDumpsCopy(page))) return
+  if (!(await stepRefarmMakesItSpare(page, log))) return
   // The tab at its most interesting: caveat, source control, one row with its place and its
   // decision line (no verdict chip - owner ruling 2026-08-17, the reader makes their own choice). Taken before anything is destroyed, so the artifact shows the
   // screen a player decides from. Opt-in (see `captureTab`) - an ordinary run writes no PNG.

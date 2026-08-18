@@ -50,6 +50,7 @@ import { ScaledContent } from './overlayScale'
 import { cardReduce, useCardTick, useQueueMouseCapture, useUnpinOnPointerExit } from './cardQueue'
 import type { CardAction, CardState } from './cardQueue'
 import { TextScaleStepper } from './TextScaleStepper'
+import { BgAlphaSlider } from './BgAlphaSlider'
 import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
 import { fitChanged, overlayFitRequest } from './overlayFit'
 
@@ -73,16 +74,19 @@ function conCardConfig(config: OverlayConfig | null): ConCardOverlayConfig {
 /**
  * The positioning frame, shown only while the overlay is unlocked — the banner's DragFrame with
  * this window's own words, and for the same reason: this kind renders nothing between cons, so the
- * frame is the only chrome it ever shows and the text size has nowhere else to live.
+ * frame is the only chrome it ever shows and the text size — and, since JOS-407, the transparency —
+ * has nowhere else to live.
  */
 function DragFrame({
   onDone,
   textScale,
+  bgAlpha,
   patch,
   noDrag
 }: {
   onDone: () => void
   textScale: number
+  bgAlpha: number
   patch: OverlayChrome['patch']
   noDrag: React.CSSProperties
 }): JSX.Element {
@@ -106,6 +110,7 @@ function DragFrame({
       <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         Drag me where mob cards should appear
       </span>
+      <BgAlphaSlider bgAlpha={bgAlpha} patch={patch} noDrag={noDrag} />
       <TextScaleStepper textScale={textScale} patch={patch} noDrag={noDrag} />
       <button
         type="button"
@@ -247,6 +252,7 @@ export default function ConCardOverlay(): JSX.Element {
           <DragFrame
             onDone={chrome.toggleLock}
             textScale={chrome.textScale}
+            bgAlpha={chrome.bgAlpha}
             patch={chrome.patch}
             noDrag={chrome.noDrag}
           />

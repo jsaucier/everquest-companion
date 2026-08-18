@@ -1,32 +1,42 @@
-// TextSizeSetting — Preferences → Text size (JOS-123).
+// TextSizeSetting — Preferences → Appearance → In-app text size (JOS-123, JOS-408).
 //
 // A player on v0.13.0 wrote "Please allow us to enlarge the text. I can barely read it." This is
-// the answer for the MAIN window; the floating overlays got theirs in an earlier round and keep
-// it (the A− / A+ stepper in their own footer), which is why the caption says so out loud. Someone
-// who came here to fix their meters and left thinking nothing happened would be the one way this
-// card can fail.
+// the answer for the MAIN window, and since JOS-408 that is ALL it is: the card is named for the
+// app itself, and everything about the floating overlays is the one card below it
+// (./OverlaysAppearanceSetting.tsx).
 //
-// FIVE BUTTONS, NOT A SLIDER. The ladder lives in shared/uiScale.ts with the reasoning; what
-// matters here is that a person who cannot read the screen should not have to aim at a 4px track
-// to make it bigger. Every stop is one press away, the current one is lit, and the labels are
-// percentages because that is the vocabulary browsers taught everybody.
+// A STEPPER, NOT FIVE BUTTONS (owner review, 2026-08-17: "make the controls uniform - the +/-
+// version of the control on the whole page"). The five percentage buttons were the odd one out on a
+// page whose other four values are all A− / A+, and a ladder is a strange thing to render as a
+// radio group anyway — nobody chooses 110% over 125% on the merits, they press bigger until they
+// can read it. THE LADDER ITSELF IS UNCHANGED and is still the detents: A+ from 110% lands on 125%
+// (`stepUiScale`, shared/uiScale.ts, which carries the reasoning for the five stops).
 //
-// IT APPLIES ON THE PRESS. Main stores the value and zooms the live window in the same call, so
-// the button you just pressed is being read at the size it chose. That is the whole evaluation
-// loop for a setting like this, and it is why there is no "restart to apply" sentence anywhere in
-// here (compare GraphicsSetting, whose switches genuinely cannot).
+// IT APPLIES ON THE PRESS. Main stores the value and zooms the live window in the same call, so the
+// button you just pressed is being read at the size it chose. That is the whole evaluation loop for
+// a setting like this, and it is why there is no "restart to apply" sentence anywhere in here
+// (compare GraphicsSetting, whose switches genuinely cannot).
 //
-// STATE, NEVER PROCESS, AND THE CAVEAT DIET (AGENTS.md): one caption, two plain sentences, no
-// explanation of zoom factors or device pixels.
+// THE ONLY DISABLED BUTTONS IN THIS SECTION ARE THIS STEPPER'S ENDS AND THE OVERLAY ONES', at 90%
+// and 150%, and they are disabled because the value cannot move rather than because something else
+// is switched off. That distinction is the whole of the owner's review — see PrefStepper.tsx.
+//
+// STATE, NEVER PROCESS, AND THE CAVEAT DIET (AGENTS.md): one caption, one sentence, no explanation
+// of zoom factors or device pixels.
 //
 // ONE BORDER: PreferencesView already wraps each item in an outlined Paper, so this renders a bare
 // Stack.
 
 import { type JSX, useCallback, useState } from 'react'
-import { Stack, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material'
+import { Stack, Typography } from '@mui/material'
 import FormatSizeIcon from '@mui/icons-material/FormatSize'
-import { UI_SCALE_STEPS, normalizeUiScale, uiScalePercent } from '@shared/uiScale'
+import { UI_SCALE_MAX, UI_SCALE_MIN, normalizeUiScale, stepUiScale, uiScalePercent } from '@shared/uiScale'
+import { PrefStepper } from './PrefStepper'
 import { recordPref, usePrefsSeed } from './prefsHydration'
+// The OVERLAYS' appearance (JOS-405, JOS-407, folded into one card by JOS-408), which is the second
+// item in THIS section: someone who came here to fix their meters has to find it without leaving
+// the card they landed on.
+import { OverlaysAppearanceSetting } from './OverlaysAppearanceSetting'
 import type { PrefSection } from './PreferencesView'
 
 /**
@@ -57,29 +67,56 @@ function useUiScale(): [number, (next: number) => void] {
 }
 
 /**
- * The section descriptor, living with its card like `perfSection` and `graphicsSection` do —
- * PreferencesView is at the 400-code-line factoring ceiling, and the words someone types to find
- * this setting belong beside the setting.
+ * The words somebody types when they cannot read something, shared by every item in this section.
  *
- * The keywords carry the SYMPTOM vocabulary as heavily as the mechanism ("small", "tiny", "hard to
- * read", "eyes", "squint", "accessibility") because the person searching for this is describing
- * what they are experiencing, not naming a feature. "overlay" is in there too: the overlays' own
- * control is somewhere else entirely, and this card is the one that says where.
+ * SYMPTOM VOCABULARY AS HEAVILY AS MECHANISM ("small", "tiny", "hard to read", "eyes", "squint",
+ * "accessibility"): the person searching for this is describing what they are experiencing, not
+ * naming a feature. Hoisted out of the one item that used to carry it because JOS-405 added more
+ * and the search has to find all of them from the same words.
  */
-export function textSizeSection(): PrefSection {
+const SIZE_WORDS =
+  'text size font bigger larger smaller enlarge shrink zoom scale magnify percent ' +
+  'readable read reading small tiny huge big hard to see eyes eyesight squint vision ' +
+  'accessibility accessible interface ui display appearance look'
+
+/** …and the words for the OVERLAYS' half of it (JOS-405) — including what the reporter SAW (a
+ *  card, a meter, a banner) rather than what the app calls it. */
+const OVERLAY_WORDS =
+  'overlay overlays meter card con mob toast banner independent separate each individually unpin ' +
+  'window windows floating pinned locked strip popup timers respawn xp healing'
+
+/** …and the words for the overlays' BACKGROUND (JOS-407) — again what the reporter SEES (a card
+ *  they cannot read through, a meter that hides the game) rather than the field's name. */
+const ALPHA_WORDS =
+  'transparency transparent opacity opaque see-through solid background bg dim darker lighter faded'
+
+/**
+ * THE SECTION IS CALLED APPEARANCE (owner, 2026-08-17), and the `textsize` id is deliberately
+ * unchanged: it is what the rail's testid, the deep link and every existing e2e step address it by,
+ * and renaming an id to match a label is how a working route breaks for a cosmetic reason.
+ *
+ * TWO ITEMS, in this order, which is the hierarchy the owner asked for: what the APP draws at, then
+ * what the floating windows draw at.
+ */
+export function appearanceSection(): PrefSection {
   return {
     id: 'textsize',
-    label: 'Text size',
+    label: 'Appearance',
     icon: <FormatSizeIcon fontSize="small" />,
     items: [
       {
         id: 'ui-scale',
-        label: 'Text size',
-        keywords:
-          'text size font bigger larger smaller enlarge shrink zoom scale magnify percent ' +
-          'readable read reading small tiny huge big hard to see eyes eyesight squint vision ' +
-          'accessibility accessible interface ui display window overlay',
+        label: 'In-app text size',
+        keywords: `${SIZE_WORDS} window app main`,
         content: <TextSizeSetting />
+      },
+      // ONE CARD for the overlays' size, their transparency, and the switch that decides whether
+      // either is shared — because they pertain to the same twelve windows (owner, 2026-08-17).
+      {
+        id: 'overlays-appearance',
+        label: 'Overlays',
+        keywords: `${SIZE_WORDS} ${ALPHA_WORDS} ${OVERLAY_WORDS}`,
+        content: <OverlaysAppearanceSetting />
       }
     ]
   }
@@ -89,34 +126,25 @@ export function TextSizeSetting(): JSX.Element {
   const [scale, choose] = useUiScale()
 
   return (
-    <Stack spacing={1} data-testid="pref-text-size">
-      <ToggleButtonGroup
-        exclusive
-        size="small"
-        value={scale}
-        aria-label="Text size"
-        // A null value is the press that would DESELECT the current button, which for an exclusive
-        // group is what clicking the lit one does. There is no such thing as "no size", so it is
-        // simply ignored and the window keeps the size it has.
-        onChange={(_e, next: number | null) => {
-          if (next !== null) choose(next)
+    // The `pref-text-size` testid is the STEPPER's, not this wrapper's — it is the control the
+    // deep links and the e2e steps mean, and two elements answering to one testid is a selector
+    // that silently matches the wrong thing.
+    <Stack spacing={0.75}>
+      <PrefStepper
+        kind="size"
+        value={uiScalePercent(scale)}
+        name="the app window"
+        atMin={scale <= UI_SCALE_MIN}
+        atMax={scale >= UI_SCALE_MAX}
+        onStep={(dir) => {
+          choose(stepUiScale(scale, dir))
         }}
-      >
-        {UI_SCALE_STEPS.map((step) => (
-          <ToggleButton
-            key={step}
-            value={step}
-            data-testid={`pref-text-size-${uiScalePercent(step).replace('%', '')}`}
-            sx={{ px: 2, textTransform: 'none' }}
-          >
-            {uiScalePercent(step)}
-          </ToggleButton>
-        ))}
-      </ToggleButtonGroup>
+        testid="pref-text-size"
+      />
 
       <Typography variant="caption" color="text.secondary" data-testid="pref-text-size-note">
-        This sizes the whole window, meters and numbers included, and it stays this way next time
-        you open the app. The floating overlays keep their own size control, on the overlay itself.
+        This sizes the app window only, meters and numbers included, and it stays this way next time
+        you open the app. The floating overlays are below.
       </Typography>
     </Stack>
   )

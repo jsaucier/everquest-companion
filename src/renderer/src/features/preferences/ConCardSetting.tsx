@@ -121,6 +121,12 @@ export function ConCardSetting(): JSX.Element {
             ? 'Con a creature and a card appears over the game with its level and what your logs know about its resists. Click it to open that creature in the app - its drops, your kills and the full resist table. The next con replaces it, and it closes on its own x.'
             : 'Off. Conning a creature does nothing over the game - the mobs you con are still listed on the Overview.'}
         </Typography>
+        {/* JOS-405. Two 1.4.0 reports about this card said the text was too small and that the
+            text size options did not affect it - and this card's own Preferences entry is where
+            they looked. One sentence, state not process, pointing at the control that moves it. */}
+        <Typography variant="caption" color="text.secondary" data-testid="pref-con-card-text-size-note">
+          Its text size and transparency are Appearance → Overlays.
+        </Typography>
       </Stack>
 
       <Stack spacing={0.5}>

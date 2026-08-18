@@ -26,6 +26,13 @@
  * scale — a card at 2.0 measures twice as tall and the window follows it, which is acceptance
  * criterion 3 of this ticket.
  *
+ * AND SINCE JOS-406 THE WIDTH CARRIES IT TOO — on MAIN's side, not here. A strip's persisted size is
+ * a LAYOUT BOX at 100% and the applied window is that box times the effective text scale
+ * (main/overlayLayout.ts `scaledStripBounds`), so at 2.0 this measurement is taken in a window that
+ * is already twice as wide and the card it measures is the 100% card at twice the size — the same
+ * three columns of chips, wrapped the same way, simply bigger. Nothing about the arithmetic here
+ * changed; what changed is the width it is performed at.
+ *
  * CEILED rather than rounded: a fractional layout height that rounds DOWN is a window one pixel
  * short of its own content, and on a card with a border that pixel is visible as a clipped edge.
  */

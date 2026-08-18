@@ -25,6 +25,10 @@ import { carryAll } from '../src/shared/carryAll'
 import { parseEvent } from '../src/main/log/parser'
 import { LootModule } from '../src/main/modules/loot'
 import { computeHeldCounts } from '../src/renderer/src/features/posky/heldCounts'
+// JOS-403 — the tab's holdings input is reconcile's `net`, so the turn-in case is driven through
+// the real module rather than through a hand-fed count.
+import { reconcile } from '../src/renderer/src/features/inventory/reconcile'
+import type { PoskyQuest } from '../src/shared/types'
 import {
   CLEANUP_CAVEAT,
   cleanupRows,
@@ -286,6 +290,51 @@ test('THE DESTROY, END TO END: parsed loot lines drive the row down and then off
   assert.equal(none.find((r) => r.key === 'azarack skin'), undefined, 'and destroying the lot ends the row')
   // Floored, not negative: the rune beside it is untouched and the skin never goes below zero.
   assert.equal(none.find((r) => r.key === 'wind rune heda')?.quantity, 1)
+})
+
+test('THE TURN-IN, END TO END: a hand-in after the dump takes the row off the tab (JOS-403)', () => {
+  // The report's second complaint — "when I do the cleanup and delete the extra items with destroy,
+  // it is still showing them" — is the same bug as its first, seen from this tab. The chain is the
+  // real one: reconcile's `net` IS `ItemProgress.held`, which is the only holdings input here.
+  const DUMP_AT = 1_700_000_000_000
+  // The same quest AZARACK states, in the shape reconcile reads. Its `questKey` is AZARACK.key.
+  const quest: PoskyQuest = {
+    className: 'Beastlord',
+    name: 'Beastlord Test of Azarack',
+    giver: 'Animist Kratho',
+    items: [
+      { name: 'Azarack Skin', count: 1, who: [], where: 'Island 4' },
+      { name: 'Wind Rune Heda', count: 1, who: [], where: 'Island 2' }
+    ]
+  }
+  const held = (turnInAt: number): Record<string, number> =>
+    reconcile({
+      // The dump listed three skins; the log saw one drop and two were destroyed after the file was
+      // written, so the witnesses disagree exactly the way the reporter's did.
+      log: { 'azarack skin': 1, 'wind rune heda': 2 },
+      inv: { 'azarack skin': 3, 'wind rune heda': 2 },
+      lootNames: {},
+      countSource: 'both',
+      quests: [quest],
+      turnIns: { [AZARACK.key]: 1 },
+      turnInInstants: { [AZARACK.key]: [turnInAt] },
+      rebaselineAt: DUMP_AT,
+      destroyedSinceDump: { 'azarack skin': 2 }
+    }).net
+
+  const before = cleanupRows([AZARACK], { [AZARACK.key]: 1 }, held(DUMP_AT - 3_600_000))
+  assert.equal(
+    before.find((r) => r.key === 'azarack skin')?.quantity,
+    1,
+    'a turn-in the dump already reflects leaves the surviving copy on the tab'
+  )
+  const after = cleanupRows([AZARACK], { [AZARACK.key]: 1 }, held(DUMP_AT + 120_000))
+  assert.equal(
+    after.find((r) => r.key === 'azarack skin'),
+    undefined,
+    'handing it in AFTER the dump empties the row, with no fresh dump and no statement from anybody'
+  )
+  assert.equal(after.find((r) => r.key === 'wind rune heda')?.quantity, 1, '2 held, 1 handed in')
 })
 
 // ---- order, and the copy that is not a row ------------------------------------------------

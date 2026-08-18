@@ -117,8 +117,23 @@ const BANNER_SIZE: Size = { width: 720, height: 260 }
  * mid-fight, so it belongs out of the way of the fight rather than in the middle of it. Top centre
  * is also where a player's own `/con` output already draws their eye.
  *
- * 520 wide because the widest thing on it is a drop line (`Gnarled Bone Ring  seen by you: 3x ·
- * 0.25 per kill`) and wrapping those turns a five-line card into ten.
+ * 530 WIDE, AND THAT NUMBER IS NOW DERIVED (JOS-406). It was 520 because the widest thing on the
+ * card was a drop line (`Gnarled Bone Ring  seen by you: 3x · 0.25 per kill`) and wrapping those
+ * turned a five-line card into ten — but JOS-390 took the drops off this card, so the binding
+ * constraint is the RESIST CHIPS, and since JOS-406 the chip grid states its own minimum column
+ * width (overlay/ConCard.tsx `CHIP_MIN_PX`, measured at 160). Three of those is the row this card
+ * is supposed to draw, so the width is what holds three of them:
+ *
+ *   3 x 160 + 2 x 4 (grid gap)                    = 488  the grid
+ *   + 2 x 10 (card padding) + 2 x 1 (card border) = 510  the card
+ *   + 2 x 6  (the overlay root's own PAD)         = 522  the window
+ *
+ * rounded up to 530 so the arithmetic has a few pixels of slack rather than sitting one rounding
+ * error away from dropping to two columns. THIS IS THE ORDER THE TICKET ASKS FOR: when the measured
+ * chip does not fit, the card gets wider — the chips are never made narrower than what they print.
+ *
+ * It is a LAYOUT BOX, in CSS px at 100% text (see the JOS-406 block below `METER_KINDS`): the window
+ * a display actually gets is this times the kind's effective text scale.
  *
  * THE HEIGHT IS A FIRST-OPEN PLACEHOLDER, NOT A SIZE (JOS-386). This window's height FOLLOWS THE
  * CARD from the moment its renderer has measured one — see `fittedOverlayHeight` below, which is
@@ -138,7 +153,7 @@ const BANNER_SIZE: Size = { width: 720, height: 260 }
  * kind's z-order or hit rules changes. The alert banner still keeps its own band a third of the way
  * down, and persisted bounds still win for everyone who has already moved either window.
  */
-const CON_CARD_SIZE: Size = { width: 520, height: 220 }
+const CON_CARD_SIZE: Size = { width: 530, height: 220 }
 /** Gap from the top of the work area — the celebration strip's own, because they share the band. */
 const CON_CARD_TOP = TOAST_TOP
 
@@ -277,14 +292,128 @@ const MARGIN = 16
 const GUTTER = 10
 
 /**
+ * THE THREE STRIPS — the kinds whose resting state is an EMPTY window, and whose window IS the
+ * card it draws (JOS-406).
+ *
+ * The list already existed twice (windows.ts's `isStripKind`, shared/overlayLabels.ts's
+ * `OVERLAY_STRIP_KINDS`); it lives HERE now because since JOS-406 it is a GEOMETRY fact before it
+ * is anything else — it is what decides whether a window scales with its text (below) and it is
+ * the complement of the meter stack, which this file has always owned. windows.ts imports it
+ * rather than restating it, so the two answers cannot drift.
+ */
+export const STRIP_KINDS: OverlayKind[] = ['toast', 'alertBanner', 'conCard']
+
+/** Is this a kind whose window is the card, rather than a panel the card lives inside? */
+export function isStripKind(kind: OverlayKind): boolean {
+  return STRIP_KINDS.includes(kind)
+}
+
+/**
  * The kinds that dock into the bottom-right stack — every kind except the three STRIPS (the
  * celebration toast at the top, the con card below it, the alert banner a third of the way down).
  * None holds a slot in the meter grid, so none may consume an index either: adding one that did
  * would shift every meter's reserved slot out from under a user who has never opened it.
  */
-export const METER_KINDS: OverlayKind[] = OVERLAY_KINDS.filter(
-  (k) => k !== 'toast' && k !== 'alertBanner' && k !== 'conCard'
-)
+export const METER_KINDS: OverlayKind[] = OVERLAY_KINDS.filter((k) => !isStripKind(k))
+
+// ============================================================================================
+// JOS-406 — A STRIP'S WINDOW IS ITS CARD, SO THE WINDOW SCALES WITH THE TEXT.
+// ============================================================================================
+//
+// Text size means THE SAME CARD, BIGGER — that is what a browser's zoom means, and what
+// shared/uiScale.ts argues for the main window ("everything on screen ends up bigger together").
+// For a window whose CONTENT IS THE WINDOW that has a direct consequence, and the two kinds of
+// overlay take it differently:
+//
+//   PANELS (fight, overall, heal-*, events, buffs, debuffs, xp, respawn) — the user sizes the
+//     window; the content zooms inside it and SCROLLS. Fewer rows on screen, not fewer rows
+//     (overlayScale.tsx). Nothing below touches them.
+//   STRIPS (toast, alertBanner, conCard) — the persisted rectangle is a LAYOUT BOX, in CSS px at
+//     100%, and the window actually applied is that box times the kind's EFFECTIVE text scale
+//     (shared/overlayTextScale.ts `effectiveOverlayTextScale`). The con card at 200% is exactly
+//     the con card at 100% at twice the size, with the same three columns of chips.
+//
+// THE OWNER'S REPORT THIS COMES FROM: at 200% the mob card kept the width chosen at 100% while its
+// type doubled, so the card laid out in HALF the room and the resist chips squeezed to one word
+// per line. Widening the window is the half that lives here; the chips wrapping instead of
+// squeezing is the renderer's half (overlay/ConCard.tsx).
+//
+// MIGRATION, stated because it is a real behaviour change on upgrade: a persisted strip size is
+// read as a layout box AS IS. Every install's strips are at 1.0 today except the handful of players
+// who found the stepper in Move-it mode, and theirs grow by their own scale on first launch after
+// the update — which is what they were asking for when they pressed A+ on a card that would not
+// grow. Nothing is rewritten in the store, so turning the size back down puts the window back.
+
+/** Grow (or shrink) `n` by `scale` the way a window has to express it: whole pixels. */
+function scaled(n: number, scale: number): number {
+  return Math.round(n * scale)
+}
+
+/** Keep `v` inside `[lo, hi]` — and inside `lo` first, so a work area smaller than the floor still
+ *  answers with the floor rather than with something between the two. */
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(v, hi))
+}
+
+/**
+ * THE WINDOW FOR A LAYOUT BOX at a given text scale — centre-preserving, clamped to the work area.
+ *
+ * CENTRE-PRESERVING ABOUT THE HORIZONTAL MIDDLE, and that is the whole placement rule: a
+ * top-centred card stays centred, a banner stays where its middle was, and the TOP EDGE HOLDS. A
+ * strip that grew from its left edge would walk across the screen every time somebody pressed A+.
+ *
+ * THE WORK AREA IS THE CEILING, not the 720/820 the BrowserWindow used to carry (windows.ts): a
+ * scaled box wider than the screen becomes the screen's width and the card reflows inside it, which
+ * is the renderer's job and the reason `auto-fill` replaced the fixed column count.
+ *
+ * HEIGHT IS NOT ONE ANSWER FOR ALL THREE. A fit-height kind's height is its CONTENT's — the
+ * renderer measures a card that already carries the zoom (overlay/overlayFit.ts) and
+ * `fittedOverlayHeight` applies it — so scaling the stored placeholder here would be a second
+ * opinion about a number this module already decides elsewhere. The toast and the banner have no
+ * such measurement, so their heights scale exactly like their widths; both are then held to the
+ * room below their own top edge by `fittedOverlayHeight`, which is the same clamp for the same
+ * reason.
+ */
+export function scaledStripBounds(
+  kind: OverlayKind,
+  layout: Bounds,
+  scale: number,
+  workArea: Bounds
+): Bounds {
+  const width = clamp(scaled(layout.width, scale), OVERLAY_MIN_SIZE.width, workArea.width)
+  const height = fitsHeightToContent(kind)
+    ? layout.height
+    : fittedOverlayHeight(scaled(layout.height, scale), layout.y, workArea)
+  // The middle of the layout box is the middle of the window — see above.
+  const centreX = layout.x + layout.width / 2
+  return {
+    width,
+    height,
+    x: clamp(Math.round(centreX - width / 2), workArea.x, workArea.x + workArea.width - width),
+    y: clamp(layout.y, workArea.y, workArea.y + workArea.height - height)
+  }
+}
+
+/**
+ * THE INVERSE: what a window the USER just dragged is worth as a layout box.
+ *
+ * A strip dragged wider at 150% is remembered as the box it would be at 100%, so that pressing A−
+ * afterwards gives back the size that was dragged rather than a box 1.5x too big. It is the exact
+ * inverse of `scaledStripBounds` — CENTRE-PRESERVING for the same reason, and it has to be, or a
+ * resize would nudge the window sideways every time: record the left edge instead and re-applying
+ * the same scale returns a rectangle centred somewhere else.
+ *
+ * POSITION STAYS CHROME PIXELS. `x`/`y` are where the window is on a screen and are never divided
+ * by anything; only the box's SIZE is expressed at 100%, and `x` here is simply the left edge that
+ * box has when it is centred on the window the user left behind.
+ */
+export function stripLayoutBounds(kind: OverlayKind, chrome: Bounds, scale: number): Bounds {
+  const s = scale > 0 ? scale : 1
+  const width = Math.max(1, Math.round(chrome.width / s))
+  const height = fitsHeightToContent(kind) ? chrome.height : Math.max(1, Math.round(chrome.height / s))
+  const centreX = chrome.x + chrome.width / 2
+  return { width, height, x: Math.round(centreX - width / 2), y: chrome.y }
+}
 
 /**
  * How many uniform slots of this height stack between the bottom and top margins of a work area.

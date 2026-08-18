@@ -28,6 +28,11 @@
 //      three-source arithmetic itself is pinned next door, tests/countSourceDefault.test.mts,
 //      whose generated deep-equality space still passes untouched.)
 //
+// THE THIRD WINDOWED DISCOUNT IS PINNED NEXT DOOR: JOS-403 gave the DUMP witness the same treatment
+// for turn-ins that JOS-401 gave it for destroys, and it lives in tests/skyTurnInAfterDump.test.mts
+// because this file is at its measured `max-lines` ceiling. A change to the windowing rule has to
+// break that file or this one.
+//
 // Only `computeQuestProgress`'s per-item clamp is mirrored, the division every Sky test here makes
 // — the bare runner cannot load the React-heavy useProgress module.
 //

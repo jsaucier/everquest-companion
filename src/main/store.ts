@@ -15,7 +15,7 @@ import type {
   UpdateChannel,
   VoicePrefs
 } from '../shared/types'
-import { clampTextScale } from '../shared/types'
+import { clampBgAlpha, clampTextScale } from '../shared/types'
 import type { InventorySource } from '../shared/outputs/baseline'
 // The turn-in ledger's write rule (JOS-131). Shared with the renderer so "what a stored turn-in
 // list may contain" has ONE definition on both sides of the IPC.
@@ -539,7 +539,11 @@ function applyXpOverlayKnobs(kind: OverlayKind, next: OverlayConfig): void {
 export function setOverlayConfig(kind: OverlayKind, patch: Partial<OverlayConfig>): OverlayConfig {
   const next: OverlayConfig = { ...getOverlayConfig(kind), ...patch }
   // Clamp the numeric fields defensively (the slider / the text stepper come from the renderer).
-  next.bgAlpha = Math.max(0, Math.min(1, next.bgAlpha))
+  // The alpha's clamp moved OUT of this file with the slider's own numbers (JOS-407,
+  // shared/overlayBgAlpha.ts), and its floor rose from 0 to the slider's own 0.1: the old range
+  // let a hand-edited store (or a share import's `clamp01`) hold a 0 that no control could get
+  // back off the floor.
+  next.bgAlpha = clampBgAlpha(next.bgAlpha)
   next.textScale = clampTextScale(next.textScale)
   // The drill is remembered UI state from the overlay renderer — normalize anything malformed
   // (and `undefined`) down to level 1 so the stored shape stays exactly `{entityId} | null`.

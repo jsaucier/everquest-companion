@@ -64,11 +64,43 @@
 //     user's MOVE persists with the kind's default height. Otherwise one tall card would become
 //     the size of every empty window from then on. What persists for a fit kind is position and
 //     WIDTH; the height is re-derived on every card.
+//
+// ---- JOS-406: A STRIP'S STORED RECTANGLE IS A LAYOUT BOX, NOT A WINDOW ------------------------
+//
+// A third ruling, and it composes with both of the above rather than replacing either: for the
+// three STRIPS — the toast, the alert banner and the con card, the kinds whose window IS the card —
+// what is written down is the box AT 100% TEXT, and what reaches the screen is that box times the
+// kind's effective text scale. The arithmetic (centre-preserving, work-area clamped) is
+// `scaledStripBounds` / `stripLayoutBounds` in overlayLayout.ts, node-tested there; this file is
+// where the three moments it applies live:
+//
+//   OPEN and DISPLAY-CHANGE — `overlayAppliedBounds` scales the stored layout on the way to a
+//     window (windows.ts `overlayPlacement` / `reconcileOverlayDisplays`).
+//   A TEXT-SIZE CHANGE — `refitStripsForTextScale`, from the two IPC routes that can move a scale
+//     (ipc/windowControls.ts). Every open strip is re-placed through `applyOverlayBounds`, so the
+//     move is marked as OURS and the handler below does not write it down as a drag.
+//   A USER RESIZE — `storedOverlayBounds` divides it back out, so the box somebody drags at 150%
+//     is remembered as the box it is at 100%.
+//
+// The two earlier rulings are untouched by it: the store still keeps what the user chose (it is
+// now expressed at one fixed scale rather than at whatever the text happened to be), and a con
+// card's height is still the card's — `stripLayoutBounds` leaves a fit kind's height alone and
+// `storedOverlayBounds` then replaces it with the placeholder exactly as before.
 
 import type { BrowserWindow, Rectangle } from 'electron'
-import { fitsHeightToContent, fittedOverlayHeight, overlayDefaultSize } from './overlayLayout'
-import { setOverlayConfig } from './store'
-import { workAreaFor } from './windowPlacement'
+import {
+  STRIP_KINDS,
+  fitsHeightToContent,
+  fittedOverlayHeight,
+  isStripKind,
+  overlayDefaultSize,
+  scaledStripBounds,
+  stripLayoutBounds
+} from './overlayLayout'
+import { getOverlayConfig, setOverlayConfig } from './store'
+import { getOverlayTextSize } from './storeOverlayTextSize'
+import { effectiveOverlayTextScale } from '../shared/overlayTextScale'
+import { overlayFittedBounds, workAreaFor } from './windowPlacement'
 import type { OverlayKind } from '../shared/types'
 
 /** The live window per kind, as windows.ts creates them. Replaced on re-open, never read stale:
@@ -176,10 +208,67 @@ function refitOverlay(kind: OverlayKind): void {
 }
 
 /**
- * The rectangle that goes in the STORE for a move the user made: everything exactly as it is,
- * except that a fit kind's height reverts to its first-open placeholder (see the header).
+ * The rectangle that goes in the STORE for a move or resize the user made (see the header):
+ *
+ *   * a STRIP's is divided back down to its 100% layout box (JOS-406), so the width somebody drags
+ *     at 150% is remembered as the width it would be at 100% — and re-applying the same scale
+ *     returns exactly the window they let go of;
+ *   * a FIT kind's height then reverts to its first-open placeholder (JOS-386), because the height
+ *     of that window was never anybody's choice to record.
+ *
+ * In that order, and the order does not actually matter — `stripLayoutBounds` leaves a fit kind's
+ * height alone precisely so these two rules cannot fight over the same number.
  */
 function storedOverlayBounds(kind: OverlayKind, b: Rectangle): Rectangle {
-  if (!fitsHeightToContent(kind)) return b
-  return { ...b, height: overlayDefaultSize(kind).height }
+  const layout = isStripKind(kind) ? stripLayoutBounds(kind, b, stripTextScale(kind)) : b
+  if (!fitsHeightToContent(kind)) return layout
+  return { ...layout, height: overlayDefaultSize(kind).height }
+}
+
+/** The text scale one kind is actually drawing at — the shared preference, or its own while the
+ *  JOS-405 switch is on. The single decider is `effectiveOverlayTextScale`; nothing here has a
+ *  second opinion about it. */
+function stripTextScale(kind: OverlayKind): number {
+  return effectiveOverlayTextScale(getOverlayTextSize(), getOverlayConfig(kind).textScale)
+}
+
+/**
+ * WHERE A KIND'S WINDOW BELONGS RIGHT NOW: its stored rectangle fitted to the displays that exist
+ * (JOS-187), and — for a strip — grown to the text size it is drawing at (JOS-406).
+ *
+ * `null` means there is no display information to place against, which every caller reads as "we
+ * cannot know, so change nothing" (windowPlacement.ts). A strip with no work area to clamp inside
+ * gets its layout box unscaled rather than a guess: that is the headless path, where nothing is on
+ * a screen to be the wrong size on.
+ */
+export function overlayAppliedBounds(kind: OverlayKind): Rectangle | null {
+  const layout = overlayFittedBounds(kind, getOverlayConfig(kind).bounds)
+  if (!layout || !isStripKind(kind)) return layout
+  const workArea = workAreaFor(layout)
+  if (!workArea) return layout
+  return scaledStripBounds(kind, layout, stripTextScale(kind), workArea)
+}
+
+/**
+ * RE-PLACE EVERY OPEN STRIP AFTER A TEXT-SIZE CHANGE (JOS-406).
+ *
+ * The scale can move from any of three places — a strip's own A− / A+ in Move-it mode, another
+ * window's stepper while the sizes are synced, or Preferences — and none of them is a window this
+ * one can observe, so main re-applies rather than each renderer asking. Through
+ * `applyOverlayBounds`, so the JOS-187 marker is dropped on it and the 'moved'/'resized' handler
+ * does not mistake it for a drag and write it back down at the new size.
+ *
+ * A FIT KIND KEEPS THE HEIGHT IT IS WEARING. The stored height for the con card is the first-open
+ * placeholder, and slamming the window to that for the frame or two before the renderer re-measures
+ * would be a visible collapse-and-grow under a card that is standing still. The renderer measures
+ * on every render and the zoom just changed, so the real height arrives on its own (`fitOverlayHeight`).
+ */
+export function refitStripsForTextScale(): void {
+  for (const kind of STRIP_KINDS) {
+    const w = overlayWindows.get(kind)
+    if (!w || w.isDestroyed()) continue
+    const next = overlayAppliedBounds(kind)
+    if (!next) continue
+    applyOverlayBounds(kind, fitsHeightToContent(kind) ? { ...next, height: w.getBounds().height } : next)
+  }
 }

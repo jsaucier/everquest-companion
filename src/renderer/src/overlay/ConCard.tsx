@@ -64,6 +64,30 @@ const MUTED = '#a8b0c6'
 const DIM = '#7c8397'
 const GOLD = '#d9b25f'
 const BUTTON_PX = 20
+
+/**
+ * HOW NARROW A CHIP COLUMN MAY GET (JOS-406) — and it is MEASURED, not chosen.
+ *
+ * The number is the widest PHRASE a chip prints, laid out on one line in the overlay's own type,
+ * plus the chip's own horizontal chrome. Measured in Electron itself (the overlay bundle declares
+ * no `font-family` at all, so the type is Chromium's default standard font — Times New Roman on
+ * Windows — and a measurement taken in any other face would be a guess about this one):
+ *
+ *   145.23 px  `may not land even with overchannel`   guidance line, 10 px   ← the widest
+ *    94.98 px  `with overchannel 100%`                benchmark line, 10 px
+ *    76.33 px  `R 106 (92-126) n=43`                  detail line, 9 px
+ *   122.81 px  `very resistant · low samples`         tag line, 11 px
+ *
+ * plus 14 px of chrome: `padding: '4px 6px'` on each side (12) and the 1 px border twice (2).
+ * 145.23 + 14 = 159.23, rounded up to 160.
+ *
+ * IT IS A MINIMUM, NOT A WIDTH. `1fr` is the other half of the track: at the default window every
+ * column is wider than this, and this number is only what decides how many columns there are.
+ *
+ * AND IT IS WHAT THE DEFAULT CARD WIDTH IS SIZED FROM, not the other way round — see
+ * `CON_CARD_SIZE` in main/overlayLayout.ts, which was moved up so three of these still fit.
+ */
+export const CHIP_MIN_PX = 160
 /** The × — named once, because the card-wide click reads it back to exclude itself (JOS-390). */
 const CLOSE_TESTID = 'con-card-close'
 
@@ -222,15 +246,30 @@ function Chips({ payload }: { payload: ConCardPayload }): JSX.Element {
           {totalN > 0 ? `no notable resists · ${countText(totalN)}` : 'no notable resists · nothing seen yet'}
         </div>
       ) : (
-        /* A GRID OF AT LEAST THREE COLUMNS, not a flex row that divides itself among however many
-           survived. Once the card stopped drawing all five (above), one chip stretched across the
-           whole card and read as a banner rather than as a chip — which is the horizontal version
-           of exactly the empty apron this ticket is about. Three or more survivors fill the row as
-           they always did. */
+        /* A GRID OF COLUMNS AS WIDE AS A CHIP NEEDS, as many as fit (JOS-406).
+
+           IT USED TO BE `repeat(max(3, n), 1fr)`, and both halves of that were doing real work.
+           The `n` divided the row among however many chips survived the notable filter; the `max(3,
+           …)` was there because once the card stopped drawing all five axes, ONE chip stretched
+           across the whole card and read as a banner rather than as a chip. Both arguments survive
+           here, and `auto-fill` is what carries them: a track is only ever created at the chip's own
+           minimum width, so one chip is ONE COLUMN of the row and the rest of the row is empty
+           tracks — never a banner. (`auto-fit`, which collapses the empty tracks and lets the single
+           chip absorb them, is exactly the banner, which is why it is not what is written here.)
+
+           WHAT `max(3, n)` COULD NOT DO is refuse to squeeze. It divided whatever width the card had
+           by the column count, so at a text size the window had not grown for — the owner's 200% mob
+           card, which is the report this ticket comes from — each chip got an ~80 px column and `with
+           overchannel 100%` wrapped one word per line. `minmax(CHIP_MIN_PX, 1fr)` makes the failure a
+           WRAP INTO ROWS instead: five chips at the default width are three columns and then two, and
+           the window's height follows the card (JOS-386). That is the right failure at every width,
+           and it is required even though half 1 of this ticket makes the window grow — a user may
+           still narrow the strip by hand, and the work-area clamp can still bite on a small screen. */
         <div
+          data-testid="con-card-chip-grid"
           style={{
             display: 'grid',
-            gridTemplateColumns: `repeat(${String(Math.max(3, chips.length))}, 1fr)`,
+            gridTemplateColumns: `repeat(auto-fill, minmax(${String(CHIP_MIN_PX)}px, 1fr))`,
             gap: 4,
             alignItems: 'stretch'
           }}

@@ -275,6 +275,10 @@ export interface OverlayConfig {
 // The overlays TEXT SIZE (owner feedback 2026-08-05) lives in ./overlayTextScale.ts and is
 // re-exported here, so every importer of `@shared/types` is untouched. See that file for why.
 export { TEXT_SCALE_DEFAULT, TEXT_SCALE_MAX, TEXT_SCALE_MIN, TEXT_SCALE_STEP, clampTextScale } from './overlayTextScale'
+// …and the overlays' BACKGROUND TRANSPARENCY (JOS-407) lives in ./overlayBgAlpha.ts on exactly the
+// same terms. Only the clamp is re-exported: `OverlayConfig.bgAlpha` above is the field it governs,
+// and store.ts reads it beside `clampTextScale` on the very next line of the same function.
+export { clampBgAlpha } from './overlayBgAlpha'
 
 /** One EverQuest character whose log we watch. */
 export interface CharacterRef {
