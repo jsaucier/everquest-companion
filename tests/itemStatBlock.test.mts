@@ -199,6 +199,54 @@ test('effect kind falls back to the parenthetical when the key is a bare "Effect
   assert.equal(span.effects[0].reqLevel, 45)
 })
 
+// ---------------------------------------------------------------------------------
+// JOS-438 — the two shapes that used to mangle an effect line, both from Rain Caller's
+// `Effect: [[Firestrike (proc)]] (Must Equip, Casting Time: Instant, Cooldown: 120s) at Level 40`.
+// The reporter's bow clicky is the case; the parse is the mechanism.
+// ---------------------------------------------------------------------------------
+
+test('JOS-438: a Cooldown: inside the effect parenthetical does not split the line', () => {
+  // `Cooldown` is a real top-level stat key, so the key scanner used to cut the value at it —
+  // leaving an unbalanced `(` in the NAME and throwing the socket detail away entirely.
+  const s = parseStatsBlock('Effect: [[Feign Death]] (Must Equip, Casting Time: Instant, Cooldown: 300 seconds.) at Level 45<br>')
+  assert.deepEqual(s.effects, [
+    {
+      kind: 'click',
+      name: 'Feign Death',
+      detail: 'Must Equip, Casting Time: Instant, Cooldown: 300 seconds.',
+      reqLevel: 45
+    }
+  ])
+  // A `Cooldown:` on its OWN line is still an ordinary stat — the fix narrows nothing.
+  assert.deepEqual(parseStatsBlock('Cooldown: 120s<br>').stats, [{ key: 'COOLDOWN', value: '120s' }])
+})
+
+test("JOS-438: the wiki's page-name suffix is not the socket — Rain Caller's Firestrike is a CLICK", () => {
+  // `[[Firestrike (proc)]]` is a DISAMBIGUATION on the spell's wiki page, not a statement about
+  // the item's socket. Reading the first parenthetical made `(proc)` the detail, which left the
+  // effect kind unclassifiable and the name carrying the rest of the line.
+  const s = parseStatsBlock('Effect: [[Firestrike (proc)]] (Must Equip, Casting Time: Instant, Cooldown: 120s) at Level 40<br>')
+  assert.deepEqual(s.effects, [
+    {
+      kind: 'click',
+      name: 'Firestrike',
+      detail: 'Must Equip, Casting Time: Instant, Cooldown: 120s',
+      reqLevel: 40
+    }
+  ])
+  // Same shape, a different disambiguator, and an `Any Slot` socket.
+  const probe = parseStatsBlock('Effect: [[Stalking Probe (Spell)]] (Any Slot, Casting Time: Instant)<br>')
+  assert.deepEqual(probe.effects, [
+    { kind: 'click', name: 'Stalking Probe', detail: 'Any Slot, Casting Time: Instant' }
+  ])
+})
+
+test('JOS-438: `at 45` states a level exactly as `at Level 45` does', () => {
+  const s = parseStatsBlock('Effect: [[Promised Renewal]] (Any Slot, Casting Time: 2.0 seconds, Cooldown: 1200 seconds) at 45<br>')
+  assert.equal(s.effects[0].name, 'Promised Renewal')
+  assert.equal(s.effects[0].reqLevel, 45)
+})
+
 test('unrecognized stat-block text is preserved verbatim, never dropped or guessed', () => {
   const s = parseStatsBlock('Slot: PRIMARY<br>Some unmodeled note about this item<br>')
   assert.equal(s.slot, 'PRIMARY')

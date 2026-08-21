@@ -6,6 +6,8 @@ import { rosterApi } from './roster'
 import { soundsBridge } from './sounds'
 // "What IS this" — the spell/item/mob lookups, split out at the 400-line ceiling (preload/knowledge.ts).
 import { knowledgeBridge } from './knowledge'
+// The log-stream pushes — line / character rebuild / quiet-switch offer (preload/logStream.ts).
+import { logStreamBridge } from './logStream'
 import type {
   AlertDef,
   AlertPrefs,
@@ -16,6 +18,7 @@ import type {
   FeedReport,
   ItemKnowledge,
   LogLine,
+  LogSwitchNudge,
   LootEvent,
   MobKnowledge,
   ModuleDelta,
@@ -184,7 +187,7 @@ export interface SubmitOpts {
   attachInventory: boolean
 }
 
-export type { CharacterRef, EqConfig, EqConfigResult, LogLine, LootEvent, ProgressState }
+export type { CharacterRef, EqConfig, EqConfigResult, LogLine, LogSwitchNudge, LootEvent, ProgressState }
 export type { ModuleDelta, ModuleSnapshot }
 export type { AlertDef, AlertPrefs, SoundData, SoundPack, SpellCatalog, ItemKnowledge, MobKnowledge }
 export type { UserSound, UserSoundImportResult, UserSoundRemoveResult }
@@ -531,16 +534,10 @@ const api = {
     ipcRenderer.on(IPC.onInventoryReload, listener)
     return () => ipcRenderer.removeListener(IPC.onInventoryReload, listener)
   },
-  onLine: (cb: (line: LogLine) => void): (() => void) => {
-    const listener = (_e: unknown, line: LogLine): void => cb(line)
-    ipcRenderer.on(IPC.onLine, listener)
-    return () => ipcRenderer.removeListener(IPC.onLine, listener)
-  },
-  onCharacter: (cb: (c: CharacterRef | null) => void): (() => void) => {
-    const listener = (_e: unknown, c: CharacterRef | null): void => cb(c)
-    ipcRenderer.on(IPC.onCharacter, listener)
-    return () => ipcRenderer.removeListener(IPC.onCharacter, listener)
-  },
+  // The three log-stream pushes — each parsed line, the character rebuild, and the quiet-switch
+  // offer (./logStream.ts). Spread rather than inlined for file size alone, exactly like the
+  // bridges above; on `window.eq` they are indistinguishable from the methods written out here.
+  ...logStreamBridge,
   onCombatActivity: (cb: () => void): (() => void) => {
     const listener = (): void => cb()
     ipcRenderer.on(IPC.onCombatActivity, listener)

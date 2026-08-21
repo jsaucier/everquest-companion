@@ -28,12 +28,14 @@ import { ambiguousQuestNames, computeSharedItems, type SharedItemsMap } from './
 import { skyDroppersFor, type DropperMob } from './poskyDroppers'
 import { countTurnIns, newlyCompletedTurnIns } from './turnInCelebration'
 import { questDropRecency } from './questSort'
+import { useDerivedCompletions } from './derivedCompletions'
 // The turn-in ledger (JOS-131) — the ONE place a turn-in count is decided, shared with main's
 // store so the renderer and the persisted file cannot disagree about what a count means.
 // Relative value import, per the repo's node-tested-module rule.
 import {
   resolveTurnIns,
   turnInsToPersist,
+  type DerivedEvidence,
   type QuestTurnIns,
   type TurnInInstants
 } from '../../../../shared/questTurnIns'
@@ -160,6 +162,19 @@ export interface QuestProgress {
    *  only need the badge (the Ignored list) and for sorts that predate the count. */
   completed: boolean
   /**
+   * WHICH DERIVED SOURCE the count above came from, when it came from one (issue #27, extended by
+   * JOS-429). Present only when derived evidence is the count's ONLY source — any ledger evidence
+   * wins and leaves this absent — so the UI can say where the reading came from and the undo
+   * control can say why there is nothing to take back (the classUnlocks.ts observed-vs-derived
+   * precedent). Derived on every read, never persisted.
+   *
+   * It is a NAME rather than a boolean because there are two sources now and they are not equally
+   * strong: `'achievement'` is the server's own answer out of `/outputfile achievements`,
+   * `'reward'` is the inference from the reward sitting in your inventory export. The ranking, and
+   * why a reader has to be told which one spoke, live in shared/questTurnIns.ts.
+   */
+  completionEvidence?: DerivedEvidence
+  /**
    * epoch ms of the NEWEST drop among this quest's required items — the "most recent drop"
    * sort key. Absent when nothing it needs has ever dropped; recency is then unknown, not old.
    * Read from the loot log regardless of the count source: a drop is a log fact, and an
@@ -268,6 +283,8 @@ export interface UseProgress {
   /** Every statement in force, oldest first — what the tab's status line counts. */
   itemOverrides: ItemCountOverride[]
   inventoryInfo: ProgressState['inventorySource']
+  /** what we know about the last achievements dump we read (JOS-429) — the freshness line's input */
+  achievementsInfo: ProgressState['achievementsSource']
   /** questKey → contested items (other quests sharing each required item). */
   sharedItems: SharedItemsMap
   /** quest names that occur under >1 class (chips class-prefix only these). */
@@ -630,12 +647,16 @@ export function useProgress(opts?: UseProgressOptions): UseProgress {
   })
 
   const overridesByKey = useMemo(() => itemOverridesByKey(itemOverrides), [itemOverrides])
+  // The DERIVED completion floor — the reward in your inventory export (issue #27) and the
+  // achievements dump's own answer (JOS-429), ranked. One hook, because with two sources it is one
+  // subject; derivedCompletions.ts carries the reasoning and the never-persisted promise.
+  const derived = useDerivedCompletions(posky.quests, progress)
   const quests = useMemo<QuestProgress[]>(() => {
     if (!progress) return []
     const counts = { all: turnIns.all, log: logCounts }
     const facts = { lastLootedAt, overrides: overridesByKey }
-    return posky.quests.map((q) => computeQuestProgress(q, net, counts, facts))
-  }, [progress, net, lastLootedAt, turnIns, logCounts, overridesByKey])
+    return posky.quests.map((q) => derived(computeQuestProgress(q, net, counts, facts)))
+  }, [progress, net, lastLootedAt, turnIns, logCounts, overridesByKey, derived])
 
   const classes = useMemo(() => [...new Set(posky.quests.map((q) => q.className))].sort(), [])
 
@@ -654,6 +675,7 @@ export function useProgress(opts?: UseProgressOptions): UseProgress {
     setItemOverride,
     itemOverrides,
     inventoryInfo: progress?.inventorySource,
+    achievementsInfo: progress?.achievementsSource,
     sharedItems: sharedItemsMap,
     ambiguousQuestNames: ambiguousNames
   }

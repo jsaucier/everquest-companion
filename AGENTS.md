@@ -22,7 +22,7 @@ view id, route, store keys and `planner-*` testids are unchanged —
 docs/plans/exaltation-planner.md), celebration toasts
 (docs/plans/celebration-toasts.md), and a TIMERS tab + overlay (JOS-194 —
 law 13 below). Committed knowledge DBs: mobs (7.9k), items (11.2k incl.
-dropsfrom + eraTag), spells (1.9k), classes, zones (era-annotated), wiki
+dropsfrom + eraTag), spells (2.0k), classes, zones (era-annotated), wiki
 respawn floors (507 rows, 394 readable). First stable release v0.2.0
 (2026-08-03); per-release history lives in `shared/releaseNotes.ts` and the
 archive. Layout: `src/main` (Node), `src/preload`, `src/renderer`,
@@ -679,6 +679,21 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   must read the CORRECTED entries** — `spellClasses.ts` and
   `levelUnlocks.ts` do; a raw-`spells.json` importer that looks up BY NAME is
   a silent miss waiting to happen. Full story: docs/agents-archive.md.
+  Since JOS-440 the drift can also run the OTHER way: the wiki retitled a
+  page the game never renamed (`Invisibility vs. Undead`), and the correction
+  restores the game's spelling — the log and `spells_us.txt` outrank the wiki
+  on names, always.
+
+- **THE REMOVALS LAYER MAKES TWO CLAIMS NOW** (JOS-440,
+  `src/main/data/spellRemovals.ts` `supersededBy`): the original absence
+  claim ("no player can learn this; the row leaves the DB", instrument: a
+  person, dated) and the duplicate-page claim ("the wiki documents one spell
+  twice; THIS page is the copy EQ Legends is not running; the row named in
+  `supersededBy` survives", instrument: the client's own `spells_us.txt`,
+  dated). A superseded entry withdraws nothing from the player — a duplicate
+  leaves, the survivor must outlive the whole load (asserted by name), and
+  removals run BEFORE corrections so a survivor may be a row a rename lands
+  on. Only a `supersededBy` entry may claim a rename target.
 
 ### Electron trust boundary (do not weaken)
 

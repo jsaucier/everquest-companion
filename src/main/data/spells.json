@@ -1,8 +1,8 @@
 {
-  "scrapedAt": "2026-08-12T17:56:58.656Z",
+  "scrapedAt": "2026-08-21T06:50:04.048Z",
   "schema": 2,
-  "count": 1928,
-  "withEffects": 1927,
+  "count": 2006,
+  "withEffects": 2002,
   "spells": [
     {
       "name": "Aanya's Animation",
@@ -1813,6 +1813,86 @@
       "effects": [
         "Decrease Hitpoints by 250 per tick",
         "SpinStun"
+      ]
+    },
+    {
+      "name": "Benefit Awareness I",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Benefit Awareness I.",
+      "msgCastOnYou": "An aura of beneficial awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 20 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Type: Beneficial",
+        "Limit Type: Exclude Combat Skills"
+      ]
+    },
+    {
+      "name": "Benefit Awareness II",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Benefit Awareness II.",
+      "msgCastOnYou": "An aura of beneficial awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 44 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Type: Beneficial",
+        "Limit Type: Exclude Combat Skills"
+      ]
+    },
+    {
+      "name": "Benefit Awareness III",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Benefit Awareness III.",
+      "msgCastOnYou": "An aura of beneficial awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 60 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Type: Beneficial",
+        "Limit Type: Exclude Combat Skills"
+      ]
+    },
+    {
+      "name": "Benefit Awareness IV",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Benefit Awareness IV.",
+      "msgCastOnYou": "An aura of beneficial awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 65 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Type: Beneficial",
+        "Limit Type: Exclude Combat Skills"
       ]
     },
     {
@@ -5480,6 +5560,86 @@
       ]
     },
     {
+      "name": "Cold Awareness I",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Cold Awareness I.",
+      "msgCastOnYou": "An aura of cold awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 20 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Resist: Cold",
+        "Limit Type: Exclude Combat Skills"
+      ]
+    },
+    {
+      "name": "Cold Awareness II",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Cold Awareness II.",
+      "msgCastOnYou": "An aura of cold awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 44 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Resist: Cold",
+        "Limit Type: Exclude Combat Skills"
+      ]
+    },
+    {
+      "name": "Cold Awareness III",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Cold Awareness III.",
+      "msgCastOnYou": "An aura of cold awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 60 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Resist: Cold",
+        "Limit Type: Exclude Combat Skills"
+      ]
+    },
+    {
+      "name": "Cold Awareness IV",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Cold Awareness IV.",
+      "msgCastOnYou": "An aura of cold awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 65 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Resist: Cold",
+        "Limit Type: Exclude Combat Skills"
+      ]
+    },
+    {
       "name": "Coldlight",
       "durationText": "Instant",
       "durationMs": null,
@@ -7039,6 +7199,86 @@
       ]
     },
     {
+      "name": "Disease Awareness I",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Disease Awareness I.",
+      "msgCastOnYou": "An aura of disease awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 20 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Resist: Disease",
+        "Limit Type: Exclude Combat Skills"
+      ]
+    },
+    {
+      "name": "Disease Awareness II",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Disease Awareness II.",
+      "msgCastOnYou": "An aura of disease awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 44 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Resist: Disease",
+        "Limit Type: Exclude Combat Skills"
+      ]
+    },
+    {
+      "name": "Disease Awareness III",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Disease Awareness III.",
+      "msgCastOnYou": "An aura of disease awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 60 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Resist: Disease",
+        "Limit Type: Exclude Combat Skills"
+      ]
+    },
+    {
+      "name": "Disease Awareness IV",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Disease Awareness IV.",
+      "msgCastOnYou": "An aura of disease awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 65 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Resist: Disease",
+        "Limit Type: Exclude Combat Skills"
+      ]
+    },
+    {
       "name": "Disease Cloud",
       "durationText": "6 minutes",
       "durationMs": 360000,
@@ -7201,6 +7441,23 @@
         "Invulnerability",
         "Increase Damage Shield by 25 (L29) to 36 (L50)",
         "Increase HP regen by 50."
+      ]
+    },
+    {
+      "name": "Divine Endurance",
+      "durationText": "20 minutes",
+      "durationMs": 1200000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Elixir of Divine Endurance.",
+      "msgCastOnYou": "You feel resistant.",
+      "msgCastOnOther": "Someone is resistant.",
+      "msgWearsOff": "Your resistance fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase All Resists by 10"
       ]
     },
     {
@@ -7511,6 +7768,24 @@
       "mana": 100,
       "effects": [
         "Charm up to level 32"
+      ]
+    },
+    {
+      "name": "Donlo's Dementia",
+      "durationText": "Instant",
+      "durationMs": null,
+      "castTimeMs": 4000,
+      "targetType": "Group",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Army Ant Potion.",
+      "msgCastOnYou": "You feel almost as short as a halfling.",
+      "msgCastOnOther": "Someone shrinks.",
+      "msgWearsOff": "You return to normal height.",
+      "illusion": false,
+      "mana": 50,
+      "effects": [
+        "Decrease Player Size by 34%",
+        "Decrease Pet Size by 34%"
       ]
     },
     {
@@ -8252,6 +8527,522 @@
       "mana": 40,
       "effects": [
         "Summon Pet: Level 5 Water Elemental"
+      ]
+    },
+    {
+      "name": "Elixir of Clarity I",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Clarity I.",
+      "msgCastOnYou": "Your mind begins to clear.",
+      "msgCastOnOther": "Someone drinks an elixir of clarity.",
+      "msgWearsOff": "The clarity of mind fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Current Mana by 1 per tick"
+      ]
+    },
+    {
+      "name": "Elixir of Clarity II",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Clarity II.",
+      "msgCastOnYou": "Your mind begins to clear.",
+      "msgCastOnOther": "Someone drinks an elixir of clarity.",
+      "msgWearsOff": "The clarity of mind fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Current Mana by 2 per tick"
+      ]
+    },
+    {
+      "name": "Elixir of Clarity III",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Clarity III.",
+      "msgCastOnYou": "Your mind begins to clear.",
+      "msgCastOnOther": "Someone drinks an elixir of clarity.",
+      "msgWearsOff": "The clarity of mind fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Current Mana by 3 per tick"
+      ]
+    },
+    {
+      "name": "Elixir of Clarity IV",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Clarity IV.",
+      "msgCastOnYou": "Your mind begins to clear.",
+      "msgCastOnOther": "Someone drinks an elixir of clarity.",
+      "msgWearsOff": "The clarity of mind fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Mana by 4 per tick"
+      ]
+    },
+    {
+      "name": "Elixir of Clarity IX",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Clarity IX.",
+      "msgCastOnYou": "Your mind begins to clear.",
+      "msgCastOnOther": "Someone drinks an elixir of clarity.",
+      "msgWearsOff": "The clarity of mind fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Current Mana by 12 per tick"
+      ]
+    },
+    {
+      "name": "Elixir of Clarity VI",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Clarity VI.",
+      "msgCastOnYou": "Your mind begins to clear.",
+      "msgCastOnOther": "Someone drinks an elixir of clarity.",
+      "msgWearsOff": "The clarity of mind fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Mana by 6 per tick"
+      ]
+    },
+    {
+      "name": "Elixir of Healing I",
+      "durationText": "30 seconds",
+      "durationMs": 30000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Celestial Healing I.",
+      "msgCastOnYou": "Your wounds begin to heal.",
+      "msgCastOnOther": "Someone drinks an elixir of healing.",
+      "msgWearsOff": "The elixir's effect fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Current HP by 5 per tick (Random: 5 to 6)"
+      ]
+    },
+    {
+      "name": "Elixir of Healing II",
+      "durationText": "30 seconds",
+      "durationMs": 30000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Celestial Healing II.",
+      "msgCastOnYou": "Your wounds begin to heal.",
+      "msgCastOnOther": "Someone drinks an elixir of healing.",
+      "msgWearsOff": "The elixir's effect fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Current HP by 12 per tick (Random: 11 to 14)"
+      ]
+    },
+    {
+      "name": "Elixir of Healing III",
+      "durationText": "30 seconds",
+      "durationMs": 30000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Celestial Healing III.",
+      "msgCastOnYou": "Your wounds begin to heal.",
+      "msgCastOnOther": "Someone drinks an elixir of healing.",
+      "msgWearsOff": "The elixir's effect fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Current HP by 30 per tick (Random: 26 to 34)"
+      ]
+    },
+    {
+      "name": "Elixir of Healing IV",
+      "durationText": "30 seconds",
+      "durationMs": 30000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Celestial Healing IV.",
+      "msgCastOnYou": "Your wounds begin to heal.",
+      "msgCastOnOther": "Someone drinks an elixir of healing.",
+      "msgWearsOff": "The elixir's effect fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Current HP by 55 per tick (Random: 49 to 62)"
+      ]
+    },
+    {
+      "name": "Elixir of Healing IX",
+      "durationText": "30 seconds",
+      "durationMs": 30000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Celestial Healing IX.",
+      "msgCastOnYou": "Your wounds begin to heal.",
+      "msgCastOnOther": "Someone drinks an elixir of healing.",
+      "msgWearsOff": "The elixir's effect fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Current HP by 299 per tick (Random: 270 to 328)"
+      ]
+    },
+    {
+      "name": "Elixir of Healing VI",
+      "durationText": "30 seconds",
+      "durationMs": 30000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Celestial Healing VI.",
+      "msgCastOnYou": "Your wounds begin to heal.",
+      "msgCastOnOther": "Someone drinks an elixir of healing.",
+      "msgWearsOff": "The elixir's effect fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Current HP by 119 per tick (Random: 106 to 132)"
+      ]
+    },
+    {
+      "name": "Elixir of Replenishment I",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 6000,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Replenishment I.",
+      "msgCastOnYou": "You begin to regenerate.",
+      "msgCastOnOther": "Someone begins to regenerate.",
+      "msgWearsOff": "You have stopped regenerating.",
+      "illusion": false,
+      "mana": 100,
+      "effects": [
+        "Increase Current HP by 1 per tick"
+      ]
+    },
+    {
+      "name": "Elixir of Replenishment II",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 6000,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Replenishment II.",
+      "msgCastOnYou": "You begin to regenerate.",
+      "msgCastOnOther": "Someone begins to regenerate.",
+      "msgWearsOff": "You have stopped regenerating.",
+      "illusion": false,
+      "mana": 100,
+      "effects": [
+        "Increase Current HP by 2 per tick"
+      ]
+    },
+    {
+      "name": "Elixir of Replenishment III",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 6000,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Replenishment III.",
+      "msgCastOnYou": "You begin to regenerate.",
+      "msgCastOnOther": "Someone begins to regenerate.",
+      "msgWearsOff": "You have stopped regenerating.",
+      "illusion": false,
+      "mana": 100,
+      "effects": [
+        "Increase Current HP by 3 per tick"
+      ]
+    },
+    {
+      "name": "Elixir of Replenishment IV",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 6000,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Replenishment IV.",
+      "msgCastOnYou": "You begin to regenerate.",
+      "msgCastOnOther": "Someone begins to regenerate.",
+      "msgWearsOff": "You have stopped regenerating.",
+      "illusion": false,
+      "mana": 100,
+      "effects": [
+        "Increase Current HP by 4 per tick"
+      ]
+    },
+    {
+      "name": "Elixir of Replenishment IX",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 6000,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Replenishment IX.",
+      "msgCastOnYou": "You begin to regenerate.",
+      "msgCastOnOther": "Someone begins to regenerate.",
+      "msgWearsOff": "You have stopped regenerating.",
+      "illusion": false,
+      "mana": 100,
+      "effects": [
+        "Increase Current HP by 30 per tick"
+      ]
+    },
+    {
+      "name": "Elixir of Replenishment VI",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 6000,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Replenishment VI.",
+      "msgCastOnYou": "You begin to regenerate.",
+      "msgCastOnOther": "Someone begins to regenerate.",
+      "msgWearsOff": "You have stopped regenerating.",
+      "illusion": false,
+      "mana": 100,
+      "effects": [
+        "Increase Current HP by 8 per tick"
+      ]
+    },
+    {
+      "name": "Elixir of Speed I",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Alacrity I.",
+      "msgCastOnYou": "You feel very fast.",
+      "msgCastOnOther": "Someone drinks an elixir of speed.",
+      "msgWearsOff": "The speed fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Attack Speed by 5%"
+      ]
+    },
+    {
+      "name": "Elixir of Speed II",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Alacrity II.",
+      "msgCastOnYou": "You feel very fast.",
+      "msgCastOnOther": "Someone drinks an elixir of speed.",
+      "msgWearsOff": "The speed fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Attack Speed by 10%"
+      ]
+    },
+    {
+      "name": "Elixir of Speed III",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Alacrity III.",
+      "msgCastOnYou": "You feel very fast.",
+      "msgCastOnOther": "Someone drinks an elixir of speed.",
+      "msgWearsOff": "The speed fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Attack Speed by 15%"
+      ]
+    },
+    {
+      "name": "Elixir of Speed IV",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Alacrity IV.",
+      "msgCastOnYou": "You feel very fast.",
+      "msgCastOnOther": "Someone drinks an elixir of speed.",
+      "msgWearsOff": "The speed fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Attack Speed by 20%"
+      ]
+    },
+    {
+      "name": "Elixir of Speed IX",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Alacrity IX.",
+      "msgCastOnYou": "You feel very fast.",
+      "msgCastOnOther": "Someone drinks an elixir of speed.",
+      "msgWearsOff": "The speed fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Attack Speed by 45%"
+      ]
+    },
+    {
+      "name": "Elixir of Speed VI",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Alacrity VI.",
+      "msgCastOnYou": "You feel very fast.",
+      "msgCastOnOther": "Someone drinks an elixir of speed.",
+      "msgWearsOff": "The speed fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Attack Speed by 30%"
+      ]
+    },
+    {
+      "name": "Elixir of Spiritualism I",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 5000,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Spirituality I.",
+      "msgCastOnYou": "An aura of spiritualism envelops you.",
+      "msgCastOnOther": "Someone is enveloped by an aura of spiritualism.",
+      "msgWearsOff": "The aura of spiritualism fades.",
+      "illusion": false,
+      "mana": 200,
+      "effects": [
+        "Increase Current Mana by 0 per tick",
+        "Increase Current HP by 1 per tick"
+      ]
+    },
+    {
+      "name": "Elixir of Spiritualism II",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 5000,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Spirituality II.",
+      "msgCastOnYou": "An aura of spiritualism envelops you.",
+      "msgCastOnOther": "Someone is enveloped by an aura of spiritualism.",
+      "msgWearsOff": "The aura of spiritualism fades.",
+      "illusion": false,
+      "mana": 200,
+      "effects": [
+        "Increase Current Mana by 1 per tick",
+        "Increase Current HP by 1 per tick"
+      ]
+    },
+    {
+      "name": "Elixir of Spiritualism III",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 5000,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Spirituality III.",
+      "msgCastOnYou": "An aura of spiritualism envelops you.",
+      "msgCastOnOther": "Someone is enveloped by an aura of spiritualism.",
+      "msgWearsOff": "The aura of spiritualism fades.",
+      "illusion": false,
+      "mana": 200,
+      "effects": [
+        "Increase Current Mana by 1 per tick",
+        "Increase Current HP by 2 per tick"
+      ]
+    },
+    {
+      "name": "Elixir of Spiritualism IV",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 5000,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Spirituality IV.",
+      "msgCastOnYou": "An aura of spiritualism envelops you.",
+      "msgCastOnOther": "Someone is enveloped by an aura of spiritualism.",
+      "msgWearsOff": "The aura of spiritualism fades.",
+      "illusion": false,
+      "mana": 200,
+      "effects": [
+        "Increase Current Mana by 2 per tick",
+        "Increase Current HP by 2 per tick"
+      ]
+    },
+    {
+      "name": "Elixir of Spiritualism IX",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 5000,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Spirituality IX.",
+      "msgCastOnYou": "An aura of spiritualism envelops you.",
+      "msgCastOnOther": "Someone is enveloped by an aura of spiritualism.",
+      "msgWearsOff": "The aura of spiritualism fades.",
+      "illusion": false,
+      "mana": 200,
+      "effects": [
+        "Increase Current Mana by 6 per tick",
+        "Increase Current HP by 6 per tick"
+      ]
+    },
+    {
+      "name": "Elixir of Spiritualism VI",
+      "durationText": "30 minutes",
+      "durationMs": 1800000,
+      "castTimeMs": 5000,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Spirituality VI.",
+      "msgCastOnYou": "An aura of spiritualism envelops you.",
+      "msgCastOnOther": "Someone is enveloped by an aura of spiritualism.",
+      "msgWearsOff": "The aura of spiritualism fades.",
+      "illusion": false,
+      "mana": 200,
+      "effects": [
+        "Increase Current Mana by 3 per tick",
+        "Increase Current HP by 3 per tick"
       ]
     },
     {
@@ -10164,6 +10955,22 @@
       ]
     },
     {
+      "name": "Firestrike (Effect)",
+      "durationText": "Instant",
+      "durationMs": null,
+      "castTimeMs": 0,
+      "targetType": "Single",
+      "spellType": "Detrimental",
+      "classes": "* None; this spell is found on weapons.",
+      "msgCastOnYou": "You feel your skin ignite.",
+      "msgCastOnOther": "Someone 's skin ignites.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Hitpoints by 302"
+      ]
+    },
+    {
       "name": "Fist of Air",
       "durationText": "Instant",
       "durationMs": null,
@@ -11099,7 +11906,7 @@
       "castTimeMs": 2000,
       "targetType": "Self",
       "spellType": "Statistic Buff",
-      "classes": "* Shaman - Level 16 * Beastlord - Level 47",
+      "classes": "* Shaman - Level 16 (Autogranted) * Beastlord - Level 47",
       "msgCastOnYou": "You go berserk.",
       "msgCastOnOther": "Target goes berserk.",
       "msgWearsOff": "Your frenzy fades.",
@@ -12230,6 +13037,23 @@
       ]
     },
     {
+      "name": "Greater Mystical Infusion",
+      "durationText": "20 minutes",
+      "durationMs": 1200000,
+      "castTimeMs": 0,
+      "targetType": "Single",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Greater Mystical Infusion.",
+      "msgCastOnYou": "Your mind expands.",
+      "msgCastOnOther": "Someone's mind expands.",
+      "msgWearsOff": "Your mind returns to normal.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Max Mana by 100"
+      ]
+    },
+    {
       "name": "Greater Shielding",
       "durationText": "Permanent",
       "durationMs": null,
@@ -12854,6 +13678,23 @@
       ]
     },
     {
+      "name": "Hawk's Eye Tonic",
+      "durationText": "20 minutes",
+      "durationMs": 1200000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Hawks Eye Tonic.",
+      "msgCastOnYou": "Your aim improves.",
+      "msgCastOnOther": "Someone's eyes sharpen.",
+      "msgWearsOff": "Your aim returns to normal.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Chance to Hit by 10% with Archery"
+      ]
+    },
+    {
       "name": "Haze",
       "durationText": "27 Min",
       "durationMs": 1620000,
@@ -12887,6 +13728,21 @@
       ]
     },
     {
+      "name": "Healing",
+      "durationText": "Instant",
+      "durationMs": null,
+      "castTimeMs": 0,
+      "targetType": "Single Friendly (or Self)",
+      "spellType": "Heal",
+      "classes": "* None",
+      "msgCastOnYou": "Your wounds are gone.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Hitpoints by 100%"
+      ]
+    },
+    {
       "name": "Healing Light",
       "durationText": "Instant",
       "durationMs": null,
@@ -12900,6 +13756,102 @@
       "mana": 238,
       "effects": [
         "Increase Hitpoints by 800 (L45) to 801 (L46)"
+      ]
+    },
+    {
+      "name": "Healing Potion I",
+      "durationText": "Instant",
+      "durationMs": null,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Divine Healing I.",
+      "msgCastOnYou": "Your wounds heal.",
+      "msgCastOnOther": "Someone drinks a healing potion.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Current HP by 10 (Random: 9 to 12)"
+      ]
+    },
+    {
+      "name": "Healing Potion II",
+      "durationText": "Instant",
+      "durationMs": null,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Divine Healing II.",
+      "msgCastOnYou": "Your wounds heal.",
+      "msgCastOnOther": "Someone drinks a healing potion.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Current HP by 33 (Random: 31 to 36)"
+      ]
+    },
+    {
+      "name": "Healing Potion III",
+      "durationText": "Instant",
+      "durationMs": null,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Divine Healing III.",
+      "msgCastOnYou": "Your wounds heal.",
+      "msgCastOnOther": "Someone drinks a healing potion.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Current HP by 89 (Random: 83 to 95)"
+      ]
+    },
+    {
+      "name": "Healing Potion IV",
+      "durationText": "Instant",
+      "durationMs": null,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Divine Healing IV.",
+      "msgCastOnYou": "Your wounds heal.",
+      "msgCastOnOther": "Someone drinks a healing potion.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Current HP by 177 (Random: 164 to 190)"
+      ]
+    },
+    {
+      "name": "Healing Potion IX",
+      "durationText": "Instant",
+      "durationMs": null,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Divine Healing IX.",
+      "msgCastOnYou": "Your wounds heal.",
+      "msgCastOnOther": "Someone drinks a healing potion.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Current HP by 1382 (Random: 1294 to 1471)"
+      ]
+    },
+    {
+      "name": "Healing Potion VI",
+      "durationText": "Instant",
+      "durationMs": null,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Distillate of Divine Healing VI.",
+      "msgCastOnYou": "Your wounds heal.",
+      "msgCastOnOther": "Someone drinks a healing potion.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Current HP by 453 (Random: 423 to 484)"
       ]
     },
     {
@@ -12936,6 +13888,86 @@
         "Decrease STR by 15 (L16) to 20 (L26)",
         "Decrease AC by 7 (L16) to 9 (L24)",
         "Decrease Hitpoints by 12 per tick"
+      ]
+    },
+    {
+      "name": "Heat Awareness I",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Heat Awareness I.",
+      "msgCastOnYou": "An aura of heat awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 20 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Resist: Fire",
+        "Limit Type: Exclude Combat Skills"
+      ]
+    },
+    {
+      "name": "Heat Awareness II",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Heat Awareness II.",
+      "msgCastOnYou": "An aura of heat awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 44 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Resist: Fire",
+        "Limit Type: Exclude Combat Skills"
+      ]
+    },
+    {
+      "name": "Heat Awareness III",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Heat Awareness III.",
+      "msgCastOnYou": "An aura of heat awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 60 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Resist: Fire",
+        "Limit Type: Exclude Combat Skills"
+      ]
+    },
+    {
+      "name": "Heat Awareness IV",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Heat Awareness IV.",
+      "msgCastOnYou": "An aura of heat awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 65 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Resist: Fire",
+        "Limit Type: Exclude Combat Skills"
       ]
     },
     {
@@ -12989,6 +14021,14 @@
         "Decrease Poison Counter by 10",
         "Decrease curse Counter by 10"
       ]
+    },
+    {
+      "name": "Heritage of Mistmoore",
+      "durationText": "10:00",
+      "durationMs": 600000,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "illusion": false
     },
     {
       "name": "Heroic Bond",
@@ -13111,6 +14151,23 @@
       "effects": [
         "Decrease Hitpoints by 155",
         "Stun for 1.5 seconds"
+      ]
+    },
+    {
+      "name": "Hp to Mana",
+      "durationText": "Instant",
+      "durationMs": null,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Potion of Vampiric Spirit.",
+      "msgCastOnYou": "Your body aches as your mind clears.",
+      "msgCastOnOther": "Someone winces.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Current HP by 180",
+        "Increase Current Mana by 60"
       ]
     },
     {
@@ -13617,6 +14674,23 @@
       ]
     },
     {
+      "name": "Illusion: Froglok",
+      "durationText": "36 minutes",
+      "durationMs": 2160000,
+      "castTimeMs": 3000,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Essence of Froglok.",
+      "msgCastOnYou": "You have a sudden desire to Froak.",
+      "msgCastOnOther": "Someone's image shimmers.",
+      "msgWearsOff": "Your illusion fades.",
+      "illusion": true,
+      "mana": 10,
+      "effects": [
+        "Illusion: Froglok Ghoul"
+      ]
+    },
+    {
       "name": "Illusion: Gnome",
       "durationText": "36 minutes 6 seconds",
       "durationMs": 2166000,
@@ -13631,6 +14705,23 @@
       "mana": 10,
       "effects": [
         "Illusion: 12"
+      ]
+    },
+    {
+      "name": "Illusion: Guktan",
+      "durationText": "36 minutes",
+      "durationMs": 2160000,
+      "castTimeMs": 3000,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Essence of Gukta (Wormwood).",
+      "msgCastOnYou": "You feel very amphibious.",
+      "msgCastOnOther": "Someone turns into a Froglok.",
+      "msgWearsOff": "You no longer feel amphibious.",
+      "illusion": true,
+      "mana": 10,
+      "effects": [
+        "Illusion: Froglok"
       ]
     },
     {
@@ -14398,6 +15489,22 @@
       ]
     },
     {
+      "name": "Improved Vampirism II",
+      "durationText": "1:33:00",
+      "durationMs": 5580000,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "illusion": false
+    },
+    {
+      "name": "Improved Vampirism III",
+      "durationText": "1:33:00",
+      "durationMs": 5580000,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "illusion": false
+    },
+    {
       "name": "Incapacitate",
       "durationText": "5 Min",
       "durationMs": 300000,
@@ -15029,23 +16136,6 @@
       ]
     },
     {
-      "name": "Invisibility versus Undead",
-      "durationText": "27 Min",
-      "durationMs": 1620000,
-      "castTimeMs": 4000,
-      "targetType": "Single Friendly (or Self)",
-      "spellType": "Beneficial",
-      "classes": "* Necromancer - Level 1 * Shadowknight - Level 4 (Autogranted) * Cleric - Level 11 * Enchanter - Level 14 * Paladin - Level 17",
-      "msgCastOnYou": "You feel your skin tingle.",
-      "msgCastOnOther": "Someone fades a little.",
-      "msgWearsOff": "Your skin stops tingling.",
-      "illusion": false,
-      "mana": 40,
-      "effects": [
-        "Invisibility versus Undead"
-      ]
-    },
-    {
       "name": "Invisibility Versus Undead",
       "durationText": "27 minutes",
       "durationMs": 1620000,
@@ -15060,6 +16150,23 @@
       "mana": 30,
       "effects": [
         "Invisibility(1)"
+      ]
+    },
+    {
+      "name": "Invisibility vs. Undead",
+      "durationText": "27 Min",
+      "durationMs": 1620000,
+      "castTimeMs": 4000,
+      "targetType": "Single Friendly (or Self)",
+      "spellType": "Beneficial",
+      "classes": "* Necromancer - Level 1 * Shadowknight - Level 4 (Autogranted) * Cleric - Level 11 * Enchanter - Level 14 * Paladin - Level 17",
+      "msgCastOnYou": "You feel your skin tingle.",
+      "msgCastOnOther": "Someone fades a little.",
+      "msgWearsOff": "Your skin stops tingling.",
+      "illusion": false,
+      "mana": 40,
+      "effects": [
+        "Invisibility versus Undead"
       ]
     },
     {
@@ -15315,7 +16422,7 @@
       "illusion": false,
       "mana": 0,
       "effects": [
-        "Increase Melee Haste by 3%",
+        "Increase Attack Speed by 48% (L45) to 50% (L47)",
         "Increase STR by 13 (L45) to 17 (L60)",
         "Increase ATK by 13 (L45) to 17 (L60)"
       ],
@@ -16116,6 +17223,23 @@
       ]
     },
     {
+      "name": "Levity",
+      "durationText": "20 minutes 30 seconds",
+      "durationMs": 1230000,
+      "castTimeMs": 3000,
+      "targetType": "Single",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Potion of Gulon's Impunity.",
+      "msgCastOnYou": "Your feet leave the ground.",
+      "msgCastOnOther": "Someone floats into the air.",
+      "msgWearsOff": "You can no longer levitate.",
+      "illusion": false,
+      "mana": 60,
+      "effects": [
+        "Levitate"
+      ]
+    },
+    {
       "name": "Lich",
       "durationText": "Permanent",
       "durationMs": null,
@@ -16149,6 +17273,23 @@
       "mana": 181,
       "effects": [
         "Decrease Hitpoints by 250"
+      ]
+    },
+    {
+      "name": "Lifebite",
+      "durationText": "Instant",
+      "durationMs": null,
+      "castTimeMs": 1750,
+      "targetType": "Lifetap",
+      "spellType": "Detrimental",
+      "classes": "* Necromancer - Level 8 (Autogranted) * Shadow Knight - Level 10 (Autogranted)",
+      "msgCastOnYou": "You feel your life force drain away.",
+      "msgCastOnOther": "Someone staggers.",
+      "illusion": false,
+      "mana": 35,
+      "effects": [
+        "Decrease Hitpoints by 42 to 42",
+        "Increase Hitpoints by 42 to 42 (Self)"
       ]
     },
     {
@@ -16733,6 +17874,86 @@
       ]
     },
     {
+      "name": "Magic Awareness I",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Magic Awareness I.",
+      "msgCastOnYou": "An aura of magical awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 20 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Resist: Magic",
+        "Limit Type: Exclude Combat Skills"
+      ]
+    },
+    {
+      "name": "Magic Awareness II",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Magic Awareness II.",
+      "msgCastOnYou": "An aura of magical awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 44 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Resist: Magic",
+        "Limit Type: Exclude Combat Skills"
+      ]
+    },
+    {
+      "name": "Magic Awareness III",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Magic Awareness III.",
+      "msgCastOnYou": "An aura of magical awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 60 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Resist: Magic",
+        "Limit Type: Exclude Combat Skills"
+      ]
+    },
+    {
+      "name": "Magic Awareness IV",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Magic Awareness IV.",
+      "msgCastOnYou": "An aura of magical awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 65 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Resist: Magic",
+        "Limit Type: Exclude Combat Skills"
+      ]
+    },
+    {
       "name": "Magical Monologue",
       "durationText": "18 Sec",
       "durationMs": 18000,
@@ -17113,6 +18334,23 @@
       "mana": 0,
       "effects": [
         "UNKNOWN CALC 2 base -10 max 0 attrib Mana"
+      ]
+    },
+    {
+      "name": "Mana to Hp",
+      "durationText": "Instant",
+      "durationMs": null,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Potion of Wrackbane.",
+      "msgCastOnYou": "Your mind aches as your body heals.",
+      "msgCastOnOther": "Someone winces.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Current HP by 69",
+        "Decrease Current Mana by 180"
       ]
     },
     {
@@ -18384,6 +19622,23 @@
       "mana": 0,
       "effects": [
         "Increase DEX by 30"
+      ]
+    },
+    {
+      "name": "Mystical Infusion",
+      "durationText": "20 minutes",
+      "durationMs": 1200000,
+      "castTimeMs": 0,
+      "targetType": "Single",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Mystical Infusion.",
+      "msgCastOnYou": "Your mind expands.",
+      "msgCastOnOther": "Someone's mind expands.",
+      "msgWearsOff": "Your mind returns to normal.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Increase Max Mana by 50"
       ]
     },
     {
@@ -19815,6 +21070,86 @@
       "effects": [
         "Increase Poison Counter by 4",
         "Decrease Hitpoints by 16 (L1) to 370 (L60)"
+      ]
+    },
+    {
+      "name": "Poison Awareness I",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Poison Awareness I.",
+      "msgCastOnYou": "An aura of poison awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 20 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Resist: Poison",
+        "Limit Type: Exclude Combat Skills"
+      ]
+    },
+    {
+      "name": "Poison Awareness II",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Poison Awareness II.",
+      "msgCastOnYou": "An aura of poison awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 44 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Resist: Poison",
+        "Limit Type: Exclude Combat Skills"
+      ]
+    },
+    {
+      "name": "Poison Awareness III",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Poison Awareness III.",
+      "msgCastOnYou": "An aura of poison awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 60 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Resist: Poison",
+        "Limit Type: Exclude Combat Skills"
+      ]
+    },
+    {
+      "name": "Poison Awareness IV",
+      "durationText": "3 hours 15 minutes",
+      "durationMs": 11700000,
+      "castTimeMs": 0,
+      "targetType": "Self",
+      "spellType": "Beneficial",
+      "classes": "This spell cannot be cast directly. It is triggered by drinking a Poison Awareness IV.",
+      "msgCastOnYou": "An aura of poison awareness surrounds you.",
+      "msgWearsOff": "The awareness fades.",
+      "illusion": false,
+      "mana": 0,
+      "effects": [
+        "Decrease Spell Mana Cost by 1% to 5%",
+        "Limit Max Level: 65 (lose 5% per level)",
+        "Limit Spell: Exclude",
+        "Limit Resist: Poison",
+        "Limit Type: Exclude Combat Skills"
       ]
     },
     {
@@ -23145,7 +24480,7 @@
       "durationMs": 150000,
       "castTimeMs": 3500,
       "targetType": "Single",
-      "spellType": "Slow",
+      "spellType": "Detrimental",
       "classes": "* Beastlord - Level 50",
       "msgCastOnYou": "You feel lethargic.",
       "msgCastOnOther": "feels lethargic.",
@@ -25189,7 +26524,7 @@
       "illusion": false,
       "mana": 0,
       "effects": [
-        "Decrease Hitpoints by 2 (L1) to 40 (L60)"
+        "Decrease Hit Points by 2 (L1) to 51 (L50)"
       ]
     },
     {
@@ -26595,6 +27930,28 @@
       ]
     },
     {
+      "name": "String Resonance 14",
+      "durationText": "2:30:00",
+      "durationMs": 9000000,
+      "targetType": "Self",
+      "classes": "BRD",
+      "illusion": false,
+      "effects": [
+        "Increases the power of stringed instrument based bard songs by up to 140%"
+      ]
+    },
+    {
+      "name": "String Resonance 14",
+      "durationText": "2:30:00",
+      "durationMs": 9000000,
+      "targetType": "Self",
+      "classes": "BRD",
+      "illusion": false,
+      "effects": [
+        "Increases the power of wind instrument based bard songs by up to 140%"
+      ]
+    },
+    {
       "name": "Strip Enchantment",
       "durationText": "Instant",
       "durationMs": null,
@@ -27997,7 +29354,7 @@
       "targetType": "Single Friendly (or Self)",
       "spellType": "Beneficial",
       "classes": "* Cleric - Level 31 * Paladin - Level 46",
-      "msgCastOnYou": "A mystic symbol flashes before your eyes.",
+      "msgCastOnYou": "The symbol of Pinzarn flashes before your eyes.",
       "msgCastOnOther": "Someone is cloaked in a shimmer of glowing symbols.",
       "msgWearsOff": "The mystic symbol fades.",
       "illusion": false,

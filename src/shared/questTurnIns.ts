@@ -30,6 +30,20 @@
 // completion is real but UNDATED, so it contributes a FLOOR OF ONE to the count and nothing else.
 // `completedQuests` keeps being written as the downgrade mirror (see shared/types.ts).
 //
+// AND THE FLOORS THIS LEDGER DOES NOT SEE (issue #27, then JOS-429): the Sky tab's DISPLAYED count
+// is decided in two stages. This module resolves the persisted + detected evidence; the renderer
+// then floors a quest at one on DERIVED evidence, on every read, never written back here. Two
+// stated consequences: any OTHER consumer of this ledger reads the un-floored count and may say
+// "not turned in" where the Sky tab says "Turned in"; and the downgrade mirror never contains a
+// derived completion, so an older build shows those quests un-done — both are the price of keeping
+// derived evidence out of the persisted record, paid on purpose.
+//
+// THE LADDER THOSE FLOORS SIT ON IS DEFINED HERE, at the bottom of this file
+// (`DERIVED_EVIDENCE_RANK` / `derivedCompletion`), because the moment there were TWO of them the
+// question "which one gets to speak" stopped being either renderer module's business. It is the
+// classUnlocks.ts evidence model applied to completions: OBSERVED WINS, DERIVED IS LABELLED, and
+// among derived sources the one closer to an ANSWER outranks the one closer to an inference.
+//
 // THERE IS NO "SINCE THE DUMP" COUNT ANY MORE (JOS-141). This file used to report a second count
 // — how many turn-ins landed after the loaded dump was generated — because JOS-128 made a dump
 // load RESET the held-count model, and a base of `dump + loot since the dump` already had every
@@ -168,4 +182,78 @@ export function applyTurnIns(
 /** How the badge says it: "Turned in" once, "Turned in x3" after that. Never for a count of 0. */
 export function turnInBadgeLabel(count: number): string {
   return count > 1 ? `Turned in x${String(count)}` : 'Turned in'
+}
+
+// ============================================================================
+// THE DERIVED-EVIDENCE LADDER (JOS-429) — which source gets to speak, and what it is called.
+// ============================================================================
+//
+// The ledger above is EVENTS: a turn-in the log printed, a turn-in the user stated, a legacy
+// completion. Everything below is the other kind of knowledge — a completion nobody recorded that
+// something else nonetheless PROVES — and there are two of them now, which is why the ordering is
+// a shared rule instead of an if-statement in whichever module happened to run second.
+//
+// THE ORDER, AND THE ARGUMENT FOR IT. `classUnlocks.ts` states the model this borrows: a turn-in is
+// evidence of PROGRESS, the achievement line is evidence of the ANSWER. That distinction is exactly
+// what separates the two derived sources here.
+//
+//   'achievement'  THE SERVER'S OWN ANSWER. `/outputfile achievements` carries one row per Sky
+//                  quest reward and a status the SERVER decided; `C` means it has already ruled
+//                  that you obtained that reward. Nothing about a bag, a trade or a wiki page can
+//                  make that reading wrong, and it keeps being true after the item is destroyed,
+//                  sold or left in a bank the export never opened.
+//   'reward'       AN INFERENCE FROM POSSESSION (issue #27) — the reward is in your inventory
+//                  export and it cannot be obtained any other way. Sound, and gated hard
+//                  (rewardInference.ts refuses the two rewards that can move), but still a
+//                  conclusion this app drew from a bag rather than an answer the game gave.
+//
+// WHY THE ORDER IS OBSERVABLE AT ALL, given that both floor the count at exactly 1 today: the LABEL
+// differs, and the label is what the badge's hover and the undo control's refusal say out loud. A
+// reader who cannot tell "the game says so" from "we worked it out from your bag" cannot tell which
+// rows to trust — the same reason classUnlocks.ts labels its derived rows.
+//
+// THEY DO NOT ADD. Two sources vouching for one quest are two witnesses to the SAME turn-in, not
+// two turn-ins: the reward in the bag is the reward the achievement is about. `max(ledger, 1)` is
+// the best LOWER BOUND either can prove, which is the identical move reconcile.ts makes for held
+// counts and rewardInference.ts already made for one witness.
+//
+// AND THE LEDGER STILL WINS OUTRIGHT. Any recorded evidence at all leaves the row exactly as the
+// ledger said it — count and label both — because a derived floor can only ever say "at least
+// once", and the ledger may already know it happened four times.
+
+/** A derived completion source, named. Ordered by authority in `DERIVED_EVIDENCE_RANK`. */
+export type DerivedEvidence = 'achievement' | 'reward'
+
+/**
+ * The ladder, MOST AUTHORITATIVE FIRST. Exported as the order itself rather than as a comparator
+ * so a test can assert the ranking directly and a new source cannot be added without choosing a
+ * rung for it.
+ */
+export const DERIVED_EVIDENCE_RANK: readonly DerivedEvidence[] = ['achievement', 'reward']
+
+/** One source's verdict: which quest keys it vouches for, under its own name. */
+export interface DerivedCompletionSource {
+  evidence: DerivedEvidence
+  /** quest keys this source can prove at least one turn-in of */
+  vouched: ReadonlySet<string>
+}
+
+/**
+ * WHICH derived source speaks for this quest, or null when none does.
+ *
+ * Callers apply it ONLY where the ledger said nothing (`ledgerCount === 0`); this function
+ * deliberately does not take the ledger, so it cannot be the place someone quietly teaches derived
+ * evidence to override a recorded event.
+ *
+ * The sources may arrive in any order — the rank decides, not the array — which is what stops the
+ * answer from depending on the order a hook happens to memoize things in.
+ */
+export function derivedCompletion(
+  key: string,
+  sources: readonly DerivedCompletionSource[]
+): DerivedEvidence | null {
+  for (const evidence of DERIVED_EVIDENCE_RANK) {
+    if (sources.some((s) => s.evidence === evidence && s.vouched.has(key))) return evidence
+  }
+  return null
 }

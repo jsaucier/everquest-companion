@@ -1,0 +1,44 @@
+{{Era}}
+
+{{Spellpage|test
+
+| spellname = Heritage of Mistmoore
+| spellicon = 
+
+| description = Increases your health and mana regeneration while also decreasing your resistances to magic and fire.
+
+| classes =
+
+| items_with_effect =
+
+* [[Mistmoore Heirloom Ring]]
+
+| slots =
+
+| skill = [[Skill Abjuration|Abjuration]]
+
+| mana = 
+| range = 
+| casting_time = Instant
+| fizzle_time = 
+| recast_time = 
+| duration = 10:00
+| target_type = Self
+| spell_type = Beneficial
+| resist = 
+
+| other =
+
+| msg_cast_on_you =
+| msg_cast_on_other =
+| msg_wears_off =
+
+| where_to_obtain =
+
+}}
+
+== Notes ==
+
+* Adds +1 HP [[Regen]], +1 Mana Regen, -10 SV Magic, -15 SV Fire. Two rings or exaltations can be worn to double the effects. The effect cannot be upgraded or improved due to being an [[Exaltations|Exaltation.]]
+
+[[Category:Focus Effects]]

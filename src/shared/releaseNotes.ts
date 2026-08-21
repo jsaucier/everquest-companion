@@ -125,6 +125,71 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '1.7.0',
+    date: '2026-08-20',
+    entries: [
+      {
+        kind: 'new',
+        text: 'A Plane of Sky quest whose reward already sits in your bags, bank, or keyring now shows as Turned in - worked out from your inventory export, labelled so you can tell it from a hand-in the app watched, and anything your own record says outranks it. Built on a community pull request - thank you.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Run /outputfile achievements and the app reads it: Sky quests the game itself has already credited you for are marked complete. This is the answer for progress made on another PC, or from before you installed.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The Loot tab can start a new session from right now, one click. The old session keeps its totals and stays pickable; the new one counts from the moment you pressed the button - made for instance resets.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Finishing Blow has its own line in the Procs panel: how many landed and what the blows actually added. The damage was always counted - it hid inside your weapon skills with nothing saying so.',
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: 'Everyone on the damage meter now means every fight the log can see: players fighting near you appear without being grouped or invited. Your own rows and numbers are untouched, and Group scope still shows only your group.',
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: 'A combatant the log alone cannot prove is a person is labelled as just that - a stranger and a stranger’s summoned pet are spelled the same way in the log, and the meter refuses to guess.'
+      },
+      {
+        kind: 'changed',
+        text: 'An instant clicky you own - Firestrike, Gravity Flux - books as a click now, not a proc, so no more per-minute rate stamped on an ability you pressed yourself. Real weapon procs are untouched.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Overlays parked along the bottom edge of the screen stop creeping upward at every login.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Re-running /outputfile inventory is noticed even when the game replaces the file rather than rewriting it - and the Sky tab’s freshness line gained a quiet Refresh for when you would rather not wait.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Ranger’s Swarm of Pain shows on the Debuffs overlay, counting down.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Bard Test of Wind’s reward is named what the game names it: Amulet of the Fae.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Typing a future end time into the custom range picker no longer snaps back while you type.',
+        fromReport: true
+      }
+    ]
+  },
+  {
     version: '1.6.0',
     date: '2026-08-19',
     entries: [

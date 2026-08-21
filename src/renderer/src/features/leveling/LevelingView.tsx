@@ -419,6 +419,8 @@ function ChartsColumn(p: {
   available: SliceId[]
   onPick: (id: SliceId) => void
   onCustom: (range: SliceRange) => void
+  /** The RAW custom pick, so the two datetime fields display what was typed (JOS-436). */
+  custom: SliceRange | null
 }): JSX.Element {
   const { chrome, scope, charts } = p
   return (
@@ -431,7 +433,14 @@ function ChartsColumn(p: {
           prefix is unchanged — `ScopeBar` spells the slice half's testids `leveling-slice…`. Since
           JOS-301 it is ONE row of controls with ONE caption line under it, so this is a single band
           of the column rather than the three stacked bars the owner called unbalanced. */}
-      <ScopeBar available={p.available} slice={p.slice} onPick={p.onPick} onCustom={p.onCustom} testId="leveling" />
+      <ScopeBar
+        available={p.available}
+        slice={p.slice}
+        onPick={p.onPick}
+        onCustom={p.onCustom}
+        custom={p.custom}
+        testId="leveling"
+      />
       <AaOverTimePanel points={p.aaPoints} drawn={charts.aaVisible} aaEarned={p.aaEarned} chrome={chrome} />
       <LevelOverTimePanel
         segments={charts.segVisible}
@@ -521,7 +530,7 @@ export default function LevelingView({
   // now, and a session that spans a loadout swap sums `levelEquiv` straight across the boundary. The
   // Loot ledger's own opening (`All`, hiding nothing) is untouched — useTimeslice's header states
   // why those two coexist under one shared pick.
-  const { bounds, available, slice, setId, setCustom } = useTimeslice(useExtraTs(sortedLevels, aaCumulative), 'zoneSession')
+  const { bounds, available, slice, setId, setCustom, custom } = useTimeslice(useExtraTs(sortedLevels, aaCumulative), 'zoneSession')
   const charts = useLevelingCharts({ prog, aas: aaCumulative, segments: levelSegments, slice, bounds })
   // The SCOPE on its own — the only one of the three the reads below need before the charted gate
   // has been asked. `chrome` and `curve` are null on exactly the same condition it is, and all
@@ -608,6 +617,7 @@ export default function LevelingView({
               available={available}
               onPick={setId}
               onCustom={setCustom}
+              custom={custom}
             />
           ) : (
             <Typography color="text.secondary" sx={{ p: 2 }} data-testid="leveling-empty">
