@@ -52,7 +52,11 @@ import type { QuestProgress } from './useProgress'
 import { sortQuests } from './questSort'
 // The derived-evidence ladder (JOS-429) — shared with main's side of the ledger so "which source
 // speaks" has ONE definition. Relative value import, per the repo's node-tested-module rule.
-import { derivedCompletion, type DerivedCompletionSource } from '../../../../shared/questTurnIns'
+import {
+  derivedEvidence,
+  DERIVED_EVIDENCE_FLOORS,
+  type DerivedCompletionSource
+} from '../../../../shared/questTurnIns'
 
 /** The part of a quest's progress this rule reads. Structural, so a test needs no whole quest. */
 export interface CompletableQuest {
@@ -166,17 +170,28 @@ export function firstTimeReady(quests: readonly QuestProgress[]): QuestProgress[
  * instead), and taking that statement back falls to the floor rather than to zero — the evidence is
  * still there, and the next read would honestly re-assert it.
  *
- * AND TWO DERIVED SOURCES DO NOT ADD EITHER. `derivedCompletion` picks ONE — the highest-ranked
- * that vouches for this quest — because the achievement and the reward in the bag are two witnesses
+ * AND TWO DERIVED SOURCES DO NOT ADD EITHER. `derivedEvidence` picks ONE — the highest-ranked
+ * that speaks for this quest — because the achievement and the reward in the bag are two witnesses
  * to the same turn-in, not two turn-ins. shared/questTurnIns.ts carries the ladder and the argument
  * for its order.
+ *
+ * AND SINCE JOS-441 A RUNG CAN SPEAK WITHOUT FLOORING. `'class-unlock'` — the cascaded `C` under a
+ * class whose unlock was granted rather than earned — sets `completionEvidence` and moves NOTHING
+ * else, so the row keeps the ledger's count (zero, for the quests this ticket is about) and still
+ * carries what the file claims about it. That is why the label field is no longer named for
+ * completion in spirit: it is "which derived source speaks for this row", and whether it counts is
+ * `DERIVED_EVIDENCE_FLOORS`'s answer, not this function's.
  */
 export function withDerivedCompletion(
   q: QuestProgress,
   sources: readonly DerivedCompletionSource[]
 ): QuestProgress {
   if (q.turnIns > 0) return q
-  const evidence = derivedCompletion(q.key, sources)
+  const evidence = derivedEvidence(q.key, sources)
   if (evidence === null) return q
+  // A NON-FLOORING RUNG IS LABELLED AND NOTHING ELSE (JOS-441). `'class-unlock'` lands here: the
+  // row is carried onto the quest so the badge can say what the file claims and why it is not being
+  // counted, while `turnIns` and `completed` are left exactly as the ledger left them.
+  if (!DERIVED_EVIDENCE_FLOORS[evidence]) return { ...q, completionEvidence: evidence }
   return { ...q, turnIns: 1, completed: true, completionEvidence: evidence }
 }

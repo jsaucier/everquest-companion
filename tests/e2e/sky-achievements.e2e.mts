@@ -28,9 +28,11 @@
  *     empty on this launch and no inventory export is staged. Every badge below therefore has
  *     exactly one possible source.
  *   * `Primitive_freeport-Achievements.txt` is the owner's own real dump, and it marks 48 of the 95
- *     Sky quests. MEASURED over the committed pair (tests/achievementInference.test.mts asserts the
- *     same 48 from the other side), so "48 of 95" is itself an assertion about the join rather than
- *     a number to trust.
+ *     Sky quests `C` — of which 44 COUNT and four do not, because they sit under the one class the
+ *     owner confirmed and the server cascaded the grant into their rows (JOS-441). MEASURED over the
+ *     committed pair (tests/achievementInference.test.mts asserts the same 44 and names the same
+ *     four from the other side), so both numbers are assertions about the join rather than numbers
+ *     to trust.
  *
  * THIS IS THE TICKET'S ACCEPTANCE CRITERION RUN END TO END: the owner's own achievements file,
  * loaded by the real app, marks their completed Sky quests — and the second launch proves the other
@@ -61,6 +63,8 @@ const COUNTS = '[data-testid="posky-counts"]'
 const ROW = '[data-testid="posky-quest-row"]'
 const SUMMARY = `${ROW} .MuiAccordionSummary-root`
 const BADGE = '[data-testid="posky-turned-in"]'
+/** The JOS-441 chip: evidence that speaks without counting. Its OWN testid, never the one above. */
+const CLASS_UNLOCK = '[data-testid="posky-class-unlock"]'
 const UNDO = '[data-testid="posky-undo-turnin"]'
 const TURNIN_COUNT = '[data-testid="posky-turnin-count"]'
 /** JOS-145's box: the has-EVER-turned-in reading of done, which a derived count has to satisfy. */
@@ -68,13 +72,26 @@ const HIDE_TURNED_IN = '[data-testid="posky-hide-turned-in"]'
 /** The kind's own freshness line (JOS-429), the SAME component the inventory dump gets. */
 const FRESH = '[data-testid="posky-achievements-fresh"]'
 
-/** The owner's own dump, and how many of the 95 quests it marks (measured, and asserted below). */
+/**
+ * The owner's own dump, and how many of the 95 quests it COUNTS (measured, and asserted below).
+ *
+ * 48 rows read `C`; four of them are the confirmed Paladin's, where the server cascaded the grant
+ * into every component and the row stopped being about the quest (JOS-441). So 44 is the number of
+ * quests this file can floor, and the four it cannot are asserted separately below rather than being
+ * quietly missing from a total.
+ */
 const DUMP = 'Primitive_freeport-Achievements.txt'
-const MARKED = 48
-/** A quest the dump marks `C` — Dark Cloak of the Sky. */
+const MARKED = 44
+/** A quest the dump marks `C` under an EARNED class — Dark Cloak of the Sky. */
 const VOUCHED = 'Ranger Test of Defense'
 /** A quest the same dump marks `I` — Cudgel of the Fool. The control. */
 const UNVOUCHED = 'Berserker Test of Fools Errand'
+/**
+ * A quest under the class the owner CONFIRMED — Truvinan, marked `C` by the cascade and by nothing
+ * else. No inventory export is staged on this launch, so the reward inference cannot speak for it
+ * either and what is left on screen is the class-unlock chip alone.
+ */
+const CASCADED = 'Paladin Test of Compassion'
 
 /** How many quests the filters leave, off the counts line. `null` when it is not mounted. */
 function filteredCount(page: Page): Promise<number | null> {
@@ -85,21 +102,31 @@ function filteredCount(page: Page): Promise<number | null> {
 }
 
 /** The badge as the DOM states it: the count, whether it is derived, and WHICH source said so. */
-function badge(
-  page: Page
-): Promise<{ count: number | null; inferred: string | null; evidence: string | null; title: string }> {
-  return page.evaluate((sel) => {
-    const el = document.querySelector(sel)
-    if (!el) return { count: null, inferred: null, evidence: null, title: '' }
+function chip(
+  page: Page,
+  sel: string
+): Promise<{
+  count: number | null
+  inferred: string | null
+  evidence: string | null
+  title: string
+  label: string
+}> {
+  return page.evaluate((s) => {
+    const el = document.querySelector(s)
+    if (!el) return { count: null, inferred: null, evidence: null, title: '', label: '' }
     const n = el.getAttribute('data-count')
     return {
       count: n === null ? null : Number(n),
       inferred: el.getAttribute('data-inferred'),
       evidence: el.getAttribute('data-evidence'),
-      title: el.getAttribute('title') ?? ''
+      title: el.getAttribute('title') ?? '',
+      label: el.textContent ?? ''
     }
-  }, BADGE)
+  }, sel)
 }
+
+const badge = (page: Page): ReturnType<typeof chip> => chip(page, BADGE)
 
 /** The undo control's state and the one thing it has to say for itself when it cannot act. */
 function undo(page: Page): Promise<{ disabled: boolean | null; title: string }> {
@@ -139,7 +166,7 @@ async function openSky(page: Page): Promise<boolean> {
 
 /**
  * THE COUNT, FIRST — because the claim is that the dump marks the quests it marks and NOT the whole
- * Plane, and because 48 is a big enough number that a blanket bug would look like success on any
+ * Plane, and because 44 is a big enough number that a blanket bug would look like success on any
  * single row.
  *
  * COUNTED OFF THE COUNTS LINE, NOT OFF THE BADGES ON SCREEN — the JOS-191 paging argument, exactly
@@ -189,6 +216,11 @@ async function stepAMarkedQuestReadsAsATurnIn(page: Page): Promise<void> {
     `data-evidence=${String(b.evidence)}`
   )
   check(
+    'THE BADGE ITSELF READS DIFFERENT FROM AN OBSERVED TURN-IN, not only its hover (JOS-441)',
+    b.label.includes('Turned in') && b.label.includes('achievements'),
+    b.label
+  )
+  check(
     '…in words, on hover, naming the export as the evidence',
     b.title.includes('achievements export'),
     b.title
@@ -224,6 +256,42 @@ async function stepAnUnearnedQuestIsUntouched(page: Page): Promise<void> {
     '…and its undo is dead for the OLD reason, with the old words',
     u.title === 'Nothing to take back',
     u.title
+  )
+}
+
+/**
+ * THE DEFECT ITSELF, ON SCREEN (JOS-441). Three v1.7.0 reporters watched Sky quests they had never
+ * run come back "Turned in" after `/outputfile achievements`, because the class unlock they were
+ * granted cascaded `C` into every component. This is that row: it does NOT read as a turn-in, it
+ * carries its own chip under its own testid, and the chip says what the file claims and why the tab
+ * is not counting it — so nobody has to guess whether the app is broken or the evidence is.
+ */
+async function stepACascadedQuestIsTrackedButNotCounted(page: Page): Promise<void> {
+  if (!(await openQuest(page, CASCADED))) return
+  const b = await badge(page)
+  check(
+    `${CASCADED} does NOT read as turned in — the reports' own sentence, refused`,
+    b.count === null,
+    `data-count=${String(b.count)}`
+  )
+  const u = await chip(page, CLASS_UNLOCK)
+  check(
+    '…yet the evidence is still tracked and drawn, under its own testid',
+    u.evidence === 'class-unlock',
+    `data-evidence=${String(u.evidence)}`
+  )
+  check('…with a count of zero on the chip', u.count === 0, `data-count=${String(u.count)}`)
+  check('…labelled as what it is rather than as a turn-in', u.label.includes('Class unlock'), u.label)
+  check(
+    '…and saying, on hover, that the class unlock was granted',
+    u.title.includes('NOT counted') && u.title.includes('Primary Class Unlock Token'),
+    u.title
+  )
+  const un = await undo(page)
+  check(
+    'the undo is dead because there is nothing to take back, not because we refuse',
+    un.disabled === true && un.title.includes('Nothing to take back'),
+    `disabled=${String(un.disabled)} title=${un.title}`
   )
 }
 
@@ -301,6 +369,7 @@ async function main(): Promise<void> {
     await stepTheDumpMarksExactlyWhatItMarks(page)
     await stepAMarkedQuestReadsAsATurnIn(page)
     await stepAnUnearnedQuestIsUntouched(page)
+    await stepACascadedQuestIsTrackedButNotCounted(page)
     await stepTheFreshnessLineSpeaksForTheKind(page)
     if (failures.length) await dumpArtifacts(page, 'sky-achievements-FAIL')
   } finally {

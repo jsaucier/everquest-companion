@@ -125,6 +125,40 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '1.8.0',
+    date: '2026-08-21',
+    entries: [
+      {
+        kind: 'new',
+        text: 'Start a new session works on the damage meter now, not just Loot: one click closes the running Overall, keeps it browsable in the picker, and starts a fresh one counting from that moment. The zone meter overlay carries a small flag button for it, so an instance reset never means leaving the game.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'If your watched log goes quiet while another character’s log starts growing, the app asks - once - whether to switch to it. It never asks twice about the same log and never switches by itself.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Lifebite - the new Necromancer and Shadow Knight lifetap from the August 18 game patch - is in the spell catalog, on the level-up cards, and slotted into the lifetap upgrade ladder, along with everything else that patch added.'
+      },
+      {
+        kind: 'new',
+        text: 'Bug reports can now attach your achievements export the way they attach your inventory - same preview, same checkbox, nothing sent without your say-so.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A class unlocked with a token, or by confirming your primary class, no longer marks that class’s Sky quests as turned in. The app now tells a quest you actually did from one the game unlocked for you - and each completed quest’s badge says which kind of proof it has: a hand-in the app watched, your achievements file, or the reward sitting in your bags.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Invisibility Versus Undead is one spell again - the wiki carried it on two pages under two spellings, and the copy the game does not run is gone. It is named what the game prints.'
+      }
+    ]
+  },
+  {
     version: '1.7.0',
     date: '2026-08-20',
     entries: [

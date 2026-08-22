@@ -190,27 +190,40 @@ export function turnInBadgeLabel(count: number): string {
 //
 // The ledger above is EVENTS: a turn-in the log printed, a turn-in the user stated, a legacy
 // completion. Everything below is the other kind of knowledge — a completion nobody recorded that
-// something else nonetheless PROVES — and there are two of them now, which is why the ordering is
-// a shared rule instead of an if-statement in whichever module happened to run second.
+// something else nonetheless CLAIMS — and there are three of them now, which is why the ordering is
+// a shared rule instead of an if-statement in whichever module happened to run second. "Claims"
+// rather than "proves" since JOS-441: one of the three deliberately proves nothing about the quest
+// it names, and the ladder is where that is written down.
 //
 // THE ORDER, AND THE ARGUMENT FOR IT. `classUnlocks.ts` states the model this borrows: a turn-in is
 // evidence of PROGRESS, the achievement line is evidence of the ANSWER. That distinction is exactly
-// what separates the two derived sources here.
+// what separates the derived sources here.
 //
-//   'achievement'  THE SERVER'S OWN ANSWER. `/outputfile achievements` carries one row per Sky
-//                  quest reward and a status the SERVER decided; `C` means it has already ruled
-//                  that you obtained that reward. Nothing about a bag, a trade or a wiki page can
-//                  make that reading wrong, and it keeps being true after the item is destroyed,
-//                  sold or left in a bank the export never opened.
+//   'achievement'  THE SERVER'S OWN ANSWER ABOUT THIS QUEST. `/outputfile achievements` carries one
+//                  row per Sky quest reward and a status the SERVER decided; `C` means it has
+//                  already ruled that you obtained that reward. Nothing about a bag, a trade or a
+//                  wiki page can make that reading wrong, and it keeps being true after the item is
+//                  destroyed, sold or left in a bank the export never opened.
 //   'reward'       AN INFERENCE FROM POSSESSION (issue #27) — the reward is in your inventory
 //                  export and it cannot be obtained any other way. Sound, and gated hard
 //                  (rewardInference.ts refuses the two rewards that can move), but still a
 //                  conclusion this app drew from a bag rather than an answer the game gave.
+//   'class-unlock' THE SERVER'S ANSWER TO A DIFFERENT QUESTION (JOS-441). The same `C`, on the same
+//                  kind of row, under a class whose unlock the file itself says was GRANTED — by
+//                  confirming your primary class, or by spending a Primary Class Unlock Token. The
+//                  server cascaded that grant down into every component, so the row answers "is this
+//                  class unlocked", not "did you run this quest". IT NEVER FLOORS A COMPLETION.
 //
-// WHY THE ORDER IS OBSERVABLE AT ALL, given that both floor the count at exactly 1 today: the LABEL
-// differs, and the label is what the badge's hover and the undo control's refusal say out loud. A
-// reader who cannot tell "the game says so" from "we worked it out from your bag" cannot tell which
-// rows to trust — the same reason classUnlocks.ts labels its derived rows.
+// THE THIRD RUNG IS A RUNG AND NOT A FILTER, by owner ruling 2026-08-21: class-unlock evidence and
+// per-quest evidence are SEPARATELY TRACKED KINDS, each stored and labelled as itself. Dropping the
+// cascaded rows at parse time would fix the count and lose the fact — and the fact is what a player
+// staring at a quest they know they never ran actually needs to be told. So it is carried all the
+// way to the badge and shown as what it is, with the completion it does not prove withheld.
+//
+// WHY THE ORDER IS OBSERVABLE AT ALL, given that the two flooring rungs floor the count at exactly 1:
+// the LABEL differs, and the label is what the badge SAYS — since JOS-441 at badge level, not only
+// in a hover. A reader who cannot tell "the game says so" from "we worked it out from your bag"
+// cannot tell which rows to trust — the same reason classUnlocks.ts labels its derived rows.
 //
 // THEY DO NOT ADD. Two sources vouching for one quest are two witnesses to the SAME turn-in, not
 // two turn-ins: the reward in the bag is the reward the achievement is about. `max(ledger, 1)` is
@@ -221,25 +234,48 @@ export function turnInBadgeLabel(count: number): string {
 // ledger said it — count and label both — because a derived floor can only ever say "at least
 // once", and the ledger may already know it happened four times.
 
-/** A derived completion source, named. Ordered by authority in `DERIVED_EVIDENCE_RANK`. */
-export type DerivedEvidence = 'achievement' | 'reward'
+/** A derived evidence source, named. Ordered by authority in `DERIVED_EVIDENCE_RANK`. */
+export type DerivedEvidence = 'achievement' | 'reward' | 'class-unlock'
 
 /**
  * The ladder, MOST AUTHORITATIVE FIRST. Exported as the order itself rather than as a comparator
  * so a test can assert the ranking directly and a new source cannot be added without choosing a
  * rung for it.
+ *
+ * `'class-unlock'` is LAST rather than absent: it is the weakest thing any source here says, but it
+ * still speaks, and where a stronger rung also vouches for the quest that stronger rung is the one
+ * the row should be labelled with.
  */
-export const DERIVED_EVIDENCE_RANK: readonly DerivedEvidence[] = ['achievement', 'reward']
+export const DERIVED_EVIDENCE_RANK: readonly DerivedEvidence[] = [
+  'achievement',
+  'reward',
+  'class-unlock'
+]
+
+/**
+ * WHICH RUNGS MAY FLOOR A QUEST AT ONE TURN-IN — the JOS-441 split, as a total table so a rung
+ * cannot be added without answering the question.
+ *
+ * `'class-unlock'` is `false` and that single `false` IS the fix: the cascaded `C` under a granted
+ * class unlock is real evidence about the unlock and no evidence at all about the quest, so it is
+ * tracked, labelled and shown while proving nothing. Everything else here proves at least one
+ * turn-in of the quest it names.
+ */
+export const DERIVED_EVIDENCE_FLOORS: Record<DerivedEvidence, boolean> = {
+  achievement: true,
+  reward: true,
+  'class-unlock': false
+}
 
 /** One source's verdict: which quest keys it vouches for, under its own name. */
 export interface DerivedCompletionSource {
   evidence: DerivedEvidence
-  /** quest keys this source can prove at least one turn-in of */
+  /** quest keys this source speaks about — proof of a turn-in only if its rung floors */
   vouched: ReadonlySet<string>
 }
 
 /**
- * WHICH derived source speaks for this quest, or null when none does.
+ * WHICH derived source speaks for this quest AT ALL, or null when none does — flooring or not.
  *
  * Callers apply it ONLY where the ledger said nothing (`ledgerCount === 0`); this function
  * deliberately does not take the ledger, so it cannot be the place someone quietly teaches derived
@@ -248,7 +284,7 @@ export interface DerivedCompletionSource {
  * The sources may arrive in any order — the rank decides, not the array — which is what stops the
  * answer from depending on the order a hook happens to memoize things in.
  */
-export function derivedCompletion(
+export function derivedEvidence(
   key: string,
   sources: readonly DerivedCompletionSource[]
 ): DerivedEvidence | null {
@@ -256,4 +292,22 @@ export function derivedCompletion(
     if (sources.some((s) => s.evidence === evidence && s.vouched.has(key))) return evidence
   }
   return null
+}
+
+/**
+ * WHICH derived source may FLOOR this quest's count at one, or null when none may.
+ *
+ * The narrowing of `derivedEvidence` to the rungs `DERIVED_EVIDENCE_FLOORS` admits, kept as its own
+ * exported function because "what does this row say" and "what may this row change" became two
+ * questions the moment a rung answered them differently (JOS-441).
+ */
+export function derivedCompletion(
+  key: string,
+  sources: readonly DerivedCompletionSource[]
+): DerivedEvidence | null {
+  const evidence = derivedEvidence(
+    key,
+    sources.filter((s) => DERIVED_EVIDENCE_FLOORS[s.evidence])
+  )
+  return evidence
 }

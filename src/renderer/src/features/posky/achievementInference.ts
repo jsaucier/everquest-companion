@@ -19,6 +19,16 @@
 // rewardInference.ts's floor is sound but it is still a conclusion drawn from a bag; this is not a
 // conclusion at all. Hence `DERIVED_EVIDENCE_RANK` puts 'achievement' above 'reward'.
 //
+// AND WHY THAT PARAGRAPH IS NOW HALF THE STORY (JOS-441). It is true of a row under a class you
+// UNLOCKED BY PLAYING, and false of the same row under a class whose unlock was GRANTED — confirming
+// your primary class, or spending a Primary Class Unlock Token, cascades `C` into every component,
+// so the server's answer is about the unlock and not about the quest. Three v1.7.0 reports in the
+// hours after JOS-429 shipped said exactly that. The file itself discriminates the two (the pseudo-
+// row flags — shared/outputs/achievements.ts's cascade section carries the measurement), the
+// projection stamps each claim with its `grant`, and the join below sorts the rows into the two
+// ladder rungs accordingly. Nothing is filtered away: the cascaded rows are still read, still
+// stored, still shown — under the name of what they actually are.
+//
 // THE FILE HALF LIVES IN shared/outputs/achievements.ts and its header carries the measured format.
 // This module is the JOIN, and it is here for the same reason `rewardInference.ts` is: the Sky quest
 // set is the RENDERER's bundle, so main persists the flat claims (`ProgressState.achievementUnlocks`)
@@ -64,7 +74,7 @@
 // If a re-scrape ever lands one of these upstream, the row stops matching anything and the audit
 // test fails — the `SkyQuestReward.from` idempotence rule, restated for this table.
 
-import type { ClassUnlockClaim } from '@shared/outputs/achievements'
+import type { ClassUnlockClaim, ClassUnlockGrant } from '@shared/outputs/achievements'
 import type { PoskyQuest } from '@shared/types'
 import { questKey } from './keys'
 
@@ -163,13 +173,35 @@ export function achievementItemsFor(className: string, reward: string): string[]
 }
 
 /**
- * WHICH QUESTS THE LOADED ACHIEVEMENTS DUMP VOUCHES FOR — the set the ladder consults under the
- * name 'achievement'.
+ * THE TWO SETS THE LOADED DUMP SPEAKS ABOUT, kept apart (JOS-441).
+ *
+ * `quest` is the ladder's `'achievement'` rung — rows under a class whose unlock the file says was
+ * EARNED, and which therefore answer "did you run this quest". `classUnlock` is the `'class-unlock'`
+ * rung — the identical `C` rows under a class the file says was unlocked by confirmation or by a
+ * token, where the server cascaded the grant down into every component and the row answers a
+ * different question entirely. Both are returned because both are tracked; only the first floors.
+ */
+export interface AchievementVouchedQuests {
+  quest: Set<string>
+  classUnlock: Set<string>
+}
+
+/**
+ * WHICH QUESTS THE LOADED ACHIEVEMENTS DUMP SPEAKS FOR, SPLIT BY WHICH QUESTION ITS ROWS ANSWER.
  *
  * `unlocks` is `ProgressState.achievementUnlocks` as stored: the EARNED `Obtain` rows only, in the
- * game's own spelling (shared/outputs/achievements.ts takes that projection). Absent means the
- * command has never been run on this machine, which vouches for nothing — a different state from a
- * dump that ran and had nothing to say, and both correctly yield an empty set here.
+ * game's own spelling, each carrying the `grant` its class's pseudo-rows stated
+ * (shared/outputs/achievements.ts takes that projection). Absent means the command has never been
+ * run on this machine, which vouches for nothing — a different state from a dump that ran and had
+ * nothing to say, and both correctly yield empty sets here.
+ *
+ * A CLAIM WITH NO `grant` IS DROPPED, and that is the v1.7.0 store migration stated as one line. A
+ * claim persisted by the build this ticket fixes cannot say which kind it is, so it is not usable as
+ * either — and the cost is nothing in the ordinary case, because `loadAchievementsNow` re-reads the
+ * export at startup and on every file change, so a store whose file is still on disk is corrected
+ * before the renderer ever sees it. A store whose export has since been deleted loses its derived
+ * completions until the player runs `/outputfile achievements` once, which is the honest answer:
+ * that store contains rows this build knows it cannot interpret.
  *
  * A quest with no reward in the data never matches: that is missing data about a quest, not a
  * finished one (the `hasEveryItem` refusal, law 1). There is no `isUntradeable` gate and there must
@@ -179,17 +211,22 @@ export function achievementItemsFor(className: string, reward: string): string[]
 export function achievementVouchedQuests(
   quests: readonly Pick<PoskyQuest, 'className' | 'name' | 'reward'>[],
   unlocks: readonly ClassUnlockClaim[] | undefined
-): Set<string> {
-  const vouched = new Set<string>()
+): AchievementVouchedQuests {
+  const vouched: AchievementVouchedQuests = { quest: new Set(), classUnlock: new Set() }
   if (!unlocks || unlocks.length === 0) return vouched
-  const earned = new Set(unlocks.map((u) => joinKey(u.className, u.item)))
+  const earned = new Map<string, ClassUnlockGrant>()
+  for (const u of unlocks) {
+    if (u.grant === undefined) continue
+    earned.set(joinKey(u.className, u.item), u.grant)
+  }
   for (const q of quests) {
     if (q.reward === undefined) continue
     for (const item of achievementItemsFor(q.className, q.reward)) {
-      if (earned.has(joinKey(q.className, item))) {
-        vouched.add(questKey(q))
-        break
-      }
+      const grant = earned.get(joinKey(q.className, item))
+      if (grant === undefined) continue
+      if (grant === 'quest') vouched.quest.add(questKey(q))
+      else vouched.classUnlock.add(questKey(q))
+      break
     }
   }
   return vouched

@@ -9,6 +9,14 @@
 // cut `useHeldItems` and `useTurnInLedger` already made inside it. Nothing moved but the two memos
 // and the list they build.
 //
+// THERE ARE THREE SOURCES AND TWO MEMOS (JOS-441), which is not a mismatch: the achievements dump
+// speaks with two voices out of ONE join — the rows under a class you unlocked by playing, and the
+// rows under a class whose unlock was granted and cascaded. `achievementVouchedQuests` returns both
+// sets from one pass because the discrimination is per CLAIM, decided by the `grant` the file
+// stamped on it, and splitting the pass would mean joining the same 95 rows twice to answer one
+// question. The third rung is listed here so nothing downstream has to know the sets came from one
+// place, and so `DERIVED_EVIDENCE_FLOORS` stays the only thing that decides which of them counts.
+//
 // THE ORDER OF THE LIST DECIDES NOTHING. `derivedCompletion` ranks by NAME
 // (`DERIVED_EVIDENCE_RANK`), precisely so the answer cannot depend on the order a hook happened to
 // assemble its sources in; the array below is written strongest-first only because that is how it
@@ -52,8 +60,9 @@ export function useDerivedCompletions(
   return useMemo(
     () => (q: QuestProgress) =>
       withDerivedCompletion(q, [
-        { evidence: 'achievement', vouched: achievement },
-        { evidence: 'reward', vouched: reward }
+        { evidence: 'achievement', vouched: achievement.quest },
+        { evidence: 'reward', vouched: reward },
+        { evidence: 'class-unlock', vouched: achievement.classUnlock }
       ]),
     [achievement, reward]
   )

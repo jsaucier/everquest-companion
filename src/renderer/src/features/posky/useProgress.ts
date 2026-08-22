@@ -162,16 +162,21 @@ export interface QuestProgress {
    *  only need the badge (the Ignored list) and for sorts that predate the count. */
   completed: boolean
   /**
-   * WHICH DERIVED SOURCE the count above came from, when it came from one (issue #27, extended by
-   * JOS-429). Present only when derived evidence is the count's ONLY source — any ledger evidence
-   * wins and leaves this absent — so the UI can say where the reading came from and the undo
-   * control can say why there is nothing to take back (the classUnlocks.ts observed-vs-derived
-   * precedent). Derived on every read, never persisted.
+   * WHICH DERIVED SOURCE SPEAKS FOR THIS ROW (issue #27, extended by JOS-429 and JOS-441). Present
+   * only when the ledger said nothing — any ledger evidence wins and leaves this absent — so the UI
+   * can say where the reading came from and the undo control can say why there is nothing to take
+   * back (the classUnlocks.ts observed-vs-derived precedent). Derived on every read, never persisted.
    *
-   * It is a NAME rather than a boolean because there are two sources now and they are not equally
-   * strong: `'achievement'` is the server's own answer out of `/outputfile achievements`,
-   * `'reward'` is the inference from the reward sitting in your inventory export. The ranking, and
-   * why a reader has to be told which one spoke, live in shared/questTurnIns.ts.
+   * IT NO LONGER IMPLIES THE COUNT ABOVE IS ONE. Two of the three rungs floor `turnIns` at 1;
+   * `'class-unlock'` deliberately does not, so a row can carry this name with a count of zero and
+   * `completed: false`. `DERIVED_EVIDENCE_FLOORS` is the one place that difference is decided.
+   *
+   * It is a NAME rather than a boolean because the sources are not equally strong: `'achievement'`
+   * is the server's own answer about THIS QUEST out of `/outputfile achievements`, `'reward'` is the
+   * inference from the reward sitting in your inventory export, and `'class-unlock'` is the same
+   * achievements row under a class whose unlock was granted rather than earned — the server's answer
+   * to a different question, which proves nothing here. The ranking, and why a reader has to be told
+   * which one spoke, live in shared/questTurnIns.ts.
    */
   completionEvidence?: DerivedEvidence
   /**

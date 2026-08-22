@@ -72,8 +72,12 @@ import type {
   // a second hand-written copy of an identical shape is a shape that will eventually disagree
   // with itself.
   FeedbackInventoryPreview,
+  /** The achievements dump's preview (JOS-441), taken from the contract for the same reason. */
+  FeedbackAchievementsPreview,
   LogSliceMeta,
-  SubmitErrorCode
+  FeedbackContext,
+  SubmitErrorCode,
+  SubmitResult as SharedSubmitResult
 } from '../shared/feedback'
 // Usage analytics (docs/plans/usage-analytics.md). The event union is a SHARED contract — the
 // renderer builds values of it, main re-validates them at the handler, and wave A2's Lambda
@@ -135,22 +139,14 @@ export interface ShareSaveResult {
 // `ShareSaveResult` above: main's `src/main/feedback/index.ts` names the same shapes on its own
 // side of the boundary, and neither tsconfig lets the renderer import that file.
 
-/** Reply of feedback:context — everything the dialog needs to render its header + gate Send. */
-export interface FeedbackContext {
-  env: FeedbackEnv
-  /** false when this build has no `FEEDBACK_API_URL` compiled in (every build before wave F2).
-   *  The dialog SAYS so rather than letting Send fail — see docs/plans/feedback-triage.md §6.2. */
-  endpointConfigured: boolean
-  /** Reports waiting in the offline queue. */
-  queued: number
-  /** Is there a character log to slice at all? */
-  logAvailable: boolean
-  /** Is there a `/outputfile inventory` dump on disk? False ⇒ the control is disabled with the
-   *  command as its hint, never hidden (JOS-296). */
-  inventoryAvailable: boolean
-  /** The dump's mtime, epoch ms, or null — the JOS-253 freshness truth, before anything is read. */
-  inventoryUpdatedAt: number | null
-}
+/** Reply of feedback:context — TAKEN FROM THE SHARED CONTRACT, not re-declared.
+ *
+ *  The rule this file states for `FeedbackInventoryPreview` above, applied where it had been
+ *  ignored: main's `feedbackContext()` returns exactly this shape and the shared definition is
+ *  the one both sides already read, so a hand-written third copy here was a shape that would
+ *  eventually disagree with itself — and JOS-441 adding two fields to it was the third time all
+ *  three copies had to be edited in step. */
+export type { FeedbackContext } from '../shared/feedback'
 
 /**
  * Reply of feedback:buildSlice — the metadata plus a CAPPED preview. The gz BYTES never cross
@@ -164,19 +160,15 @@ export type FeedbackSlicePreview = LogSliceMeta & {
   windowMinutes: number
 }
 
-/** Reply of feedback:submit. NEVER a rejection: a network failure resolves with `queued:true`. */
+/** Reply of feedback:submit. NEVER a rejection: a network failure resolves with `queued:true`.
+ *
+ *  THE SHARED RESULT PLUS THE TWO DIALOG HINTS, expressed as that rather than retyped: `field`
+ *  lets an `invalid_payload` focus the offending input and `retryAfterSec` lets a
+ *  `quota_exceeded` say when, and neither is on the wire. Every other field — including each new
+ *  attachment's `…Uploaded` — comes from the contract and cannot drift from it. */
 export type SubmitResult =
-  | { ok: true; reportId: string; logUploaded: boolean; inventoryUploaded: boolean }
-  | {
-      ok: false
-      error: SubmitErrorCode
-      message: string
-      queued: boolean
-      /** Set for `invalid_payload` so the dialog can focus the offending input. */
-      field?: string
-      /** Set for `quota_exceeded` — seconds until the daily counter rolls over. */
-      retryAfterSec?: number
-    }
+  | Extract<SharedSubmitResult, { ok: true }>
+  | (Extract<SharedSubmitResult, { ok: false }> & { field?: string; retryAfterSec?: number })
 
 /** Args of feedback:submit's second parameter — re-validated at the handler. */
 export interface SubmitOpts {
@@ -185,6 +177,9 @@ export interface SubmitOpts {
   /** Attach the current `/outputfile inventory` dump (JOS-296). Default ON for bug reports —
    *  an owner ruling, and a VISIBLE checkbox: this is per-report consent, never a silent send. */
   attachInventory: boolean
+  /** Attach the current `/outputfile achievements` dump (JOS-441). Same default, same visible
+   *  checkbox, same per-report consent — one box per file, never one box for "my exports". */
+  attachAchievements: boolean
 }
 
 export type { CharacterRef, EqConfig, EqConfigResult, LogLine, LogSwitchNudge, LootEvent, ProgressState }
@@ -204,7 +199,14 @@ export type { PackInstallProgress, PackMutationResult, PackPreviewList, Registry
 export type { AppFocus, UpdateStatus }
 export type { CursorRingPrefs, OverlayAutoHidePrefs }
 export type { ShareApplyResult, SharePreview }
-export type { FeedbackDraft, FeedbackEnv, FeedbackInventoryPreview, LogSliceMeta, SubmitErrorCode }
+export type {
+  FeedbackAchievementsPreview,
+  FeedbackDraft,
+  FeedbackEnv,
+  FeedbackInventoryPreview,
+  LogSliceMeta,
+  SubmitErrorCode
+}
 export type { TelemetryEvent, TelemetryPayloadView, TelemetryPrefs }
 export type { PerfHudPrefs, PerfSample, StartupProfile }
 // Dev-only triage (above): re-exported for the same reason every other payload shape is — a
@@ -641,6 +643,9 @@ const api = {
    *  main's answer through the outputs registry, never a path the renderer supplies. */
   buildFeedbackInventory: (): Promise<FeedbackInventoryPreview> =>
     ipcRenderer.invoke(IPC.feedbackBuildInventory),
+  /** The same for the CURRENT `/outputfile achievements` dump (JOS-441), no argument either. */
+  buildFeedbackAchievements: (): Promise<FeedbackAchievementsPreview> =>
+    ipcRenderer.invoke(IPC.feedbackBuildAchievements),
   /** Submit. NEVER rejects: a network failure resolves `{ok:false, queued:true}` and the report
    *  is retried later; a 4xx resolves `{ok:false, queued:false}` and is not retried. */
   submitFeedback: (draft: FeedbackDraft, opts: SubmitOpts): Promise<SubmitResult> =>

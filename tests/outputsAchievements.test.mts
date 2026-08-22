@@ -183,7 +183,7 @@ test('the owner’s dump vouches for the rewards it marks C, and only those', ()
   )
 })
 
-test('the boilerplate components are never claims, even when they are C', () => {
+test('the boilerplate components are never claims, but they decide the grant (JOS-441)', () => {
   // Every class-unlock achievement carries two sentences that are not Obtain rows, and on a real
   // dump they can be COMPLETE: the owner is a Paladin, so that achievement's "will autocomplete if
   // you chose to confirm your Primary Class as a Paladin" row is C. It credits no quest.
@@ -203,6 +203,12 @@ test('the boilerplate components are never claims, even when they are C', () => 
   assert.equal(
     CLAIMS.some((c) => c.item.startsWith('This achievement')),
     false
+  )
+  // What it DOES add, since JOS-441: the `grant` every claim of that class then carries. The row is
+  // not a claim and never was; it is the file's own statement of which question the claims answer.
+  assert.deepEqual(
+    [...new Set(CLAIMS.filter((c) => c.className === 'Paladin').map((c) => c.grant))],
+    ['confirm']
   )
 })
 

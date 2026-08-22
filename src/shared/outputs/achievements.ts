@@ -43,6 +43,46 @@
 // row would mark every Paladin Sky quest done for every Paladin. Only the COMPONENT rows are read.
 //
 // ---------------------------------------------------------------------------
+// AND THE COMPONENT ROWS ARE NOT ALL PER-QUEST EVIDENCE EITHER (JOS-441). THE CASCADE.
+// ---------------------------------------------------------------------------
+// JOS-429 shipped in v1.7.0 and three reports landed within hours, from at least two users, all
+// saying one thing: Sky quests they had never run came back "Turned in" after `/outputfile
+// achievements`. 01M0JHFCYRD9ER1Q6NDY8YWPWC named a specific reward ("Amulet of void for instance I
+// have not done, but it shows turned in"), then diagnosed itself — "because I have bought tokens for
+// enchanter and berserker, and wizard is my primary, these will just automatically show as all
+// turned in" — and 01M0J9RHV7Y5F80E9NPSYVXM7Y said the same about the level-50 Primary Class Unlock
+// token. Reading the achievement row was never the only way to be wrong: WHEN A CLASS'S UNLOCK IS
+// GRANTED RATHER THAN EARNED, THE SERVER CASCADES `C` DOWN INTO THE `Obtain` COMPONENTS TOO. The
+// components are the answer to "did you unlock this class", not to "did you run this quest", and for
+// a granted unlock those two questions have different answers.
+//
+// WHAT DISCRIMINATES THEM, AND IT IS IN THE FILE. The two boilerplate sentences every class-unlock
+// achievement carries are not prose the client appends — they are COMPONENT ROWS WITH THEIR OWN
+// STATUS COLUMN, and the status says which grant happened. MEASURED across all sixteen classes of
+// the committed owner fixture (`tests/fixtures/Primitive_freeport-Achievements.txt`):
+//
+//   class        parent  Obtain C/total   "will autocomplete…"  "can be bypassed…"
+//   Paladin        C          4/4                  C                    I
+//   every other    I        1/6 … 5/7              I                    I
+//
+// Paladin is the class the owner CONFIRMED, and it is the only class whose `Obtain` rows are
+// unanimously `C` — every honestly-played class sits at a mixed 17%–71%. So the confirm half is not
+// a hypothesis: the autocomplete row's `C` and the all-components cascade appear together, on the
+// one class where a grant is known to have happened, and nowhere else in the file.
+//
+// THE TOKEN HALF IS ASSUMED, NOT MEASURED, AND `CLASS_UNLOCK_TOKEN_ROW` IS WHERE THAT ASSUMPTION
+// LIVES. No achievements export from a token user exists to read: all three reports predate the
+// attachment (feedback/achievements.ts ships it now), their log slices carry only the `Outputfile
+// Complete:` receipt, and the owner holds the live-token experiment as their own call. What is
+// assumed is the SYMMETRY — that the token row flips to `C` on token use exactly as the autocomplete
+// row flips to `C` on confirmation — and `tests/fixtures/synthetic-token-unlock-Achievements.txt` is
+// that assumption written down as a file, derived from the owner's real Paladin block by moving the
+// `C` from one pseudo-row to the other. IF THE ASSUMPTION IS WRONG the token half simply does not
+// fire and a token user sees the v1.7.0 behavior for their tokened class; nothing else misreads,
+// because the confirm half stands on its own evidence. The first token user's attached export
+// settles it either way.
+//
+// ---------------------------------------------------------------------------
 // WHY THIS FILE ANSWERS THE SKY QUESTION, AND HOW EXACTLY IT JOINS.
 // ---------------------------------------------------------------------------
 // `Untapped Potential: Classes` holds sixteen `Primary Class Unlock - <Class>` achievements whose
@@ -111,6 +151,22 @@ export const CLASS_UNLOCK_PREFIX = 'Primary Class Unlock - '
 const OBTAIN_PREFIX = 'Obtain '
 
 /**
+ * The class-confirmation pseudo-row, up to the class name — `C` on the class the player CONFIRMED
+ * as their primary. VERIFIED on the owner's fixture (header): the one class carrying it is the one
+ * class whose `Obtain` components are unanimously complete.
+ */
+export const CLASS_UNLOCK_CONFIRM_PREFIX =
+  'This achievement will autocomplete if you chose to confirm your Primary Class as a '
+
+/**
+ * The token pseudo-row, verbatim and class-independent. ASSUMED to read `C` after a Primary Class
+ * Unlock Token is spent, by symmetry with the confirm row above — see the header's token-half
+ * paragraph for exactly what is unmeasured and what happens if the symmetry does not hold.
+ */
+export const CLASS_UNLOCK_TOKEN_ROW =
+  'This achievement can be bypassed using a Primary Class Unlock Token.'
+
+/**
  * ONE EARNED REWARD, as the achievements file states it — the flat artifact main persists and the
  * renderer joins against the quest set.
  *
@@ -123,7 +179,30 @@ const OBTAIN_PREFIX = 'Obtain '
 export interface ClassUnlockClaim {
   className: string
   item: string
+  /**
+   * HOW THIS CLASS'S UNLOCK WAS GRANTED, and therefore what kind of evidence this row is (JOS-441).
+   * Carried on every claim rather than worked out at read time because the owner's model has three
+   * separately tracked evidence kinds — an observed turn-in, a per-quest achievement, a class-unlock
+   * achievement — and the third has to be REPRESENTABLE IN THE RECORD, not applied by whichever
+   * consumer remembers to. A `'confirm'`/`'token'` row is stored, shown and labelled as exactly what
+   * it is; it is simply not a quest completion.
+   */
+  grant: ClassUnlockGrant
 }
+
+/**
+ * WHAT MADE A CLASS'S UNLOCK ACHIEVEMENT COMPLETE, read off the two pseudo-rows.
+ *
+ *   'quest'    neither bypass row is `C` — the `Obtain` rows under it are per-quest evidence, which
+ *              is what JOS-429 assumed of every row and what this build now checks.
+ *   'confirm'  the class-confirmation row is `C` (VERIFIED — the owner's Paladin block).
+ *   'token'    the token row is `C` (ASSUMED by symmetry — see the header).
+ *
+ * `'confirm'` wins if a file ever carried both, because it is the half standing on measured
+ * evidence; the two are the same verdict for every consumer anyway (neither is quest evidence), so
+ * the tie-break only decides which word the badge says.
+ */
+export type ClassUnlockGrant = 'quest' | 'confirm' | 'token'
 
 /**
  * WHAT WE KNOW ABOUT THE ACHIEVEMENTS DUMP WE READ — `ProgressState.achievementsSource`.
@@ -212,30 +291,68 @@ const STATUS: Record<string, AchievementStatus | undefined> = {
   I: 'incomplete'
 }
 
+/** The class this row is about, or null when the row is not a class-unlock achievement's. */
+function unlockClassOf(row: AchievementRow): string | null {
+  if (row.category !== CLASS_UNLOCK_CATEGORY) return null
+  if (!row.achievement.startsWith(CLASS_UNLOCK_PREFIX)) return null
+  const className = row.achievement.slice(CLASS_UNLOCK_PREFIX.length).trim()
+  return className === '' ? null : className
+}
+
+/**
+ * WHAT GRANTED EACH CLASS'S UNLOCK, per the two pseudo-rows (JOS-441) — keyed by the class name in
+ * the GAME's spelling, exactly as `ClassUnlockClaim.className` carries it.
+ *
+ * A class absent from the file is absent from the map; a class present with neither bypass row `C`
+ * maps to `'quest'`. Exported so a test can assert the discrimination against the real fixture
+ * directly, and so the diagnosability path can say what a user's file claims without re-deriving it.
+ */
+export function classUnlockGrants(dump: AchievementsDump): Map<string, ClassUnlockGrant> {
+  const grants = new Map<string, ClassUnlockGrant>()
+  for (const row of dump.rows) {
+    const className = unlockClassOf(row)
+    if (className === null) continue
+    if (!grants.has(className)) grants.set(className, 'quest')
+    if (row.component === undefined || row.status !== 'complete') continue
+    // 'confirm' is the measured half and is never downgraded by a later row (see the type).
+    if (row.component.startsWith(CLASS_UNLOCK_CONFIRM_PREFIX)) grants.set(className, 'confirm')
+    else if (row.component === CLASS_UNLOCK_TOKEN_ROW && grants.get(className) !== 'confirm') {
+      grants.set(className, 'token')
+    }
+  }
+  return grants
+}
+
 /**
  * THE EARNED CLASS-UNLOCK REWARDS a dump vouches for — the projection this whole module exists to
  * produce, and the only thing that leaves it.
  *
  * COMPONENT ROWS ONLY, and only the `C` ones (the header's two rules). The two boilerplate
  * components every class-unlock achievement carries ("This achievement will autocomplete if…",
- * "This achievement can be bypassed using a…") are not `Obtain` rows and so are never claims —
- * which matters, because on the owner's own dump the autocomplete row is `C` for the class they
- * actually play.
+ * "This achievement can be bypassed using a…") are not `Obtain` rows and so are never claims — they
+ * are read once, by `classUnlockGrants` above, to decide the `grant` every claim of that class then
+ * carries.
+ *
+ * EVERY `C` OBTAIN ROW IS STILL RETURNED, INCLUDING A GRANTED CLASS'S (JOS-441). The row is real
+ * evidence about a real achievement and the owner's model tracks it as its own kind; what the
+ * `grant` decides is whether it may speak about a QUEST. Filtering here instead would throw the
+ * evidence away at the one place that can still see what it is, and would leave the renderer unable
+ * to say "your file marks this, and here is why we are not counting it".
  *
  * A dump with no such rows yields an empty list, which is the acceptance criterion stated as code:
  * a file with nothing to say about Sky changes nothing.
  */
 export function classUnlockClaims(dump: AchievementsDump): ClassUnlockClaim[] {
+  const grants = classUnlockGrants(dump)
   const out: ClassUnlockClaim[] = []
   for (const row of dump.rows) {
-    if (row.category !== CLASS_UNLOCK_CATEGORY) continue
+    const className = unlockClassOf(row)
+    if (className === null) continue
     if (row.component === undefined || row.status !== 'complete') continue
     if (!row.component.startsWith(OBTAIN_PREFIX)) continue
-    if (!row.achievement.startsWith(CLASS_UNLOCK_PREFIX)) continue
-    const className = row.achievement.slice(CLASS_UNLOCK_PREFIX.length).trim()
     const item = row.component.slice(OBTAIN_PREFIX.length).trim().replace(/\.$/, '')
-    if (className === '' || item === '') continue
-    out.push({ className, item })
+    if (item === '') continue
+    out.push({ className, item, grant: grants.get(className) ?? 'quest' })
   }
   return out
 }

@@ -644,8 +644,12 @@ export const IPC = {
   // which dump belongs to this character is main's answer, never the renderer's. The gz bytes
   // never cross. Returns FeedbackInventoryPreview.
   feedbackBuildInventory: 'feedback:buildInventory',
-  // renderer -> main: submit. Args (draft, {attachLog, windowMinutes, attachInventory}). Never
-  // rejects; a network failure resolves with {ok:false, queued:true}. Returns SubmitResult.
+  // renderer -> main: the same for the CURRENT `/outputfile achievements` dump (JOS-441), on the
+  // identical no-arguments terms. Returns FeedbackAchievementsPreview.
+  feedbackBuildAchievements: 'feedback:buildAchievements',
+  // renderer -> main: submit. Args (draft, {attachLog, windowMinutes, attachInventory,
+  // attachAchievements}). Never rejects; a network failure resolves with {ok:false,
+  // queued:true}. Returns SubmitResult.
   feedbackSubmit: 'feedback:submit',
 
   // ---- usage analytics (docs/plans/usage-analytics.md wave A1) ------------------------
