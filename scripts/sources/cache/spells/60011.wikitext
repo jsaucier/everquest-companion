@@ -14,6 +14,10 @@
 * [[Mistmoore Heirloom Ring]]
 
 | slots =
+{{SpellSlotRowSmart | 1 | Increase HP regen by 1 | simple = {{#ifeq:{{{Table|0}}}|0|0|1}} }}
+{{SpellSlotRowSmart | 2 | Increase MP regen by 1 | simple = {{#ifeq:{{{Table|0}}}|0|0|1}} }}
+{{SpellSlotRowSmart | 3 | Decrease Magic resist by 10 | simple = {{#ifeq:{{{Table|0}}}|0|0|1}} }}
+{{SpellSlotRowSmart | 4 | Decrease Fire resist by 15 | simple = {{#ifeq:{{{Table|0}}}|0|0|1}} }}
 
 | skill = [[Skill Abjuration|Abjuration]]
 
@@ -39,6 +43,8 @@
 
 == Notes ==
 
-* Adds +1 HP [[Regen]], +1 Mana Regen, -10 SV Magic, -15 SV Fire. Two rings or exaltations can be worn to double the effects. The effect cannot be upgraded or improved due to being an [[Exaltations|Exaltation.]]
+* Two rings or exaltations can be worn to double the effects. The effect cannot be upgraded or improved due to being an [[Exaltations|Exaltation.]]
+* For charming purposes, works well as pet equipment with [[Adamantite Band]]+3 providing -17MR.
 
 [[Category:Focus Effects]]
+[[Category:Negative MR]]

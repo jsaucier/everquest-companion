@@ -46,13 +46,33 @@ import { searchTextFor } from './spellDb'
 import { parseSpellClasses } from '../../shared/spellLevels'
 import { isClassAbbr, type ClassAbbr } from '../../shared/classCombo'
 import type { LevelUnlockData, UnlockSkill, UnlockSpell } from '../../shared/levelUnlocks'
-import { spellMetricsAt } from '../../shared/spellMetrics'
+import {
+  anyClientCurve,
+  parseHpLine,
+  resolveSpellMana,
+  spellMetricsAt,
+  type ClientHpFacts
+} from '../../shared/spellMetrics'
 // The CLIENT'S hitpoint slots (JOS-396), threaded in from the IPC handler rather than imported:
 // `spellTable.ts` is an Electron module and this one is node-tested. See clientSpellHp.ts.
 import { clientHpFor } from './clientSpellHp'
+// The RAIN roster (JOS-449) and the area arithmetic that reads it. Both are separable overlays over
+// the scrape, like `spellEffectClass.ts`: delete either and the catalog is unchanged.
+import { rainWaves } from './rainSpells'
+import { aeHits, aeMaxTargets } from '../../shared/aoeSpells'
 import { replacedBy } from './spellLineLookup'
 import type { SpellResistTable } from '../../shared/resistTypes'
 import type { SpellDbFile } from '../../shared/types'
+
+/**
+ * The level `parseHpLine` is asked at when the question is "is this a hitpoint line at all".
+ *
+ * Any level answers the same: the head test reads words and the magnitude shapes (breakpoints,
+ * between/and, bare range, constant) all yield SOMETHING wherever they match, so only the value
+ * moves with the level. Named rather than written as a bare `1` so the next reader does not have to
+ * re-derive that this is not an evaluation.
+ */
+const LEVEL_ANY = 1
 
 interface RawUnlock {
   name: string
@@ -173,6 +193,77 @@ function replacesFor(name: string, at: readonly { cls: ClassAbbr }[]): UnlockSpe
 }
 
 /**
+ * WHAT THE SPELL IS WORTH, and the inputs to say it again somewhere else.
+ *
+ * The SNAPSHOT is read at the lowest level any class gains it — the level the unlock row is about
+ * (see `unlockSpells`). The INPUTS (JOS-445) are what lets the best-spells readout re-read the same
+ * spell at the level the player is actually standing at, and they are filtered to the hitpoint
+ * lines: `parseHpLine`'s verdict does not depend on the level it is handed, so `LEVEL_ANY` reads
+ * the same set at every level and only the VALUE it would compute is level-dependent.
+ *
+ * The client slots ride along ONLY where they are what answered — `spellMetricsAt` consults them
+ * nowhere else, so carrying them beside a wiki-sourced figure would be a field no reader can reach.
+ *
+ * AND THE RE-USE TIMER RIDES ALONG RESOLVED (JOS-444 ∩ JOS-445, the integration seam): the client
+ * row is two fallbacks in one argument (JOS-396's hitpoint slots, JOS-444's recast) and
+ * `spellMetricsAt` resolves page-over-client internally — but a wiki-lined spell does NOT carry
+ * `clientHp` on the wire, so a re-reader at another level would silently lose a client-answered
+ * recast. `recastMs` is therefore resolved HERE, once, with `withRecast`'s exact precedence (a
+ * page's stated 0 is an answer and blocks the fallback), and `spellMetricsForLevel` divides by the
+ * same denominator main did.
+ *
+ * AND A RAIN'S SNAPSHOT COUNTS ITS WAVES (JOS-449). The wiki's effect line states ONE wave, so the
+ * unlock card used to introduce `Frost Storm` at 512 damage while the best-spells table beside it
+ * now reads 1,536 — one panel contradicting its neighbour about the same spell. The snapshot is
+ * therefore taken at the SINGLE-TARGET hit count (`aeHits(waves, 1, cap)`, which is 3 for a rain
+ * and 1 for everything else), and both the count and the client's cap ride the row so the far end
+ * can ask the other question without re-deriving either.
+ */
+function writeFigures(
+  spell: UnlockSpell,
+  s: SpellDbFile['spells'][number],
+  at: readonly { level: number }[],
+  client: SpellResistTable | null
+): void {
+  const clientHp = clientHpFor(client, s.name)
+  const waves = rainWaves(s.name)
+  const cap = aeMaxTargets(clientHp?.aeMaxTargets)
+  const input = { ...s, hits: aeHits(waves, 1, cap) }
+  const metrics = spellMetricsAt(input, Math.min(...at.map((p) => p.level)), clientHp)
+  if (metrics) spell.metrics = metrics
+  writeInputs(spell, s, clientHp)
+  // Only when they SAY something: a 1 and the default would be two fields on ~1,900 rows restating
+  // what their absence already states (`UnlockSpell.waves` / `aeMaxTargets`).
+  if (waves > 1) spell.waves = waves
+  if (clientHp?.aeMaxTargets !== undefined) spell.aeMaxTargets = clientHp.aeMaxTargets
+}
+
+/**
+ * The re-evaluation inputs (JOS-445) and the two resolved fields, split out of `writeFigures` so
+ * that function stays under the complexity ceiling as the sources it reconciles multiply.
+ *
+ * A WIKI-LINED ROW CARRIES THE CLIENT ROW TOO WHEN THE CLIENT'S CURVE ANSWERS FOR ONE OF ITS LINES
+ * (JOS-451). Same seam `writeFigures`'s header describes for `recastMs`, resolved the other way: a
+ * magnitude cannot be pre-resolved because a re-reader asks for it at ANOTHER LEVEL, so the facts
+ * have to travel. Two rows in the committed catalog qualify, so this is not a payload question.
+ */
+function writeInputs(
+  spell: UnlockSpell,
+  s: SpellDbFile['spells'][number],
+  clientHp: ClientHpFacts | undefined
+): void {
+  const hpLines = (s.effects ?? []).filter((line) => parseHpLine(line, LEVEL_ANY) !== null)
+  if (hpLines.length > 0) spell.hpLines = hpLines
+  if (clientHp && (hpLines.length === 0 || anyClientCurve(hpLines, clientHp))) {
+    spell.clientHp = clientHp
+  }
+  const mana = resolveSpellMana(s.mana, clientHp?.mana)
+  if (mana !== undefined) spell.mana = mana
+  const recastMs = s.recastMs ?? clientHp?.recastMs
+  if (recastMs !== undefined) spell.recastMs = recastMs
+}
+
+/**
  * Every spell the DB places for at least one class at a stated level, with its card fields, its
  * figures and what it replaces.
  *
@@ -182,6 +273,12 @@ function replacesFor(name: string, at: readonly { cls: ClassAbbr }[]): UnlockSpe
  * it cannot be per-class — and it does not need to be, because a spell's own gain level is the
  * only level at which the panel ever introduces it. (The browsing case reads the SAME row: a
  * cleric stepping to 30 sees the spells that unlock at 30, evaluated at 30.)
+ *
+ * AND SINCE JOS-445 THE INPUTS RIDE ALONG (`hpLines` / `clientHp`), because a SECOND reader asks a
+ * question this level cannot answer: the best-spells readout ranks every spell the loadout already
+ * owns AT THE LEVEL BEING VIEWED, and a spell gained at 18 and read at 35 is a different number.
+ * The snapshot above stays exactly as it was — it is the level the unlock row is about — and the
+ * far end recomputes only when it wants another one.
  */
 function unlockSpells(client: SpellResistTable | null): UnlockSpell[] {
   const file = spellsJson as SpellDbFile
@@ -194,7 +291,9 @@ function unlockSpells(client: SpellResistTable | null): UnlockSpell[] {
     // the wire unchanged so the renderer has nothing to decide.
     if (s.outOfEra === true) spell.outOfEra = true
     if (typeof s.castTimeMs === 'number') spell.castTimeMs = s.castTimeMs
-    if (typeof s.mana === 'number') spell.mana = s.mana
+    // `mana` is written by `writeFigures`, which is the only place holding the client row it may
+    // have to fall back to (JOS-451) — one resolution, so the row's column and its `dmg/mana` can
+    // never disagree.
     if (s.targetType) spell.targetType = s.targetType
     if (s.spellType) spell.spellType = s.spellType
     if (typeof s.durationMs === 'number') spell.durationMs = s.durationMs
@@ -204,8 +303,7 @@ function unlockSpells(client: SpellResistTable | null): UnlockSpell[] {
     // prints are what a player searching for a spell types.
     spell.searchText = searchTextFor(s, undefined)
     if (s.illusion) spell.illusion = true
-    const metrics = spellMetricsAt(s, Math.min(...at.map((p) => p.level)), clientHpFor(client, s.name))
-    if (metrics) spell.metrics = metrics
+    writeFigures(spell, s, at, client)
     const replaces = replacesFor(s.name, at)
     if (replaces) spell.replaces = replaces
     out.push(spell)

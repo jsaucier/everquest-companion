@@ -95,18 +95,9 @@ export interface AchievementRewardAlias {
 }
 
 export const ACHIEVEMENT_REWARD_ALIASES: readonly AchievementRewardAlias[] = [
-  {
-    className: 'Bard',
-    questName: 'Bard Test of Harmony',
-    reward: 'Harmonic Spear',
-    achievementItem: 'Spear of Harmony',
-    verified: '2026-08-20',
-    evidence:
-      'The committed items.json carries `Spear of Harmony` as a page of its own, eraTag Sky, with ' +
-      'questUses naming Bard Test of Harmony; there is no `Harmonic Spear` item page at all. So the ' +
-      'game, the item scrape and the achievements dump agree on the name, and only the quest ' +
-      'table’s reward cell is the outlier.'
-  },
+  // The Bard row (`Harmonic Spear` → `Spear of Harmony`, verified 2026-08-20) RETIRED 2026-08-22:
+  // the wiki fixed its own outlier reward cell, and the posky rescrape now says `Spear of Harmony`
+  // everywhere — the audit test's own instruction is to delete a row the scrape has caught up to.
   {
     className: 'Beastlord',
     questName: 'Beastlord Test of Claw',
@@ -119,19 +110,11 @@ export const ACHIEVEMENT_REWARD_ALIASES: readonly AchievementRewardAlias[] = [
       'with questUses naming Beastlord Test of Claw; the scrape’s reward cell records only the ' +
       'first. This is the one row whose achievement text is not an item name at all, which is ' +
       'exactly why it cannot be a rename or a reward correction.'
-  },
-  {
-    className: 'Rogue',
-    questName: 'Rogue Test of Silence',
-    reward: 'Griffon Wing Spauldors',
-    achievementItem: 'Griffon Wing Spaulders',
-    verified: '2026-08-20',
-    evidence:
-      'items.json carries `Griffon Wing Spauldors` (the wiki’s spelling) with questUses naming ' +
-      'Rogue Test of Silence, and no `Griffon Wing Spaulders` page exists in the scrape. The wiki ' +
-      'has a typo the game does not; nothing was retitled, so this is not an ITEM_RENAMES row, and ' +
-      'the item the quest hands out is the one the wiki already links.'
   }
+  // The Rogue row (`Griffon Wing Spauldors` → `Griffon Wing Spaulders`, verified 2026-08-20)
+  // RETIRED 2026-08-22: the wiki retitled the item page to the game's spelling (the rescrape's
+  // new-pages list carries `Griffon Wing Spaulders`), so scrape and achievements file now agree
+  // and the row had stopped describing a mismatch.
 ]
 
 /**

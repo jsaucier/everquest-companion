@@ -72,6 +72,25 @@ Combat Effect: Haste (Req Level 30)<br>
 *Berserker Test of Sharpness
 }}</onlyinclude>`
 
+// The 2026-08-18 Mistmoore-rework spelling: `DMG Bonus` (third spelling of the field, after
+// `Dmg Bon` and `Damage Bonus`) — and on the SAME line as Atk Delay, where an unrecognized key
+// would be swallowed into the delay's value. Trimmed from the live Cherista's Fangs page.
+const CHERISTAS_FANGS = `
+<onlyinclude>{{Itempage
+|itemname    = Cherista's Fangs
+|lucy_img_ID = 1179
+|statsblock  =
+Attunable<br>
+Slot: PRIMARY SECONDARY<br>
+Skill: Hand to Hand <br>
+DMG: 10 <br>
+Atk Delay: 28 DMG Bonus: 13<br>
+Effect: [[Lifebite]] (Combat)<br>
+WT: 0.5 Size: SMALL<br>
+Class: MNK BST<br>
+Race: ALL<br>
+}}</onlyinclude>`
+
 const DJARNS_RING = `
 <onlyinclude>{{Itempage
 |notes       = {{Item Lore Missing}}
@@ -153,6 +172,18 @@ test('Skycleaver: weapon line pairs (Skill/Atk Delay, DMG/Dmg Bon) + a Combat Ef
   // "Lore Equipped" counts as the LORE flag for the knowledge card.
   assert.equal(k.lore, true)
   assert.equal(damageRatio(s.dmg, s.atkDelay)?.toFixed(2), '0.86')
+})
+
+test("Cherista's Fangs: same-line `Atk Delay: N DMG Bonus: M` — the third dmgBonus spelling parses", () => {
+  const k = parseItemWikitext("Cherista's Fangs", CHERISTAS_FANGS)
+  const s = k.stats
+  assert.ok(s)
+  assert.equal(s.skill, 'Hand to Hand')
+  assert.equal(s.dmg, 10)
+  assert.equal(s.atkDelay, 28)
+  assert.equal(s.dmgBonus, 13)
+  assert.deepEqual(s.effects, [{ kind: 'combat', name: 'Lifebite', detail: 'Combat' }])
+  assert.deepEqual(s.classes, ['MNK', 'BST'])
 })
 
 test("Djarn's Amethyst Ring: |focus_effect lives outside the stats block, still an effect row", () => {

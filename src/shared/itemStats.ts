@@ -104,6 +104,9 @@ const EFFECT_KEYS = ['Combat Effect', 'Click Effect', 'Worn Effect', 'Proc Effec
 
 const STRUCT_KEYS = [
   'Slot', 'Class', 'Race', 'Skill', 'Atk Delay', 'Delay', 'DMG', 'Dmg Bon', 'Damage Bonus',
+  // Third spelling, first seen on the 2026-08-18 Mistmoore-rework pages ("Atk Delay: 28 DMG
+  // Bonus: 13" — Cherista's Fangs, Rod of Understanding) and already in posky.json's Skycleaver.
+  'Dmg Bonus',
   'BACKSTAB', 'Backstab', 'WT', 'Weight', 'Size', 'Range', 'AC'
 ]
 
@@ -309,6 +312,7 @@ const NUMERIC_FIELDS: Record<string, 'atkDelay' | 'dmg' | 'dmgBonus' | 'backstab
   DELAY: 'atkDelay',
   DMG: 'dmg',
   'DMG BON': 'dmgBonus',
+  'DMG BONUS': 'dmgBonus',
   'DAMAGE BONUS': 'dmgBonus',
   BACKSTAB: 'backstab',
   AC: 'ac'

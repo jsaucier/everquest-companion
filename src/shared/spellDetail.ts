@@ -26,6 +26,18 @@
 // does not state at all.
 
 import type { SpellMetrics } from './spellMetrics'
+import type { FocusKind } from './wornFocus'
+
+/** One worn focus effect that lifted one side of a spell's figures (JOS-452). */
+export interface SpellDetailFocus {
+  side: FocusKind
+  /** the effect's own name, verbatim ("Improved Damage II") */
+  effect: string
+  /** the item wearing it, as the character's dump named it */
+  item: string
+  /** the resolved percent: the middle of the focus's band, after the level rule */
+  pct: number
+}
 
 /** A rank of one line, and which source named it. */
 export interface SpellRankMember {
@@ -66,6 +78,13 @@ export interface SpellDetail {
   /** the wiki's own duration words ("24 Sec", "Permanent"), never a re-spelling of them. */
   durationText?: string
   castTimeMs?: number
+  /**
+   * The wiki's `recast_time` in ms (JOS-444). The card prints it WHENEVER a source states one, not
+   * only when it is long enough to earn a word on a dense unlock row: the card is the place a
+   * player goes to ask what a spell costs him, and "how soon can I do that again" is one of the
+   * four numbers that answers it. Absent when the page omits it, like every other field here.
+   */
+  recastMs?: number
   mana?: number
   targetType?: string
   spellType?: string
@@ -91,6 +110,40 @@ export interface SpellDetail {
    * unlock dataset uses. Stated because a ramp's numbers mean nothing without it.
    */
   metricsLevel?: number
+  /**
+   * THE SAME FIGURES AT THE RANK YOU HAVE BEEN OBSERVED HOLDING (JOS-447), or absent when the log
+   * has never watched this line above base.
+   *
+   * The card states BOTH because it has the room the table does not: `metrics` is the spell as the
+   * catalog describes it and this is the spell as you own it, and a player deciding whether to
+   * spend motes needs to see the two side by side. Read by the SAME `spellMetricsAt` in the same
+   * pass, so the two lines cannot be two derivations that agree today.
+   *
+   * DAMAGE IS THE ONLY AXIS THAT MOVES in v1 - shared/spellScale.ts's header carries the fit and
+   * the direction of the error on the rest.
+   */
+  metricsAtRank?: SpellMetrics
+  /** The rank `metricsAtRank` was read at, 2..10. Absent whenever `metricsAtRank` is. */
+  metricsRank?: number
+  /**
+   * THE SAME FIGURES WITH YOUR GEAR ON (JOS-452), or absent when nothing you are wearing carries a
+   * focus effect this spell qualifies for.
+   *
+   * A THIRD line rather than a replacement, for `metricsAtRank`'s reason: `metrics` is the spell as
+   * the catalog describes it, `metricsAtRank` is the spell as you OWN it, and this is the spell as
+   * you CAST it. Read at the rank when there is one, so the card's last line is always its most
+   * complete one. The same `spellMetricsAt` in the same pass, so the three cannot drift.
+   */
+  metricsWithFocus?: SpellMetrics
+  /**
+   * WHICH ITEM ANSWERED (the owner's ask, verbatim in the brief: the card states which item did
+   * this). One entry per side that had a focus on it - `Improved Damage II (Polished Mithril Mask
+   * (Exaltation)) +11%` is what the card has to be able to say, and it says it from these fields
+   * rather than from a sentence main pre-composed.
+   *
+   * Absent exactly when `metricsWithFocus` is.
+   */
+  focusSources?: SpellDetailFocus[]
   /** per-class entry levels for the LINE (never for the rank - the DB has no per-rank levels). */
   classLevels: { cls: string; level: number }[]
   msgCastOnYou?: string
@@ -142,6 +195,8 @@ export function spellStatRows(d: SpellDetail): SpellStatRow[] {
   if (d.spellType !== undefined) rows.push({ id: 'type', label: 'Type', value: d.spellType })
   if (d.targetType !== undefined) rows.push({ id: 'target', label: 'Target', value: d.targetType })
   if (d.castTimeMs !== undefined) rows.push({ id: 'cast', label: 'Cast', value: seconds(d.castTimeMs) })
+  // Beside the cast, because the two are one sentence: the cycle is the first plus the second.
+  if (d.recastMs !== undefined) rows.push({ id: 'recast', label: 'Recast', value: seconds(d.recastMs) })
   if (d.mana !== undefined) rows.push({ id: 'mana', label: 'Mana', value: String(d.mana) })
   if (d.durationText !== undefined) rows.push({ id: 'duration', label: 'Duration', value: d.durationText })
   if (d.instrumentEnhanced !== undefined) {
@@ -196,6 +251,21 @@ const EFFECT_CLASS_LABEL: Record<string, string> = {
 /** The derived-roster words, in the order main listed them. Empty when nothing was derived. */
 export function spellEffectClassLabels(d: SpellDetail): string[] {
   return d.effectClasses.map((c) => EFFECT_CLASS_LABEL[c] ?? c)
+}
+
+/**
+ * WHAT YOUR GEAR DID TO THIS SPELL, one line per side (JOS-452). Empty when nothing you wear
+ * qualifies, which is when the card draws no gear block at all.
+ *
+ * The percentage first because it is the answer, then the effect, then the ITEM - which is the
+ * owner's ask and the reason this block exists: the readout's marker says a number and the card is
+ * where you find out which piece of gear is producing it. The middle dot is the separator the rest
+ * of the app already uses, and there are no em dashes anywhere near a player.
+ */
+export function spellFocusLines(d: SpellDetail): string[] {
+  return (d.focusSources ?? []).map(
+    (f) => `worn +${String(Math.round(f.pct))}% ${f.side} · ${f.effect} · ${f.item}`
+  )
 }
 
 /**

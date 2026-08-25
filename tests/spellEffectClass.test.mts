@@ -417,20 +417,21 @@ test('JOS-258 R8c: the roster gate is INVERTED against the charm one, and on pur
 
 test('JOS-251 R4e: the scrape captured an effect list for all but four spells', () => {
   const file = spellsJson as SpellDbFile
-  assert.equal(file.schema, 2, 'the effect-list schema')
+  // 2 -> 3 on 2026-08-22: the scraper began capturing `recast_time` (SpellEntry.recastMs).
+  assert.equal(file.schema, 3, 'the effect-list schema')
   assert.equal(file.withEffects, RAW.filter((s) => s.effects?.length).length, 'the header counts what the rows carry')
-  // 1 -> 4 (JOS-439). The 2026-08-18 game patch added 78 rows and THREE of them are stub pages the
-  // wiki opened without a slot table: `Heritage of Mistmoore`, `Improved Vampirism II` and
-  // `Improved Vampirism III` — each carrying a name, a duration and a target type and nothing else.
-  // The pre-existing fourth is `Instill`. Naming them is the assertion: `effects: undefined` means
-  // THE WIKI SAID NOTHING, never "this spell does nothing" (the scrape writes the field absent
-  // rather than `[]` for exactly that reason), and a silent jump here would be the derived charm,
-  // mez and pet rosters quietly losing members.
+  // 1 -> 4 (JOS-439), 4 -> 3 (2026-08-22): a wiki editor filled Heritage of Mistmoore's effect
+  // box that same day ("Added spell effects to appropriate box", the edit our rescrape caught).
+  // The two Improved Vampirism stubs are still slotless, and the pre-existing one is `Instill`.
+  // Naming them is the assertion: `effects: undefined` means THE WIKI SAID NOTHING, never "this
+  // spell does nothing" (the scrape writes the field absent rather than `[]` for exactly that
+  // reason), and a silent jump here would be the derived charm, mez and pet rosters quietly
+  // losing members.
   assert.deepEqual(
     RAW.filter((s) => !s.effects?.length).map((s) => s.name).sort(),
-    ['Heritage of Mistmoore', 'Improved Vampirism II', 'Improved Vampirism III', 'Instill']
+    ['Improved Vampirism II', 'Improved Vampirism III', 'Instill']
   )
-  assert.equal(RAW.length - file.withEffects!, 4, 'exactly four pages state no slot table at all')
+  assert.equal(RAW.length - file.withEffects!, 3, 'exactly three pages state no slot table at all')
   assert.equal(RAW.filter((s) => s.instrumentEnhanced).length, 79, 'the bard pages')
 })
 

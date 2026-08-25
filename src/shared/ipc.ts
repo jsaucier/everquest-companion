@@ -90,6 +90,13 @@ export const IPC = {
   listUserSounds: 'sounds:listUser',
   importUserSounds: 'sounds:importUser',
   removeUserSound: 'sounds:removeUser',
+  // There is NO `audio:session` channel, and that is a ruling rather than an oversight (JOS-443,
+  // owner: "we don't need any special audio debugging tools at all"). JOS-442 added one that read
+  // this app's own WASAPI session over a hand-walked COM vtable so a Preferences card could report
+  // the Windows mixer's per-app mute and volume. The card, the channel and the native reader are
+  // all gone. What survived is the part that needs no surface: a failed sound fetch is never cached
+  // (soundCache.ts) and every audio failure writes one throttled line to errors.log
+  // (alerts/audioHealth.ts).
   // main -> renderer: the set of available sound packs changed (e.g. a shipped
   // default pack was auto-provisioned in the background at startup — Task #39). The
   // renderer re-lists packs + invalidates its sound caches so it becomes usable live.
@@ -200,6 +207,17 @@ export const IPC = {
   // — but ONLY while a locked overlay is actually capturing (src/main/pointerWatch.ts states the
   // whole performance contract). The renderer treats it exactly like a real leave.
   onOverlayPointerExit: 'overlay:pointerExit',
+  // main -> renderer(overlay): "the cursor is (not) in one of your hot zones" (JOS-370). Payload:
+  // {kind, inside}. ONE-WAY, and it is what a locked overlay has INSTEAD of forwarded mouse moves.
+  //
+  // A locked overlay used to be `setIgnoreMouseEvents(true, {forward:true})`, and that `forward`
+  // installs a system-wide WH_MOUSE_LL hook owned by MAIN — so every mouse event on the machine
+  // waited on our message loop and a stall of ours froze the user's cursor and their mouselook. The
+  // hook is gone. The presence WORKER hit-tests the cursor against the rectangles a pinned window
+  // still wants (src/main/overlayHotZone.ts) and reports only the ENTER/LEAVE edges; main flips the
+  // window's capture and pushes this. The renderer treats it as one more NAMED CAPTURE REASON, so
+  // everything downstream of it — the pin reveal, the selector, the scroll grip — is unchanged.
+  onOverlayHover: 'overlay:hover',
 
   // ---- GLOBAL FIGHT SELECTION (docs/plans/combat-overlay-parity.md P4/P5/P6) ----
   // ONE fight is selected app-wide: picking one in the Combat tab's picker or in ANY

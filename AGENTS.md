@@ -695,6 +695,37 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   removals run BEFORE corrections so a survivor may be a row a rename lands
   on. Only a `supersededBy` entry may claim a rename target.
 
+- **WINDOWS CAN SILENCE THIS APP AT VOLUME 0.000 WITH MUTE=FALSE** (JOS-442, measured
+  live): the mixer's per-app slider is persisted PER EXECUTABLE and PER DEVICE,
+  survives restarts, is restored when a device returns (the owner's headset
+  re-appearing re-applied a zero), and the app's row is only VISIBLE in the mixer
+  while a session is live (~seconds after a sound). So "all audio silent, nothing
+  muted, mixer looks empty" is this, and hunting a mute finds nothing.
+  **AND THE APP HAS NO TOOL FOR IT, BY RULING** (JOS-443, owner, verbatim: *we
+  don't need any special audio debugging tools at all*). JOS-442 shipped one —
+  `audioSessionNative.ts` reading the app's own WASAPI session over a
+  hand-walked COM vtable, an `audio:session` IPC channel, and a Preferences
+  Sound check card that printed the verdict. All of it is DELETED, together
+  with the shared verdict/readout module and the e2e spec that drove it. The
+  mechanism above stays written down because it is how the owner will
+  recognise the failure himself; the app's answer to it is the Windows volume
+  mixer, not a card. What SURVIVES from that ticket is the invisible half, and
+  it is the part worth keeping: a failed sound fetch is never cached
+  (`soundCache` evicts null resolutions so the next firing retries), every
+  fetch/play failure writes ONE per-key-per-minute line to errors.log
+  (`alerts/audioHealth.ts` + the pure rules in `shared/audioFailureLog.ts`),
+  and a device change leaves a `console.info` breadcrumb. No readout state is
+  kept — state nobody reads is state that rots.
+  **AND THE E2E SUITE MAKES NO SOUND** (same ticket, reported live: runs were
+  audibly playing alert tones on the owner's desktop). Every harness launch
+  passes Chromium's `--mute-audio` (`tests/e2e/appWindow.mts launchApp`, and
+  `scripts/site-screens.mts` for the same reason). It silences the OUTPUT, not
+  the code — elements are still constructed, `play()` still resolves or
+  rejects, speech still travels its seam — so behaviour assertions are
+  unchanged. It is a harness argument rather than an `EQ_E2E` branch on
+  purpose: the test mode must keep changing as little about the product as
+  possible.
+
 ### Electron trust boundary (do not weaken)
 
 - ONE `WEB_PREFERENCES()` in `src/main/windows.ts` (module-private, beside the only
@@ -1093,13 +1124,27 @@ the full per-lane evidence lives in docs/agents-archive.md.
   The renderer holds NO dismiss state (the snapshot's `petNudge` is absent
   in every state but the one). Full story: docs/agents-archive.md.
   A pet-claim tell from a name EVER seen charmed re-arms the charmed set,
-  never the permanent one (`everCharmed`). STILL NOT CLOSED, named: a pet
-  its owner neither buffs nor orders stays invisible (order it once), and
-  `modules/buffs.ts`'s entity-level succession still waits for the tell —
-  closing that needs a derived-event seam feeding both models, never a
-  second arm in buffs.ts. Goldens: `p2-pet-arc-bound.log`,
-  `p3-pet-upgraded-buff-bound.log`, petBuffBind/petClaimWindows tests. Full
-  measurements: docs/agents-archive.md.
+  never the permanent one (`everCharmed`).
+  **AND THE PET-BUFF RUNG IS NO LONGER THE COMBAT MODEL'S ALONE (JOS-454).**
+  It was a state transition inside the engine — the arm is per-stream, so
+  `parseEvent` cannot emit it — and this entry used to name the two ways out
+  and rule for the first: a derived-event seam feeding both models, never a
+  second arm. The seam is built. `bindPetBuffLanding` emits a derived
+  `petClaim {via:'petBuff'}` on `bus.emitDerived` (Task #47's queue, the one
+  `buffExpired` rides), and every model that already binds a `petClaim` —
+  progression's kill credit, buffs.ts's entity succession, roster, the
+  resist fold — learns the pet at the instant the meter does. ONE PRODUCER,
+  ONE KIND, and the producer IGNORES its own kind (`ingestPetClaim`), which
+  is what makes it provably loop-free. The ARM AND THE GATE ARE UNTOUCHED,
+  so which names bind has not moved — only who is told. WHAT BOUGHT IT: the
+  owner's summoned necro pet Vibartik, bound in the engine at 13:42:43 by
+  `Augment Death` and not by the progression fold until his first tell at
+  14:37:53, whose four kills in that gap read as `4 kills by others seen` on
+  a Leveling panel sitting under a meter that had him. STILL NOT CLOSED: a
+  pet its owner neither buffs nor orders stays invisible (order it once).
+  Goldens: `p2-pet-arc-bound.log`, `p3-pet-upgraded-buff-bound.log`,
+  `p4-pet-buff-kill-credit.log`, petBuffBind/petClaimWindows/
+  petBuffKillCredit tests. Full measurements: docs/agents-archive.md.
 - Exp: `You gain (party )?experience!( (N.NN%))?` — the percent is an
   INCREMENT of the current level bar (sums to ~100 between dings);
   unstated ⇒ at the cap, modeled `pct: undefined` never 0. The exp line
@@ -1203,11 +1248,18 @@ the full per-lane evidence lives in docs/agents-archive.md.
 ## Data sources
 
 - **Scraper etiquette (LAW)**: every scraping script must run at a
-  respectful rate limit (delay between requests), honor backoffs
-  (429/5xx → exponential retry, obey Retry-After), and be re-runnable +
-  idempotent (cache hits skip the network; partial runs resume, never
-  duplicate output). Applies to scripts/scrape-*, itemLookup, and any
-  future fetcher.
+  respectful rate limit — **1 request per second minimum** (owner ruling
+  2026-08-22, verbatim: *these are fan made servers, we don't need to be
+  smashing concurrent scrape* — and the old 110ms cadence also dragged
+  the owner's own machine while they were using it) — must **pull in bulk
+  through the site's API where one exists** (same ruling: MediaWiki
+  batched `prop=revisions` at the measured 50-page limit, `maxlag=5` so
+  the server can refuse under load; the maxlag deferral arrives as HTTP
+  200 with an error body + Retry-After, so it needs its own retry arm),
+  honor backoffs (429/5xx → exponential retry, obey Retry-After), and be
+  re-runnable + idempotent (cache hits skip the network; partial runs
+  resume, never duplicate output). Applies to scripts/scrape-*,
+  fetch-wiki-images, itemLookup, and any future fetcher.
 
 - eqlwiki.com MediaWiki API (helper: `scripts/sources/eqlegends.ts`).
   Scrapers (output committed): `scrape:posky` (quest-item cells: iterate

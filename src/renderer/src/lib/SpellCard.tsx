@@ -30,12 +30,16 @@ import {
   spellClassLine,
   spellEffectClassLabels,
   spellFactsAreForLine,
+  spellFocusLines,
   spellLineageLine,
   spellStatRows
 } from '@shared/spellDetail'
 import { spellMetricsParts } from '@shared/spellMetrics'
+import { romanRank } from '@shared/spellLines'
+import { nameStatesRank, observedRankLabel, observedRankRow } from '@shared/spellRanks'
 import { CARD_LABEL, CARD_MONO, CARD_TEXT, CardSection, LABEL_STYLE, MoreLine, TEXT_STYLE } from './hoverCards'
 import { Tooltip } from './Tooltip'
+import { useObservedSpellRanks } from './useObservedSpellRanks'
 
 /** How many effect lines / rank members the card lists before collapsing to "+N more". */
 const MAX_LISTED = 8
@@ -52,6 +56,27 @@ const MAX_LISTED = 8
 const ERA_PILL: React.CSSProperties = {
   color: '#e0b070',
   border: '1px solid #e0b07066',
+  borderRadius: 3,
+  fontSize: 9,
+  lineHeight: 1.4,
+  padding: '0 3px',
+  whiteSpace: 'nowrap'
+}
+
+/**
+ * THE OBSERVED-RANK PILL (JOS-446) — `yours: III`, beside the name, in the era pill's shape.
+ *
+ * The card is where a player decides whether to buy the next scroll, and until now it could not
+ * say which one they already had: the DB carries one unsuffixed row for ~1,800 of its ~1,900
+ * lines, so `Clarity`'s card described `Clarity` and stopped. The claim is the log's, not the
+ * catalog's, so it is coloured apart from the era pill's warning amber.
+ *
+ * It is NOT drawn beside a name that already states the same rank or higher: hovering
+ * `Clarity III` and being told `yours: III` is the card repeating its own title.
+ */
+const RANK_PILL: React.CSSProperties = {
+  color: '#7fd8a0',
+  border: '1px solid #7fd8a066',
   borderRadius: 3,
   fontSize: 9,
   lineHeight: 1.4,
@@ -123,6 +148,12 @@ function StatRows({ detail }: { detail: SpellDetail }): JSX.Element | null {
  * effect list. Nothing here re-reads an effect string — two formatters would be two opinions about
  * what `2.1` means, and two readers would be two answers.
  *
+ * A LONG RECAST APPEARS TWICE ON THIS CARD, IN TWO DIFFERENT ROLES (JOS-444). The stat block above
+ * states the timer as a fact about the spell, always. The `recast 6s` at the end of this line is
+ * the DENOMINATOR the dps beside it was divided by, and it is here because the row that carries no
+ * stat block needs it — dropping one of the two would leave the other surface unable to say which
+ * job the number is doing.
+ *
  * The level is stated in the label because a ramp's numbers mean nothing without one, and because
  * this is the card: the panel's one quiet `directional` covers the caveat, and this covers the
  * WHERE. It sits above the effect list, which is the sentence these numbers were read out of.
@@ -132,12 +163,54 @@ function Figures({ detail }: { detail: SpellDetail }): JSX.Element | null {
   const parts = spellMetricsParts(detail.metrics)
   if (parts.length === 0) return null
   const at = detail.metricsLevel === undefined ? '' : ` at level ${String(detail.metricsLevel)}`
+  const atRank =
+    detail.metricsAtRank === undefined || detail.metricsRank === undefined
+      ? null
+      : spellMetricsParts(detail.metricsAtRank)
   return (
     <CardSection label={`Worth${at}:`}>
       <div style={TEXT_STYLE} data-testid="spell-card-figures">
         {parts.join(' · ')}
       </div>
+      {/* BOTH READINGS, LABELLED (JOS-447). The line above is the spell as the catalog describes it
+          and this one is the spell as you own it; the card is the surface with room for the pair,
+          which is exactly why the table below settles for one number and the `yours:` chip. */}
+      {atRank !== null && atRank.length > 0 && (
+        <div style={TEXT_STYLE} data-testid="spell-card-figures-at-rank" data-rank={String(detail.metricsRank)}>
+          {`at ${romanRank(detail.metricsRank ?? 0)}: ${atRank.join(' · ')}`}
+        </div>
+      )}
+      {/* AND A THIRD READING, WITH YOUR GEAR ON (JOS-452). The card is where the readout's quiet
+          `worn +11%` marker is explained, so the figures come first and then the LINE that names
+          which item produced them - the owner's ask read literally. Absent for anybody wearing
+          nothing that qualifies, which is most spells for most players. */}
+      <WithFocus detail={detail} />
     </CardSection>
+  )
+}
+
+/**
+ * The gear reading and its provenance: the focused figures, then one line per side naming the
+ * effect and the item it is worn on.
+ *
+ * A component rather than two more branches inside `Figures` because that function was already at
+ * the lint config's complexity ceiling, and because these two lines are one thought.
+ */
+function WithFocus({ detail }: { detail: SpellDetail }): JSX.Element | null {
+  const parts = detail.metricsWithFocus === undefined ? [] : spellMetricsParts(detail.metricsWithFocus)
+  const lines = spellFocusLines(detail)
+  if (parts.length === 0 || lines.length === 0) return null
+  return (
+    <>
+      <div style={TEXT_STYLE} data-testid="spell-card-figures-with-focus">
+        {`with your gear: ${parts.join(' · ')}`}
+      </div>
+      {lines.map((line) => (
+        <div key={line} style={TEXT_STYLE} data-testid="spell-card-focus-source">
+          {line}
+        </div>
+      ))}
+    </>
   )
 }
 
@@ -243,6 +316,52 @@ function Footer({ detail, loading }: { detail: SpellDetail | null; loading: bool
   )
 }
 
+/**
+ * The rank pill's text, or null. Read as a hook so the map is subscribed exactly where the card
+ * is — which for a tooltip body means WHILE OPEN, the same mount discipline `ObservedItemWindow`
+ * keeps for `useItemTiers`.
+ */
+function useRankPill(name: string): string | null {
+  const ranks = useObservedSpellRanks()
+  const row = observedRankRow(ranks, name)
+  if (row === undefined || nameStatesRank(name, row)) return null
+  return observedRankLabel(ranks, name)
+}
+
+/**
+ * The header line: the name, and the pills that qualify the whole card rather than one of its
+ * facts — whether the server has the content at all, and which rung of the line is yours.
+ *
+ * Its own component so the two conditionals live beside each other instead of inside the card
+ * body, which the complexity ceiling reads as one branch each.
+ */
+function CardHeader({
+  name,
+  accent,
+  detail
+}: {
+  name: string
+  accent: string
+  detail: SpellDetail | null
+}): JSX.Element {
+  const rankPill = useRankPill(name)
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      <div style={{ color: accent, fontSize: 12, fontWeight: 700 }}>{name}</div>
+      {detail?.outOfEra === true && (
+        <span style={ERA_PILL} data-testid="spell-card-out-of-era">
+          out of era
+        </span>
+      )}
+      {rankPill !== null && (
+        <span style={RANK_PILL} data-testid="spell-card-observed-rank">
+          {rankPill}
+        </span>
+      )}
+    </div>
+  )
+}
+
 /** The card body. Exported for the surfaces that draw it somewhere other than a Tooltip. */
 export function SpellCard({ name }: { name: string }): JSX.Element {
   const { data, loading } = useSpellOnOpen(name)
@@ -262,14 +381,7 @@ export function SpellCard({ name }: { name: string }): JSX.Element {
         boxShadow: '0 6px 20px rgba(0,0,0,0.6)'
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-        <div style={{ color: accent, fontSize: 12, fontWeight: 700 }}>{name}</div>
-        {data?.outOfEra === true && (
-          <span style={ERA_PILL} data-testid="spell-card-out-of-era">
-            out of era
-          </span>
-        )}
-      </div>
+      <CardHeader name={name} accent={accent} detail={data} />
       {classLine !== null && (
         <div style={LABEL_STYLE} data-testid="spell-card-classes-levels">
           {classLine}

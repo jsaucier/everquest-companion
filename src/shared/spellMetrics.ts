@@ -8,21 +8,57 @@
 //
 // So this is the magnitude reader, and it is a SEPARATE, DELETABLE layer for the same reason the
 // classifier is: `spells.json` records what the wiki said, and everything derived from it lives
-// where it can be deleted without taking the scrape with it. Pure over its arguments, no imports,
-// no Electron - main computes it once at fold time (src/main/data/levelUnlocks.ts) and the numbers
-// cross IPC while the effect strings stay behind.
+// where it can be deleted without taking the scrape with it. Pure over its arguments, no Electron -
+// main computes it once at fold time (src/main/data/levelUnlocks.ts) and the numbers cross IPC
+// while the effect strings stay behind. Its ONE import is `shared/spellScale.ts` (JOS-447), which
+// is the same kind of layer one level further out: the mote-rank arithmetic, fitted to the owner's
+// log, importing nothing itself.
 //
 // ── WHAT THESE NUMBERS ARE, AND WHAT THEY ARE NOT ──────────────────────────────────────────────
 //
-// They are the spell's BASE figures at a stated level: no critical hits, no focus items, no AA
-// multipliers, no spell-damage bonus, no resist. They are DIRECTIONAL - the right instrument for
-// comparing two spells you are choosing between, not a damage meter.
+// They are the spell's BASE figures at a stated level: no critical hits, no AA multipliers, no
+// spell-damage bonus, no resist. They are DIRECTIONAL - the right instrument for comparing two
+// spells you are choosing between, not a damage meter.
 //
-// AND RECAST IS NOT IN THE CATALOG AT ALL. `SpellEntry` carries `castTimeMs` and `durationMs` and
-// no recast/refresh field, so a `dps` here is damage over the CAST plus (for a DoT) its duration,
-// never over a real casting cycle. A wizard nuke's true sustained dps is lower than the number
-// this file produces and a fast-recast spell's is higher. Stated here rather than in the UI on
-// purpose: the caveat diet (AGENTS.md) - the panel says one quiet `directional` and stops.
+// FOCUS ITEMS USED TO BE ON THAT LIST AND ARE NOT ANY MORE (JOS-452). Where a caller states the
+// worn focus percentages this file applies them, so a reader with an inventory dump loaded is
+// looking at figures that carry his own gear; a caller that states none gets exactly the numbers
+// this file printed before, byte for byte. The overlay is `shared/wornFocus.ts` and the surfaces
+// that turn it on say so in one quiet word.
+//
+// AND THE PER-SECOND FIGURES ARE SUSTAINED ONES SINCE JOS-444, BECAUSE RECAST IS IN THE CATALOG NOW.
+// This header used to say the opposite - "RECAST IS NOT IN THE CATALOG AT ALL" - and it was true
+// until 2026-08-22, when the scrape began capturing the wiki's `recast_time` (spells.json schema 3,
+// `SpellEntry.recastMs`, 1,925 of 2,006 rows) and the client's own row grew a reader for the same
+// number (spellsUsParse.ts field 10). So `dps`/`hps` divide by the CASTING CYCLE rather than by the
+// cast alone: cast plus recast for an instant spell, cast plus the whole duration for an over-time
+// one, and never a window shorter than cast plus recast.
+//
+// THE RE-USE TIMER STARTS WHEN THE CAST COMPLETES, which is the edge worth stating out loud: a
+// recast SHORTER than the cast still lengthens the cycle. Garrison's Mighty Mana Shock is a 3.0s
+// cast with a 1.5s recast and its sustained window is 4.5s, not 3.0s - 333 damage at L35 reads
+// 74 dps where it used to read 111. What contributes nothing extra is a recast shorter than an
+// OVER-TIME spell's own duration: those figures total the whole duration's ticks, so the window
+// has to cover the duration, and a faster re-use timer cannot make the same ticks arrive sooner.
+// A spell no source states a recast for is unchanged, figure for figure.
+//
+// AND A CAST CAN LAND MORE THAN ONCE SINCE JOS-449 (`SpellMetricsInput.hits`). The wiki's effect
+// line for a RAIN states ONE WAVE - `Frost Storm` says `Decrease Hitpoints by 512` and delivers
+// three waves of it - so a reader that took the line literally under-stated every rain in the game
+// threefold. The multiplier is an INPUT rather than something derived here: this file has never
+// known which spell is which, and the roster, the evidence and the target-cap arithmetic live in
+// `src/main/data/rainSpells.ts` and `shared/aoeSpells.ts` where they can be deleted without taking
+// the magnitude reader with them. Absent means 1, so every pre-JOS-449 figure is unchanged.
+//
+// AND SINCE JOS-451 THE CLIENT CAN CORRECT A NUMBER THE PAGE GOT WRONG, not only supply one the page
+// omits. The wiki transcribed the BASE of a level curve on a handful of pages and dropped the curve
+// (`Ethereal Cleansing`: `Increase Hitpoints by 10 per tick`, where the client states 10 plus two a
+// level capped at 100), so the app faithfully drew a paladin's only heal-over-time at a tenth of its
+// value. The rule is narrow, censused and lives beside `clientCurveSlot` below; the mana half is
+// `resolveSpellMana`. Four catalog rows move; the other 1,450 placed spells are byte-identical.
+//
+// The remaining caveats stay out of the UI on purpose: the caveat diet (AGENTS.md) - the panel says
+// one quiet `directional` and stops.
 //
 // ── THE SHAPES, MEASURED ───────────────────────────────────────────────────────────────────────
 //
@@ -46,6 +82,16 @@
 //     `UNKNOWN CALC 118 base 406 max 446 attrib Max Hitpoints` - neither is an effect magnitude;
 //     both fail the head test for free.
 
+// AND A THIRD OVERLAY SINCE JOS-452 (`SpellMetricsInput.focusDamagePct` / `focusHealPct`). The
+// header above has always said these figures carry "no focus items"; they now carry the ones YOUR
+// GEAR IS WEARING, when a caller states them. Same arrangement as the two before it: an input this
+// file does not derive, resolved once into `Fold`, multiplied at the single `foldLine` site, and
+// absent means no focus - `applyFocusPct(x, 0)` returns `x` by identity, so every figure printed
+// before JOS-452 is unchanged. The families, the level-range decay and the qualification test live
+// in `shared/wornFocus.ts`, which can be deleted without taking the magnitude reader with it.
+import { normalizeSpellRank, scaleSpellDamage, scaleSpellHeal } from './spellScale'
+import { applyFocusPct } from './wornFocus'
+
 /** A hitpoint line, read: how much, per tick or not, and over how many ticks the line states. */
 export interface HpLine {
   /** Positive magnitude at the evaluation level. */
@@ -54,6 +100,16 @@ export interface HpLine {
   direction: 'up' | 'down'
   /** True when the amount lands EVERY tick rather than once. */
   perTick: boolean
+  /**
+   * THE LINE STATED ONE BARE NUMBER (JOS-451) — `by 10 per tick`, with no `(L44)` breakpoint, no
+   * `between A and B` and no `by A to B`. Absent on every shape that carries a level range.
+   *
+   * It is here because it is the precondition of the client-curve rule below, and because only the
+   * READER of a line can tell the two apart afterwards: a ramp evaluated at one level and a flat
+   * line stating the same number are the same `amount`, and one of them is a claim about every
+   * level while the other is a claim about one.
+   */
+  flat?: true
   /**
    * The tick count the LINE ITSELF states, when it states one.
    *
@@ -93,7 +149,7 @@ export interface HpLine {
 //     what keeps Lich, Call of Bones, Dark Pact and the nine other shapeshift self-buffs — whose
 //     effect-0 slot is a permanent per-tick drain — from printing a total nobody can state.
 
-/** One effect-0 slot of the client's spell table. A subset of `SpellHpSlot` (shared/resistTypes). */
+/** One hitpoint slot of the client's spell table. A subset of `SpellHpSlot` (shared/resistTypes). */
 export interface ClientHpSlot {
   base: number
   max: number
@@ -109,17 +165,73 @@ export interface ClientHpSlot {
 export interface ClientHpFacts {
   hp?: readonly ClientHpSlot[]
   hpDuration?: { formula: number; value: number }
+  /**
+   * THE CLIENT'S RE-USE TIMER (JOS-444), and the only field here that is NOT part of the hitpoint
+   * fallback: it is read even when the wiki's own lines answered, because 81 catalog rows state no
+   * `recast_time` and a sustained figure with no denominator is the thing this ticket removed.
+   * The page wins where it states one - see `spellMetricsAt`.
+   */
+  recastMs?: number
+  /**
+   * THE CLIENT'S OWN TARGET CAP (JOS-449, field 143), carried for `recastMs`'s reason and read by
+   * `shared/aoeSpells.ts` rather than by anything in this file — a hit count reaches
+   * `spellMetricsAt` already resolved, because only the CALLER knows whether it is asking about one
+   * mob or a pack.
+   */
+  aeMaxTargets?: number
+  /**
+   * THE CLIENT'S MANA COST (JOS-451, field 14), read only where the page states none or states a
+   * zero — `resolveSpellMana` is the whole rule and its header is the argument for it.
+   */
+  mana?: number
 }
 
 /**
  * `calc` -> how much the magnitude grows per level of the caster.
  *
- * The six the ticket names and no more (EQEmu's `CalcSpellEffectValue_formula` is the reference):
- * 100 flat, 101 half a point a level, 102 one, 103 two, 104 three, 105 four. They cover 24,442 of
- * the effect-0 slots in the owner's file; every other code answers `formulaUnknown` and falls back
- * to the base rather than guessing a curve. The division is INTEGER, like the client's.
+ * JOS-396 shipped the six the ticket named (100 flat, 101 half a point a level, 102 one, 103 two,
+ * 104 three, 105 four) and every other code answered `formulaUnknown`. JOS-451 EARNED four more and
+ * a whole family, by MEASUREMENT rather than by copying EQEmu's table: for every catalog effect line
+ * that states a two-point level ramp, the implied step is `(B - A) / (levelB - levelA)`, and the
+ * client slot whose `base + step x levelA` lands on `A` is the slot the line describes. Fit over the
+ * committed catalog against the owner's install (2026-08-23):
+ *
+ *   calc < 100   THE STEP IS THE CODE ITSELF. Fitted at 1, 2, 3, 4, 5, 6, 7, 10 and 15, each on its
+ *                own rows and never off by more than integer truncation (`Liquid Silver I`, calc 6,
+ *                `by 16 (L1) to 250 (L40)`; `Greater Healing`, calc 7, `by 280 (L20) to 350 (L30)`).
+ *   109  0.25    `Brilliance` (`Increase INT by 12 (L44) to 14 (L52)`, base 1) and `Cassindra's
+ *                Elegy` (`12 (L44) to 16 (L60)`, base 1) both read `base + level/4` exactly.
+ *   110  0.2     `Psalm of Warmth` (`Increase Damage Shield by 6 (L25) to 13 (L60)`, base 1) and
+ *                `Boiling Blood` (`24 per tick (L1) to 36 per tick (L60)`, base 24).
+ *   119  0.125   `Cassindra's Chorus of Clarity` (`Increase Mana by 5 (L32) to 7 (L48)`, base 1).
+ *   121  1/3     `Echinacea Infusion` (`Increase Poison Resist by 5 (L1) to 10 (L15)`, base 5) and
+ *                `Fufil's Curtailing Chant` (`by 11 (L30) to 17 (L48) per tick`, base 1).
+ *
+ * Every code still absent from this table answers `formulaUnknown` and falls back to the base rather
+ * than guessing a curve — 123 (the client's random-between-base-and-max spelling), 139, 144 and the
+ * 4xxx family among them. The division is INTEGER, like the client's.
  */
-const CALC_STEPS: Record<number, number> = { 100: 0, 101: 0.5, 102: 1, 103: 2, 104: 3, 105: 4 }
+const CALC_STEPS: Record<number, number> = {
+  100: 0,
+  101: 0.5,
+  102: 1,
+  103: 2,
+  104: 3,
+  105: 4,
+  109: 0.25,
+  110: 0.2,
+  119: 0.125,
+  121: 1 / 3
+}
+
+/** Codes at or above this are the named table above; below it the code IS the step. */
+const CALC_TABLE_FLOOR = 100
+
+/** The per-level step this reader models for a `calc` code, or null when it will not guess one. */
+function calcStep(calc: number): number | null {
+  if (Number.isInteger(calc) && calc >= 0 && calc < CALC_TABLE_FLOOR) return calc
+  return CALC_STEPS[calc] ?? null
+}
 
 /** A client hitpoint slot below this magnitude is a rider, not the spell's purpose (see clientLine). */
 const MIN_CLIENT_HP_MAGNITUDE = 2
@@ -130,11 +242,87 @@ export function clientHpMagnitudeAt(
   level: number
 ): { amount: number; formulaUnknown: boolean } {
   const base = Math.abs(slot.base)
-  const step = CALC_STEPS[slot.calc]
-  if (step === undefined) return { amount: base, formulaUnknown: true }
+  const step = calcStep(slot.calc)
+  if (step === null) return { amount: base, formulaUnknown: true }
   const cap = Math.abs(slot.max)
   const raw = Math.floor(base + step * level)
   return { amount: cap > 0 && raw > cap ? cap : raw, formulaUnknown: false }
+}
+
+// ── AND WHERE THE WIKI TRANSCRIBED A CURVE'S BASE AND DROPPED THE CURVE (JOS-451) ──────────────
+//
+// The fallback above answers where the page says NOTHING. This answers a different failure, and it
+// is the one the owner reported: the page states a hitpoint line and the number in it is WRONG.
+//
+// `Ethereal Cleansing` (PAL 44) reads `Increase Hitpoints by 10 per tick` on the wiki. The owner's
+// client row (3683) states `1|100|10|0|103|100` — base 10, two more per level, capped at 100 — which
+// is 98 a tick at 44 and 100 a tick from 45 up. The page transcribed the BASE of a level curve and
+// dropped the curve, so a paladin's only heal-over-time read 40 total where the game heals 400.
+//
+// THE RULE IS THE SHAPE, AND THE SHAPE WAS CENSUSED BEFORE IT WAS WRITTEN. A wiki hitpoint line
+// qualifies only when ALL of this holds:
+//
+//   * the line is FLAT (`HpLine.flat`) — one bare number, no `(L44)` ramp, no `A to B` range. A
+//     ramp is the wiki stating the curve properly and it always wins.
+//   * the client's row carries EXACTLY ONE hitpoint slot whose |base| is that number, whose sign
+//     agrees with the line's direction, and whose per-tick verdict agrees with the line's. Exactly
+//     one, because two candidates mean nothing states WHICH slot the sentence is about.
+//   * that slot states a LEVEL CURVE this reader models — a nonzero step. A cap on its own changes
+//     no number (`base + 0 x level` is the base, and every capped flat slot in the file caps at its
+//     own base), and a `calc` this reader cannot read is not a curve it may claim to know.
+//
+// CENSUS over the committed catalog against the owner's install (2026-08-23). The shape matches 14
+// rows and MOVES A NUMBER on FOUR of them; the rule is written to touch nothing else, and a
+// before/after fold of all 1,454 placed spells is byte-identical on the other 1,450.
+//
+//   Ethereal Cleansing         PAL 44  10 per tick -> 98   (base 10, calc 103, cap 100)  heal  40 -> 392
+//   Celestial Remedy           CLR 19  35 per tick -> 54   (base 35, calc 102, cap 65)   heal 140 -> 216
+//   Selo's Chords of Cessation BRD 48   2 per tick -> 26   (base  2, calc 101, no cap)   dmg    6 ->  78
+//   Denon's Disruptive Discord BRD 18   4 per tick ->  8   (base  4, calc 109, no cap)   dmg   12 ->  24
+//
+// The other ten match the shape and state the wiki's own number back, because their cap equals their
+// base (the druid `... Heal` family's `90|103|90`, `Spike of Disease`'s `15|101|15`) — see
+// `withClientCurve`, which refuses to flag a reading that moved nothing.
+//
+// Counted and deliberately NOT touched, because they are a different claim: 354 flat wiki hitpoint
+// lines find no client slot that shares their base at all, and stay with the WIKI per the standing
+// law. Some of those are a real disagreement worth a catalog correction one day (`Banish Undead`
+// says 585 where the client's slot is base 270, calc 105, capped 468) and each one needs its own
+// instrument rather than a blanket client-wins. Three more matched a slot under a `calc` this reader
+// will not read (`Denon's Desperate Dirge` 144, `Force of Nature` 139, `Frost Shards` 10 on an NPC
+// row) and are left alone for the same reason.
+//
+// THE DURATION IS STILL THE PAGE'S. Only the MAGNITUDE moves: the line is the wiki's sentence and
+// the tick count it runs over is the wiki's `durationMs`, exactly as before. Both sources agree on
+// the two rows this fires on (formula 3, cap 4 ticks; the pages say 24 seconds), so nothing is being
+// papered over — it is simply not this rule's question.
+
+/**
+ * The ONE client slot that overrides this flat wiki line, or null. See the block above for the
+ * shape and the census; this function is that paragraph, executable.
+ */
+function clientCurveSlot(line: HpLine, client: ClientHpFacts | undefined): ClientHpSlot | null {
+  if (line.flat !== true) return null
+  const found = onlySlotStating(client?.hp, line)
+  if (!found) return null
+  const step = calcStep(found.calc)
+  return step !== null && step > 0 ? found : null
+}
+
+/** Is this the slot the sentence is about? Same magnitude, same side, same per-tick verdict. */
+function slotStates(slot: ClientHpSlot, line: HpLine): boolean {
+  if (slot.base === 0 || Math.abs(slot.base) !== line.amount) return false
+  return slot.base < 0 === (line.direction === 'down') && slot.perTick === line.perTick
+}
+
+/** The one slot `slotStates` accepts, or null — including when TWO of them do (see the block above). */
+function onlySlotStating(
+  slots: readonly ClientHpSlot[] | undefined,
+  line: HpLine
+): ClientHpSlot | null {
+  if (!slots) return null
+  const hits = slots.filter((slot) => slotStates(slot, line))
+  return hits.length === 1 ? hits[0] : null
 }
 
 /**
@@ -184,14 +372,24 @@ export interface SpellMetrics {
   damage?: number
   /** Total base healing at the evaluation level, HoT ticks included. */
   heal?: number
-  /** damage / mana. Absent when the catalog states no mana, or states 0. */
+  /** damage / mana. Absent when no source states a positive mana - see `resolveSpellMana`. */
   damagePerMana?: number
   /** heal / mana, same rule. */
   healPerMana?: number
-  /** damage over cast time plus, for a DoT, its whole duration. */
+  /** SUSTAINED damage per second: the total over one whole casting cycle (see the header). */
   dps?: number
   /** the same for healing. */
   hps?: number
+  /**
+   * The re-use timer, in ms, as some source stated it - echoed onto the figures because it is the
+   * half of the `dps`/`hps` denominator that no other field on this record explains, and because
+   * the formatter (`spellMetricsParts`) is the one place that decides whether it is worth printing.
+   *
+   * Written only when a source states a POSITIVE one. A stated 0 (432 catalog rows) is a real
+   * answer meaning "no re-use timer", and it changes no window and prints nothing, so carrying it
+   * across the wire on every row would be bytes saying nothing.
+   */
+  recastMs?: number
   /** True when any damage arrives per tick - the row marks it `over Ns`. */
   dot?: boolean
   /** True when any healing arrives per tick. */
@@ -209,6 +407,17 @@ export interface SpellMetrics {
    */
   source?: 'client'
   /**
+   * THE CLIENT'S CURVE ANSWERED FOR A FLAT WIKI LINE (JOS-451) — the page stated the hitpoint line
+   * and the client stated the level curve the page transcribed the base of.
+   *
+   * A SEPARATE FLAG FROM `source`, because it is a separate claim: `source: 'client'` means the page
+   * said nothing at all, and this means the page said something and one of its numbers was replaced.
+   * Four spells in the committed catalog carry it at their own gain level (`Ethereal Cleansing`,
+   * `Celestial Remedy`, `Selo's Chords of Cessation`, `Denon's Disruptive Discord`). Like `source` it
+   * is a flag in the DATA and not a caption on the screen — the caveat diet.
+   */
+  clientCurve?: true
+  /**
    * A contributing client slot used a `calc` code this reader does not model, so its magnitude is
    * the slot's BASE with no level curve applied — a floor rather than an answer. One spell in the
    * committed catalog (`Soul Bond`, calc 4005) is in this state today.
@@ -219,11 +428,68 @@ export interface SpellMetrics {
 /** The catalog fields this reader needs. A subset of `SpellEntry`, so a caller can pass one. */
 export interface SpellMetricsInput {
   effects?: string[]
+  /**
+   * The wiki's mana cost. A stated 0 is the page claiming the spell is FREE, and since JOS-451 that
+   * claim can be overturned by the client's own column — `resolveSpellMana` carries the rule, the
+   * census and the reason it is narrower than the recast fallback beside it.
+   */
   mana?: number
   castTimeMs?: number
+  /**
+   * The wiki's `recast_time`, in ms (schema 3). ABSENT means no source stated one, which is not
+   * the same as the STATED 0 that 432 rows carry - both leave the window at the cast alone, but
+   * only the second is an answer, and `spellMetricsAt` falls back to the client file for the first.
+   */
+  recastMs?: number
   durationMs?: number | null
   /** `target_type` verbatim. `Lifetap` changes what the Increase line means - see below. */
   targetType?: string
+  /**
+   * THE MOTE UPGRADE LEVEL this reading is taken at (JOS-447), 0..10. Absent and 1 both mean the
+   * base spell — `shared/spellScale.ts normalizeSpellRank` owns that reading and says why.
+   *
+   * It rides on the INPUT rather than beside `level` for `recastMs`'s reason: it has to be resolved
+   * ONCE, before either fold runs, so the wiki path and the client path scale by one number. Damage
+   * and healing move with it at their own fitted rates; see spellScale.ts's header for what does
+   * not (mana, cast time) and which way those figures err.
+   */
+  rank?: number
+  /**
+   * HOW MANY TIMES THE DAMAGE MAGNITUDE LANDS FROM ONE CAST (JOS-449). Absent and 1 are the same
+   * answer, and 1 is what every spell in the catalog reads until a caller says otherwise — so every
+   * figure this file printed before JOS-449 is unchanged by construction.
+   *
+   * It exists because the wiki's effect line for a RAIN states ONE WAVE. `Frost Storm` carries
+   * `Decrease Hitpoints by 512` and delivers three waves of it, so a reader that took the line
+   * literally under-stated the spell threefold and buried the most efficient nuke a wizard owns at
+   * 50. The count itself is not decided here: `src/main/data/rainSpells.ts` carries the roster and
+   * the evidence, `shared/aoeSpells.ts aeHits` turns waves and a target count into this number, and
+   * this file only multiplies.
+   *
+   * DAMAGE ONLY, and the asymmetry is real rather than an omission: nothing in the catalog heals in
+   * waves, and a rain's mana-drain rider is not a hitpoint line at all. A healing line is left
+   * alone so a future two-sided spell cannot silently gain a heal it does not perform.
+   *
+   * IT MULTIPLIES THE MAGNITUDE, NOT THE TOTAL, which is what keeps the mote-rank arithmetic
+   * intact: a rank scales the PER-WAVE amount (`scaleSpellDamage`) and the waves multiply what
+   * comes out, in that order, because that is the order the game applies them in.
+   */
+  hits?: number
+  /**
+   * THE WORN DAMAGE FOCUS, as a percentage, already resolved for THIS spell (JOS-452). Absent, 0 and
+   * anything unreadable are the same answer: no focus, and a byte-identical figure.
+   *
+   * Resolved by the caller and not here, for `hits`'s reason one step further out: which focus
+   * effects a player is wearing is a fact about a `/outputfile inventory` dump, and whether one
+   * QUALIFIES is a fact about the focus's own limit lines. `shared/wornFocus.ts bestWornFocus` owns
+   * both and hands down one number.
+   *
+   * It is a PERCENT rather than a multiplier so that "no focus" is 0 rather than 1, which is the
+   * same absent-is-nothing shape `rank` has and cannot be confused with a multiplier of zero.
+   */
+  focusDamagePct?: number
+  /** The worn HEALING focus, same rule, resolved against the same spell. */
+  focusHealPct?: number
 }
 
 /** One EQ tick. */
@@ -307,16 +573,16 @@ function rampAt(points: readonly Breakpoint[], level: number): number {
  * A range is read at its MIDPOINT: the page states two bounds and no distribution, and the
  * midpoint is the only summary that does not prefer one end of a claim the wiki did not make.
  */
-function magnitudeAt(tailRaw: string, level: number): number | null {
+function magnitudeAt(tailRaw: string, level: number): { value: number; flat: boolean } | null {
   const tail = normalizeBreakpoints(tailRaw)
   const points = breakpointsOf(tail)
-  if (points.length > 0) return rampAt(points, level)
+  if (points.length > 0) return { value: rampAt(points, level), flat: false }
   const between = /\bbetween\s+(-?\d+)\s+and\s+(-?\d+)/i.exec(tail)
-  if (between) return (Number(between[1]) + Number(between[2])) / 2
+  if (between) return { value: (Number(between[1]) + Number(between[2])) / 2, flat: false }
   const range = /\bby\s+(-?\d+)\s+to\s+(-?\d+)/i.exec(tail)
-  if (range) return (Number(range[1]) + Number(range[2])) / 2
+  if (range) return { value: (Number(range[1]) + Number(range[2])) / 2, flat: false }
   const flat = /\bby\s+(-?\d+)/i.exec(tail)
-  return flat ? Number(flat[1]) : null
+  return flat ? { value: Number(flat[1]), flat: true } : null
 }
 
 /** `for two additional ticks` / `after 4 ticks` - the count, when the line counts for itself. */
@@ -340,15 +606,16 @@ export function parseHpLine(line: string, level: number): HpLine | null {
   const head = HP_HEAD_RE.exec(s)
   if (!head) return null
   const tail = s.slice(head[0].length)
-  const amount = magnitudeAt(tail, level)
-  if (amount === null) return null
+  const read = magnitudeAt(tail, level)
+  if (read === null) return null
   const statedTicks = statedTicksOf(tail)
   const perTick = /\bper\s+tick\b/i.test(tail) || /\bfor\s+\S+\s+additional\s+ticks?\b/i.test(tail)
   const out: HpLine = {
-    amount: Math.abs(amount),
+    amount: Math.abs(read.value),
     direction: head[1].toLowerCase() === 'increase' ? 'up' : 'down',
     perTick
   }
+  if (read.flat) out.flat = true
   if (statedTicks !== undefined) out.statedTicks = statedTicks
   return out
 }
@@ -371,6 +638,23 @@ interface Side {
 }
 
 /**
+ * The multipliers resolved ONCE per reading, before either fold runs: the mote rank (JOS-447), the
+ * number of times a cast lands (JOS-449) and the worn focus percentages (JOS-452).
+ *
+ * One object rather than separate arguments so `foldLine` stays inside the repo's four-parameter cap
+ * and so a further multiplier cannot be added without a name for what it is - which is exactly the
+ * door JOS-452 came through.
+ */
+interface Fold {
+  rank: number
+  hits: number
+  /** the worn damage focus percent for THIS spell; 0 is no focus */
+  focusDamagePct: number
+  /** the worn healing focus percent for THIS spell; 0 is no focus */
+  focusHealPct: number
+}
+
+/**
  * Fold one read line into the damage/heal totals.
  *
  * A per-tick line contributes `amount x ticks`, where the ticks are the line's own count when it
@@ -378,15 +662,74 @@ interface Side {
  * stated count contributes NOTHING - the catalog has told us a rate and not how long it runs, and
  * multiplying by a guess would put a made-up total in front of a player.
  */
-function foldLine(side: Side, line: HpLine, durationTicks: number): void {
+function foldLine(side: Side, line: HpLine, durationTicks: number, fold: Fold): void {
+  // THE ONE PLACE A MOTE RANK TOUCHES A NUMBER (JOS-447). Both paths - the wiki's own lines and the
+  // client's slots - fold through here, so one scaling happens once rather than twice in agreement.
+  // Each direction scales by its own measured rate: six percent a rank for damage, three for
+  // healing (owner ruling 2026-08-23 shipped the healing half; spellScale.ts holds both fits).
+  //
+  // AND THE WAVES MULTIPLY WHAT THE RANK PRODUCED (JOS-449), in that order and damage-side only -
+  // `SpellMetricsInput.hits` states why.
+  //
+  // AND THE WORN FOCUS SITS BETWEEN THEM (JOS-452), which is the order the game applies them in: a
+  // mote rank is part of the spell you own, a focus rolls on top of the spell as it is cast, and the
+  // waves are that cast landing more than once. Each side takes its OWN focus - a damage focus can
+  // never lift a healing line, and the two are resolved separately against the same spell.
+  const amount =
+    line.direction === 'down'
+      ? applyFocusPct(scaleSpellDamage(line.amount, fold.rank), fold.focusDamagePct) * fold.hits
+      : applyFocusPct(scaleSpellHeal(line.amount, fold.rank), fold.focusHealPct)
   if (!line.perTick) {
-    side.total += line.amount
+    side.total += amount
     return
   }
   const ticks = line.statedTicks ?? durationTicks
   if (ticks <= 0) return
-  side.total += line.amount * ticks
+  side.total += amount * ticks
   side.overTime = true
+}
+
+/**
+ * The spell with its re-use timer resolved: the page's own `recast_time`, or the client's row where
+ * the page is silent (JOS-444). Returns the input UNTOUCHED when there is nothing to add, so a
+ * caller that passes no client facts gets the object it handed in.
+ */
+function withRecast(spell: SpellMetricsInput, client?: ClientHpFacts): SpellMetricsInput {
+  if (spell.recastMs !== undefined || client?.recastMs === undefined) return spell
+  return { ...spell, recastMs: client.recastMs }
+}
+
+/**
+ * THE MANA A SPELL COSTS: the page's number, or the CLIENT'S where the page states none or states a
+ * zero (JOS-451). Returns undefined when neither source states a positive one, which is what every
+ * bard song and every other free ability says and is not the same claim as a missing field.
+ *
+ * IT IS THE NARROWEST OF THE THREE CLIENT FALLBACKS IN THIS FILE, and deliberately so. The client's
+ * column disagrees with the page on 72 of the 1,234 catalog rows where BOTH state a positive number
+ * — a re-tune, an era difference, a wiki typo, no way to tell from here — and the standing law gives
+ * those to the wiki. A stated zero is different in kind: it is the page claiming the spell is free,
+ * and a spell the client charges for is not free.
+ *
+ * CENSUS (owner's install, 2026-08-23): 8 catalog rows are in the wiki-silent / client-positive
+ * shape, and every one of them is an NPC-only or otherwise unlearnable row (`Alluring Whispers`,
+ * `Cleanse`, `Frost Shards`, `Fury of the Chosen`, the classless second `Healing`, `Mana Flare`,
+ * `Manifest Elements`, `Scorching Skin`) — none is placed at a level by `parseSpellClasses`, so no
+ * unlock row's mana moves today. The rule is here for the shape rather than for a count: a scrape
+ * that loses a mana figure now costs a wrong `dmg/mana` instead of a missing one.
+ *
+ * AND IT SAYS NOTHING ABOUT BARD SONGS, which is worth writing down because the ticket expected it
+ * to: the client charges 0 for every bard song the catalog charges 0 for. The only mana-costing bard
+ * rows in the owner's file are `Denon's Desperate Dirge` (800, which the catalog already states) and
+ * the level-75-and-up `Denon's Dirge of ...` line.
+ */
+export function resolveSpellMana(page: number | undefined, client: number | undefined): number | undefined {
+  if (typeof page === 'number' && page > 0) return page
+  return typeof client === 'number' && client > 0 ? client : page
+}
+
+function withMana(spell: SpellMetricsInput, client?: ClientHpFacts): SpellMetricsInput {
+  const mana = resolveSpellMana(spell.mana, client?.mana)
+  return mana === spell.mana ? spell : { ...spell, mana }
 }
 
 /**
@@ -402,26 +745,88 @@ function foldLine(side: Side, line: HpLine, durationTicks: number): void {
  * with a heal it does not perform on anybody but the caster and would put a `heal/mana` on a
  * detrimental spell. The catalog files all 28 such rows under `targetType: 'Lifetap'`, so the
  * increase side is dropped there and the damage side stands alone.
+ *
+ * THE RECAST FALLBACK IS RESOLVED HERE AND NOWHERE ELSE (JOS-444). The wiki's `recast_time` wins;
+ * the client's field 10 answers for the 81 rows whose page omits it. It is folded into the input
+ * rather than threaded past `assemble` so that every path below — the wiki fold, the client fold,
+ * the unlock row, the spell card — divides by one denominator resolved one way.
  */
 export function spellMetricsAt(
-  spell: SpellMetricsInput,
+  input: SpellMetricsInput,
   level: number,
   client?: ClientHpFacts
 ): SpellMetrics | undefined {
+  const spell = withMana(withRecast(input, client), client)
+  // Resolved ONCE, here, for `withRecast`'s reason: one number reaches both folds.
+  const fold: Fold = {
+    rank: normalizeSpellRank(spell.rank),
+    hits: hitsOf(spell.hits),
+    focusDamagePct: pctOf(spell.focusDamagePct),
+    focusHealPct: pctOf(spell.focusHealPct)
+  }
   const lifetap = spell.targetType === 'Lifetap'
   const durationTicks = ticksOf(spell.durationMs)
   const dmg: Side = { total: 0, overTime: false }
   const heal: Side = { total: 0, overTime: false }
   let any = false
+  let curved = false
   for (const raw of spell.effects ?? []) {
-    const line = parseHpLine(raw, level)
-    if (!line) continue
-    if (lifetap && line.direction === 'up') continue
+    const read = parseHpLine(raw, level)
+    if (!read) continue
+    if (lifetap && read.direction === 'up') continue
     any = true
-    foldLine(line.direction === 'down' ? dmg : heal, line, durationTicks)
+    const line = withClientCurve(read, level, client)
+    if (line !== read) curved = true
+    foldLine(line.direction === 'down' ? dmg : heal, line, durationTicks, fold)
   }
-  if (any) return assemble(dmg, heal, spell, durationTicks)
-  return client ? clientMetricsAt(spell, level, client) : undefined
+  if (!any) return client ? clientMetricsAt(spell, level, client, fold) : undefined
+  const out = assemble(dmg, heal, spell, durationTicks)
+  if (out && curved) out.clientCurve = true
+  return out
+}
+
+/**
+ * DOES THE CLIENT'S CURVE ANSWER for any of these wiki hitpoint lines? The question main asks before
+ * deciding whether a wiki-lined row still has to carry `clientHp` across the wire (JOS-451).
+ *
+ * Level-independent, and asked at 1 for the same reason `LEVEL_ANY` exists in levelUnlocks.ts: the
+ * match is on the slot's base, sign and per-tick verdict, and a FLAT line's amount is the same
+ * number at every level.
+ */
+export function anyClientCurve(
+  lines: readonly string[],
+  client: ClientHpFacts | undefined
+): boolean {
+  return lines.some((raw) => {
+    const line = parseHpLine(raw, 1)
+    return line !== null && clientCurveSlot(line, client) !== null
+  })
+}
+
+/**
+ * The line as the CLIENT states it, where the client states a curve the page dropped — else the
+ * line untouched, IDENTICALLY (`===`), which is how the caller knows the rule fired.
+ */
+function withClientCurve(line: HpLine, level: number, client: ClientHpFacts | undefined): HpLine {
+  const slot = clientCurveSlot(line, client)
+  if (!slot) return line
+  const amount = clientHpMagnitudeAt(slot, level).amount
+  // A CURVE WHOSE CAP EQUALS ITS OWN BASE STATES THE WIKI'S NUMBER BACK. Eight rows in the committed
+  // catalog are that shape (the druid `... Heal` family's `90|103|90`, `Spike of Disease`'s
+  // `15|101|15`), and flagging a reading that moved nothing would make `clientCurve` mean "the shape
+  // matched" when what a reader wants of it is "a number changed".
+  return amount === line.amount ? line : { ...line, amount }
+}
+
+/** A focus percent as this file will read it: absent, negative and unreadable all mean no focus. */
+function pctOf(pct: number | null | undefined): number {
+  return typeof pct === 'number' && Number.isFinite(pct) && pct > 0 ? pct : 0
+}
+
+/** A hit count as this file will read it: a whole number, never below one. Absent means one. */
+function hitsOf(hits: number | null | undefined): number {
+  if (typeof hits !== 'number' || !Number.isFinite(hits)) return 1
+  return Math.max(1, Math.trunc(hits))
 }
 
 /**
@@ -442,7 +847,8 @@ export function spellMetricsAt(
 function clientMetricsAt(
   spell: SpellMetricsInput,
   level: number,
-  client: ClientHpFacts
+  client: ClientHpFacts,
+  fold: Fold
 ): SpellMetrics | undefined {
   const slots = client.hp ?? []
   if (slots.length === 0) return undefined
@@ -455,7 +861,7 @@ function clientMetricsAt(
     const line = clientLine(slot, level, lifetap)
     if (!line) continue
     if (line.formulaUnknown) unknownFormula = true
-    foldLine(line.direction === 'down' ? dmg : heal, line, ticks)
+    foldLine(line.direction === 'down' ? dmg : heal, line, ticks, fold)
   }
   const out = assemble(dmg, heal, spell, ticks)
   if (!out) return undefined
@@ -502,17 +908,28 @@ interface SideFigures {
 }
 
 /**
- * One side, derived. The per-second window is the CAST plus, for an over-time side, the whole
- * duration — the honest denominator for "how fast does this arrive", and the reason a DoT's dps
+ * One side, derived. `windowSec` is the casting cycle this side's total arrived over (see
+ * `cycleSec`) — the honest denominator for "how fast does this arrive", and the reason a DoT's dps
  * is not its per-tick rate.
  */
-function figures(side: Side, mana: number | null, castSec: number, overSec: number): SideFigures | null {
+function figures(side: Side, mana: number | null, windowSec: number): SideFigures | null {
   if (side.total <= 0) return null
   const out: SideFigures = { total: r1(side.total) }
   if (mana !== null) out.perMana = r1(side.total / mana)
-  const window = castSec + (side.overTime ? overSec : 0)
-  if (window > 0) out.perSecond = r1(side.total / window)
+  if (windowSec > 0) out.perSecond = r1(side.total / windowSec)
   return out
+}
+
+/**
+ * THE CASTING CYCLE one side's total arrives over, in seconds (JOS-444).
+ *
+ * The cast is always in it, because you spend it either way. On top of that sits whichever is
+ * LONGER: the duration an over-time side's ticks run for, or the re-use timer you must wait out
+ * before the spell is yours to cast again. Both are measured from the moment the cast completes,
+ * so they overlap rather than add - a 30s DoT on a 6s recast is one 30s cycle, not 36.
+ */
+function cycleSec(overTime: boolean, castSec: number, overSec: number, recastSec: number): number {
+  return castSec + Math.max(overTime ? overSec : 0, recastSec)
 }
 
 /** The damage side's four fields, written onto the output. */
@@ -543,23 +960,50 @@ function assemble(
   const mana = typeof spell.mana === 'number' && spell.mana > 0 ? spell.mana : null
   const castSec = (spell.castTimeMs ?? 0) / 1000
   const overSec = durationTicks * (TICK_MS / 1000)
-  const d = figures(dmg, mana, castSec, overSec)
-  const h = figures(heal, mana, castSec, overSec)
+  const recastMs = spell.recastMs ?? 0
+  const recastSec = recastMs > 0 ? recastMs / 1000 : 0
+  const d = figures(dmg, mana, cycleSec(dmg.overTime, castSec, overSec, recastSec))
+  const h = figures(heal, mana, cycleSec(heal.overTime, castSec, overSec, recastSec))
   if (!d && !h) return undefined
   const out: SpellMetrics = {}
   writeDamage(d, dmg.overTime, out)
   writeHeal(h, heal.overTime, out)
   if ((dmg.overTime || heal.overTime) && overSec > 0) out.overSec = Math.round(overSec)
+  if (recastMs > 0) out.recastMs = recastMs
   return out
 }
 
 /**
+ * A RECAST BELOW THIS IS THE GAME'S GLOBAL COOLDOWN, not a property of the spell (JOS-444).
+ *
+ * 532 of the catalog's 1,925 stated recasts are exactly 1.5s — the floor every spell in EverQuest
+ * pays — and printing `recast 1.5s` on a third of the rows would be a column of noise saying the
+ * same thing. It still counts in the arithmetic, because the 1.5s is real time the caster spends;
+ * what it does not earn is a word on a dense row.
+ *
+ * The threshold is drawn just above that floor rather than fitted to a distribution: 539 rows state
+ * a positive recast under 2s (532 of them the 1.5s itself, plus 4 at 1.0s and 3 at 0.01s) and 954
+ * state 2s or more, the smallest of which is 2s exactly — so the cut lands in a real gap and the
+ * floor is inclusive.
+ */
+const RECAST_PART_MIN_MS = 2000
+
+/** Seconds, one decimal, with a whole number left whole: `6s`, `2.3s`. */
+function secondsPart(ms: number): string {
+  return `${String(r1(ms / 1000))}s`
+}
+
+/**
  * The row's compact figures, in the order the panel prints them:
- * `dmg 143 · dps 48 · 2.1 dmg/mana`, `heal 250 · hps 83 · 3.6 heal/mana`, `over 24s`.
+ * `dmg 143 · dps 48 · 2.1 dmg/mana`, `heal 250 · hps 83 · 3.6 heal/mana`, `over 24s`, `recast 6s`.
  *
  * ONE FORMATTER, shared by the unlock row and (by design) the spell search that reuses these
  * rows - two components formatting the same figures is two opinions about what `2.1` means.
  * No em dashes; the separator is the middle dot the rest of the app already uses.
+ *
+ * THE RECAST GOES LAST because it is the only part that is not a figure read off the effect list:
+ * it is the cycle the per-second numbers were divided by, which is what a reader wants after the
+ * number rather than before it.
  */
 export function spellMetricsParts(m: SpellMetrics): string[] {
   const parts: string[] = []
@@ -574,5 +1018,8 @@ export function spellMetricsParts(m: SpellMetrics): string[] {
     if (m.healPerMana !== undefined) parts.push(`${String(m.healPerMana)} heal/mana`)
   }
   if (m.overSec !== undefined) parts.push(`over ${String(m.overSec)}s`)
+  if (m.recastMs !== undefined && m.recastMs >= RECAST_PART_MIN_MS) {
+    parts.push(`recast ${secondsPart(m.recastMs)}`)
+  }
   return parts
 }

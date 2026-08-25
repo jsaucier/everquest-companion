@@ -159,7 +159,10 @@ test('no achievement row is left without a quest', () => {
 })
 
 test('the alias table still describes the scrape it was written against', () => {
-  assert.equal(ACHIEVEMENT_REWARD_ALIASES.length, 3, 'three rows; 92 of 95 need none')
+  // 3 -> 1 on 2026-08-22: the Bard row (wiki fixed its own reward cell) and the Rogue row (wiki
+  // retitled the typo'd item page) both retired — the deletions this test's own message
+  // prescribes when a rescrape catches up to a row.
+  assert.equal(ACHIEVEMENT_REWARD_ALIASES.length, 1, 'one row; 94 of 95 need none')
   for (const a of ACHIEVEMENT_REWARD_ALIASES) {
     const q = QUESTS.find((q) => q.className === a.className && q.name === a.questName)
     assert.ok(q, `${a.questName} is a real quest`)

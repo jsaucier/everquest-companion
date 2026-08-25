@@ -27,11 +27,13 @@ import {
   spellClassLine,
   spellEffectClassLabels,
   spellFactsAreForLine,
+  spellFocusLines,
   spellLineageLine,
   spellLineageMembers,
   spellStatRows,
   type SpellDetail
 } from '../src/shared/spellDetail'
+import { parseWornFocus, type WornFocus } from '../src/shared/wornFocus'
 
 const db = loadSpellDb()
 
@@ -65,17 +67,21 @@ test('D2 each stat row appears exactly when its own field is stated', () => {
   assert.deepEqual(idsOf(bare({ spellType: 'Beneficial' })), ['type'])
   assert.deepEqual(idsOf(bare({ targetType: 'Single Hostile' })), ['target'])
   assert.deepEqual(idsOf(bare({ castTimeMs: 4000 })), ['cast'])
+  assert.deepEqual(idsOf(bare({ recastMs: 6000 })), ['recast'])
   assert.deepEqual(idsOf(bare({ mana: 75 })), ['mana'])
   assert.deepEqual(idsOf(bare({ durationText: '24 Sec' })), ['duration'])
   assert.deepEqual(idsOf(bare({ instrumentEnhanced: 'Required' })), ['instrument'])
 })
 
 test('D3 a STATED ZERO is a fact and draws its row (mana 0, cast 0 - every bard song)', () => {
-  const song = bare({ mana: 0, castTimeMs: 0 })
-  assert.deepEqual(idsOf(song), ['cast', 'mana'])
+  const song = bare({ mana: 0, castTimeMs: 0, recastMs: 0 })
+  assert.deepEqual(idsOf(song), ['cast', 'recast', 'mana'])
   const rows = spellStatRows(song)
   assert.equal(rows.find((r) => r.id === 'mana')?.value, '0')
   assert.equal(rows.find((r) => r.id === 'cast')?.value, '0.0s')
+  // JOS-444: 432 catalog rows state `recast_time = 0`, which is the page saying there is no re-use
+  // timer. The card prints it for the same reason it prints a stated mana of 0 - somebody said so.
+  assert.equal(rows.find((r) => r.id === 'recast')?.value, '0.0s')
 })
 
 test('D4 the values are the source’s own words, never a re-spelling of them', () => {
@@ -92,11 +98,13 @@ test('D5 the row order is the spell window’s, whichever subset is present', ()
     spellType: 'Beneficial',
     targetType: 'Group',
     castTimeMs: 3000,
+    recastMs: 1500,
     mana: 0,
     durationText: '3 ticks',
     instrumentEnhanced: 'Yes'
   })
-  assert.deepEqual(idsOf(full), ['type', 'target', 'cast', 'mana', 'duration', 'instrument'])
+  // Recast sits beside cast: the casting cycle is the two of them read as one sentence (JOS-444).
+  assert.deepEqual(idsOf(full), ['type', 'target', 'cast', 'recast', 'mana', 'duration', 'instrument'])
 })
 
 // ─────────────────────────── 2. the real DB, read end to end ─────────────────────────────────
@@ -109,12 +117,13 @@ test('D6 Celestial Remedy reads out of the committed DB with every field it stat
   // Verbatim from src/main/data/spells.json.
   assert.equal(d.durationText, '24 Sec')
   assert.equal(d.castTimeMs, 4000)
+  assert.equal(d.recastMs, 1500, 'schema 3 carries recast_time, and the card states it (JOS-444)')
   assert.equal(d.mana, 75)
   assert.equal(d.targetType, 'Single Friendly (or Self)')
   assert.deepEqual(d.effects, ['Increase Hitpoints by 35 per tick'])
   assert.deepEqual(d.classLevels, [{ cls: 'CLR', level: 19 }])
   assert.equal(spellClassLine(d), 'CLR 19')
-  assert.deepEqual(idsOf(d), ['type', 'target', 'cast', 'mana', 'duration'])
+  assert.deepEqual(idsOf(d), ['type', 'target', 'cast', 'recast', 'mana', 'duration'])
   // The page carries no bard instrument row, so no instrument row is drawn.
   assert.equal(d.instrumentEnhanced, undefined)
 })
@@ -258,6 +267,93 @@ test('D18 the record carries the row’s own figures, read at the level the spel
   const nuke = buildSpellDetail(db, 'Ice Comet')
   assert.equal(nuke.metricsLevel, 49)
   assert.ok((nuke.metrics?.damage ?? 0) > 0, 'a nuke states damage')
+})
+
+test('D20 (JOS-447) the card states BOTH readings when a rank is observed, and one when it is not', () => {
+  // The card has the room the table does not, so it prints the spell as the catalog describes it
+  // AND the spell as you own it. Garrison's is read at the level a wizard gains it (18), where the
+  // wiki's ramp states 272; at the VIII the owner's log has watched, six percent a rank floored
+  // gives 272 + floor(272 * 48 / 100) = 402.
+  const base = buildSpellDetail(db, "Garrison's Mighty Mana Shock")
+  assert.equal(base.metricsLevel, 18)
+  assert.equal(base.metrics?.damage, 272)
+  assert.equal(base.metricsAtRank, undefined, 'no rank observed, so no second line to draw')
+  assert.equal(base.metricsRank, undefined)
+
+  const at = buildSpellDetail(db, "Garrison's Mighty Mana Shock", [], { rank: 8 })
+  assert.equal(at.metrics?.damage, 272, 'the first line is still the catalog`s own number')
+  assert.equal(at.metricsRank, 8)
+  assert.equal(at.metricsAtRank?.damage, 402)
+  // Both readings divide by the same casting cycle, so the pair is comparable on its face.
+  assert.equal(at.metrics?.recastMs, at.metricsAtRank?.recastMs)
+
+  // AND RANK 1 IS BASE, the same reading `scaleSpellDamage` takes and the same one the `yours:`
+  // pill takes - a card must not grow a second line that restates the first.
+  const one = buildSpellDetail(db, "Garrison's Mighty Mana Shock", [], { rank: 1 })
+  assert.equal(one.metricsAtRank, undefined)
+  assert.equal(one.metricsRank, undefined)
+
+  // A spell with no figures at all gains no rank line either, whatever rank is handed in.
+  const none = buildSpellDetail(db, 'Clarity', [], { rank: 5 })
+  assert.equal(none.metrics, undefined)
+  assert.equal(none.metricsAtRank, undefined)
+})
+
+// ---- D21: THE CARD NAMES THE ITEM THAT DID IT (JOS-452) --------------------------------------
+//
+// The readout's marker says `worn +11%` and the card is where a reader finds out WHICH piece of
+// gear is producing it. Three claims: a third figures line exists when a worn focus qualifies, it
+// names the effect AND the item, and it is entirely absent for anybody wearing nothing.
+
+const MASK = ((): WornFocus => {
+  const parsed = parseWornFocus('Improved Damage II', 'Polished Mithril Mask (Exaltation)', [
+    'Increase Spell Damage by 1% to 20%',
+    'Limit Max Level: 44 (lose 5% per level after)',
+    'Limit Effect: Current HP',
+    'Limit Max Duration: 0s',
+    'Limit Type: Detrimental',
+    'Limit Target: Exclude Target AE'
+  ])
+  assert.ok(parsed)
+  return parsed
+})()
+
+test('D21 the card carries a THIRD reading with the player`s gear on, and names the item', () => {
+  const plain = buildSpellDetail(db, "Garrison's Mighty Mana Shock")
+  const worn = buildSpellDetail(db, "Garrison's Mighty Mana Shock", [], { focus: [MASK] })
+  // The first two lines are untouched: the catalog's own figures do not move because of gear.
+  assert.deepEqual(worn.metrics, plain.metrics)
+  // The third is the same spell as you CAST it: its L18 gain-level figure plus the middle of the
+  // 1..20 band the page states.
+  assert.equal(worn.metricsWithFocus?.damage, Number(((plain.metrics?.damage ?? 0) * 1.105).toFixed(1)))
+  assert.deepEqual(worn.focusSources, [
+    { side: 'damage', effect: 'Improved Damage II', item: 'Polished Mithril Mask (Exaltation)', pct: 10.5 }
+  ])
+  assert.deepEqual(spellFocusLines(worn), [
+    'worn +11% damage · Improved Damage II · Polished Mithril Mask (Exaltation)'
+  ])
+  // No em dashes anywhere near a player (AGENTS.md).
+  assert.doesNotMatch(spellFocusLines(worn)[0], /[–—]/)
+})
+
+test('D21 a card with no gear, or gear this spell does not qualify for, says nothing at all', () => {
+  const none = buildSpellDetail(db, "Garrison's Mighty Mana Shock")
+  assert.equal(none.metricsWithFocus, undefined)
+  assert.equal(none.focusSources, undefined)
+  assert.deepEqual(spellFocusLines(none), [])
+  // A damage focus over a HEAL: the qualification test refuses it and the card draws no gear block.
+  const heal = buildSpellDetail(db, 'Superior Healing', [], { focus: [MASK] })
+  assert.ok(heal.metrics?.heal, 'the spell this refusal is about really is a heal')
+  assert.equal(heal.metricsWithFocus, undefined)
+  assert.equal(heal.focusSources, undefined)
+})
+
+test('D21 the gear reading rides the RANK, so the card`s last line is its most complete', () => {
+  const both = buildSpellDetail(db, "Garrison's Mighty Mana Shock", [], { rank: 8, focus: [MASK] })
+  assert.equal(both.metricsAtRank?.damage, 402, 'the rank line is unchanged by gear')
+  // The same 10.5% over the rank figure, which is what a player holding a VIII and wearing the mask
+  // is really casting.
+  assert.equal(both.metricsWithFocus?.damage, 444.2)
 })
 
 test('D19 a spell with no hitpoint line states no figures at all — never a zero', () => {

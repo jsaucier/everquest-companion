@@ -66,7 +66,11 @@
  *   9. and clicking a row opens that item's Loot drill-down (with its own per-zone drop-rate
  *      table) through the app's ONE navigation seam, so Back NAMES the Leveling tab and returns
  *      here (the JOS-43 law, on the app's newest cross-view link). Steps 8/9 live in
- *      `dropSteps.mts` — this spec is at the repo's max-lines budget.
+ *      `dropSteps.mts` — this spec is at the repo's max-lines budget;
+ *   10. (JOS-450) and the best-spells readout SEARCHES the whole catalog: typing swaps its ranked
+ *      table for results, a spell no class in this loadout can learn is drawn as a row of that
+ *      readout wearing its own class-level chip, and clearing the box hands the table back. It runs
+ *      inside step 6f's sequence and lives in `bestSpellsSearchSteps.mts`.
  *
  * FRESH-MACHINE HONESTY. A machine with no EQ logs mounts no feature view at all, and a
  * character whose log carries fewer than two dings and fewer than two AA gains draws no chart —
@@ -118,6 +122,10 @@ import { stepChartShots, stepLevelCurve } from './curveSteps.mjs'
 // the header). Next door for the same line-budget reason; the pair is one question about one
 // panel, and this spec still owns the order and the launch.
 import { shootUnlockPanel, stepNewAtLevel, stepUnlockEra, stepUnlockSearch } from './unlockRowSteps.mjs'
+// THE RIGHT COLUMN'S READOUT (JOS-445) — best damage by dps, best healing by hps, at the level the
+// tab is showing. Next door for the same line-budget reason; it asserts the SEAM the unit suite
+// cannot reach (the lines crossing IPC, one stepper driving two columns, a header click re-ranking).
+import { shootBestSpells, stepBestSpells } from './bestSpellsSteps.mjs'
 
 const NAV = '[data-testid="nav-leveling"]'
 const VIEW = '[data-testid="leveling-view"]'
@@ -639,7 +647,13 @@ async function main(): Promise<void> {
   // See the header: a fresh dir is what makes "before any selection" mean the same thing on
   // every machine, and every launch gets one.
   console.log('launch: hidden Electron (EQ_E2E=1) against tests/fixtures/e2e-leveling.log…')
-  const { app, close, log } = await launchOnFixture('e2e-leveling.log')
+  // THE INVENTORY DUMP IS STAGED FOR STEP 8's WORN-FOCUS MARKER (JOS-452). The tab itself reads
+  // nothing else from it: the gear compare card lives on another surface, and with no dump the
+  // best-spells readout is byte-identical to what it was, which is what that step's `note` arm
+  // covers. It is the owner's own committed dump, so the focus effects in force are real ones.
+  const { app, close, log } = await launchOnFixture('e2e-leveling.log', {
+    inventory: 'Primitive_freeport-Inventory.txt'
+  })
 
   let page: Page | null = null
   try {
@@ -713,6 +727,11 @@ async function main(): Promise<void> {
       // the full card (JOS-293's `SpellTooltip`), which is only usable because the list stopped
       // being a 120px porthole — the two halves of JOS-289 proving each other.
       await stepSpellCard(page)
+      // AFTER the whole unlock-panel sequence (JOS-445): those steps resolve the loadout and walk
+      // the stepper to a level with rows on it, which is the state this readout is a claim about —
+      // and they leave the search box empty, so the stepper is live. It presses the stepper once
+      // and presses it back, so nothing below sees a level the steps above did not leave.
+      await stepBestSpells(page)
       await stepPageScroll(page)
       // LAST, because it moves the window: it puts the size and the minimum back before it
       // returns, but nothing after it should have to trust that.
@@ -721,6 +740,9 @@ async function main(): Promise<void> {
       // position and stalls compositing — measured, it broke three of the layout checks above
       // when it sat in place after step 6a. It asserts nothing, so it costs nothing here.
       await shootUnlockPanel(app, page)
+      // …and the new readout beside it (JOS-445), for the same reason and in the same place: a
+      // surface the owner asked for gets a picture. Both cameras run after every measurement.
+      await shootBestSpells(app, page)
     }
 
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))

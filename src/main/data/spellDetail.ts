@@ -14,14 +14,28 @@
 // every surface. Each member carries which source named it; see shared/spellDetail.ts for the
 // boundary that arrangement is honest about.
 
-import type { SpellDetail, SpellRankMember } from '../../shared/spellDetail'
+import type { SpellDetail, SpellDetailFocus, SpellRankMember } from '../../shared/spellDetail'
+import { bestWornFocus, type WornFocus } from '../../shared/wornFocus'
 import { spellMetricsAt } from '../../shared/spellMetrics'
 import { parseSpellClassLevels, parseSpellRank, spellLineKey } from '../../shared/spellLines'
 import type { SpellResistTable } from '../../shared/resistTypes'
 import type { SpellEntry } from '../../shared/types'
 import { clientHpFor } from './clientSpellHp'
+import { rainWaves } from './rainSpells'
+import { aeHits, aeMaxTargets } from '../../shared/aoeSpells'
 import { spellEffectClasses } from './spellEffectClass'
+import { normalizeSpellRank } from '../../shared/spellScale'
 import { spellNature, type SpellDb } from './spellDb'
+
+/** The outside witnesses the join consults when the caller has them. All optional, all default off. */
+export interface SpellDetailSources {
+  /** the parsed `spells_us.txt` table, or null/absent - a FALLBACK inside `spellMetricsAt`. */
+  client?: SpellResistTable | null
+  /** the mote rank this character has been observed holding for the line (JOS-446). */
+  rank?: number
+  /** the focus effects this character's GEAR puts in force (JOS-452). Absent is no gear reading. */
+  focus?: readonly WornFocus[]
+}
 
 /** The record for a name no row of the DB carries. `found: false` is an answer, not an error. */
 function notFound(queried: string): SpellDetail {
@@ -115,12 +129,17 @@ function dbRowFor(db: SpellDb, name: string): SpellEntry | undefined {
  * `observedRanks` is the caller's slice of `AlertsSnap.spellLastCast` - display names, rank intact.
  * An empty list is normal (a fresh character, or the alerts module not yet warm) and simply leaves
  * the lineage to whatever the DB states.
+ *
+ * `sources` carries the two things that are NOT the DB and not the lineage: the client's spell
+ * table (the hitpoint fallback) and the mote rank this character holds. They are one object rather
+ * than two more parameters because the repo's factoring rule caps a function at four, and because
+ * both are the same kind of thing - an outside witness the join consults if it is there.
  */
 export function buildSpellDetail(
   db: SpellDb,
   queried: string,
   observedRanks: readonly string[] = [],
-  client: SpellResistTable | null = null
+  sources: SpellDetailSources = {}
 ): SpellDetail {
   const name = queried.trim()
   if (!name) return notFound(queried)
@@ -132,7 +151,7 @@ export function buildSpellDetail(
     name: entry.name,
     found: true,
     ...statedFields(entry),
-    ...worthFields(entry, classLevels, client),
+    ...worthFields(entry, classLevels, sources),
     nature: spellNature(entry.spellType),
     illusion: entry.illusion,
     classLevels,
@@ -157,15 +176,78 @@ export function buildSpellDetail(
  * finished) simply means the card behaves exactly as it did before this ticket — and because this
  * record is rebuilt on every invoke rather than cached, the next hover after the table resolves
  * carries the figures with no invalidation to arrange.
+ *
+ * AND A RAIN IS READ AT ITS WAVE TOTAL (JOS-449), on ONE target, which is the same reading the
+ * unlock row and the best-spells DD table take. The card is what the best-spells table's own
+ * tooltip prints, so a card saying `dmg 512` under a row saying `dmg 1536` would be the panel
+ * disagreeing with itself on hover. `src/main/data/rainSpells.ts` carries the roster and the
+ * evidence; the AOE reading is the leveling panel's and is not offered here, because a card has no
+ * place to state the assumption it would rest on.
  */
 function worthFields(
   e: SpellEntry,
   classLevels: readonly { level: number }[],
-  client: SpellResistTable | null
+  sources: SpellDetailSources
 ): Partial<SpellDetail> {
   const level = classLevels.length > 0 ? Math.min(...classLevels.map((c) => c.level)) : 1
-  const metrics = spellMetricsAt(e, level, clientHpFor(client, e.name))
-  return metrics ? { metrics, metricsLevel: level } : {}
+  const client = clientHpFor(sources.client ?? null, e.name)
+  const spell = { ...e, hits: aeHits(rainWaves(e.name), 1, aeMaxTargets(client?.aeMaxTargets)) }
+  const metrics = spellMetricsAt(spell, level, client)
+  if (!metrics) return {}
+  // AND THE SAME READING AT THE RANK THE PLAYER HOLDS (JOS-447). Second call rather than a second
+  // reader, so the two lines on the card cannot disagree about anything but the rank. Skipped
+  // entirely at base, where the two would be the same numbers printed twice.
+  const rank = normalizeSpellRank(sources.rank)
+  const out: Partial<SpellDetail> = { metrics, metricsLevel: level }
+  if (rank > 0) {
+    const atRank = spellMetricsAt({ ...spell, rank }, level, client)
+    if (atRank) {
+      out.metricsAtRank = atRank
+      out.metricsRank = rank
+    }
+  }
+  // AND THE SAME READING WITH THE PLAYER'S GEAR ON (JOS-452). A THIRD call, at the rank when there
+  // is one, so the card's last line is always its most complete. Absent when nothing worn qualifies,
+  // and then the card draws no gear block - which is also every reader with no inventory dump.
+  return { ...out, ...focusFields(e, level, { spell, client, rank }, sources.focus ?? []) }
+}
+
+/** The three things the focus reading needs from `worthFields`, bundled for the parameter cap. */
+interface FocusReading {
+  spell: SpellEntry & { hits: number }
+  client: ReturnType<typeof clientHpFor>
+  rank: number
+}
+
+/**
+ * The gear fields, or nothing at all. `level` is the spell's own gain level, which is both the level
+ * the figures are read at and the level `Limit Max Level` is tested against - the same number, and
+ * the same rule `bestSpells.ts rowFocus` applies on the table beside this card.
+ */
+function focusFields(
+  e: SpellEntry,
+  level: number,
+  reading: FocusReading,
+  worn: readonly WornFocus[]
+): Partial<SpellDetail> {
+  if (worn.length === 0) return {}
+  const facts = { name: e.name, level, spellType: e.spellType, durationMs: e.durationMs ?? undefined, targetType: e.targetType }
+  const sources: SpellDetailFocus[] = []
+  const pct: { focusDamagePct?: number; focusHealPct?: number } = {}
+  for (const side of ['damage', 'heal'] as const) {
+    const hit = bestWornFocus(worn, side, facts)
+    if (!hit) continue
+    sources.push({ side, effect: hit.focus.effect, item: hit.focus.item, pct: hit.pct })
+    if (side === 'damage') pct.focusDamagePct = hit.pct
+    else pct.focusHealPct = hit.pct
+  }
+  if (sources.length === 0) return {}
+  const withFocus = spellMetricsAt(
+    { ...reading.spell, ...(reading.rank > 0 ? { rank: reading.rank } : {}), ...pct },
+    level,
+    reading.client
+  )
+  return withFocus ? { metricsWithFocus: withFocus, focusSources: sources } : {}
 }
 
 /**
@@ -178,20 +260,34 @@ function worthFields(
  * every bard song's page says, and it is a fact.
  */
 function statedFields(e: SpellEntry): Partial<SpellDetail> {
-  const out: Partial<SpellDetail> = {}
+  const out: Partial<SpellDetail> = { ...messageFields(e) }
   if (e.durationText !== undefined) out.durationText = e.durationText
   if (e.castTimeMs !== undefined) out.castTimeMs = e.castTimeMs
+  if (e.recastMs !== undefined) out.recastMs = e.recastMs
   if (e.mana !== undefined) out.mana = e.mana
   if (e.targetType !== undefined) out.targetType = e.targetType
   if (e.spellType !== undefined) out.spellType = e.spellType
   if (e.instrumentEnhanced !== undefined) out.instrumentEnhanced = e.instrumentEnhanced
   if (e.effects !== undefined) out.effects = e.effects
-  if (e.msgCastOnYou !== undefined) out.msgCastOnYou = e.msgCastOnYou
-  if (e.msgCastOnOther !== undefined) out.msgCastOnOther = e.msgCastOnOther
-  if (e.msgWearsOff !== undefined) out.msgWearsOff = e.msgWearsOff
   // The era verdict is DERIVED rather than scraped (`spellEra.ts` joins it at load), but it obeys
   // the same rule as every line above it: copied across only when it is a positive claim, so the
   // card has nothing to interpret and cannot print "in era" over a page nobody has classified.
   if (e.outOfEra === true) out.outOfEra = true
+  return out
+}
+
+/**
+ * The three sentences the GAME prints, split out of the table above under the same rule.
+ *
+ * A separate function for a mechanical reason worth stating so nobody re-inlines it: the table is
+ * one branch per field and adding the JOS-444 recast row put it at the lint config's complexity
+ * ceiling. These three belong together anyway - they are the log-recognition block on the card,
+ * not the spell-window block.
+ */
+function messageFields(e: SpellEntry): Partial<SpellDetail> {
+  const out: Partial<SpellDetail> = {}
+  if (e.msgCastOnYou !== undefined) out.msgCastOnYou = e.msgCastOnYou
+  if (e.msgCastOnOther !== undefined) out.msgCastOnOther = e.msgCastOnOther
+  if (e.msgWearsOff !== undefined) out.msgWearsOff = e.msgWearsOff
   return out
 }
