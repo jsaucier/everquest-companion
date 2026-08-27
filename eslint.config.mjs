@@ -159,6 +159,7 @@ import tseslint from 'typescript-eslint'
 import reactHooks from 'eslint-plugin-react-hooks'
 import globals from 'globals'
 import { ratchet } from './eslint.ratchet.mjs'
+import { domainMungingPlugin } from './eslint.domainMunging.mjs'
 
 /** Files this config never looks at: build output, vendored data, binaries. */
 const IGNORES = [
@@ -199,6 +200,17 @@ const IGNORES = [
   // Generated/scraped datasets and the ratchet itself.
   '**/*.json',
   'eslint.ratchet.mjs',
+  // THE WIRE CONTRACT'S TYPESCRIPT HALF (JOS-464), written by `npm run gen:protocol` from
+  // protocol/schema and pinned byte-for-byte by tests/protocolSchema.test.mts. Same standing as
+  // infra/dist above: a file nobody edits cannot carry lint debt, and the alternative — ratchet
+  // entries for json-schema-to-typescript's house style (empty interfaces for parameterless ops,
+  // index signatures for the open maps the schema deliberately declares) — would be a debt
+  // register for a file that is rewritten wholesale on every schema change. tsc still checks it:
+  // it is imported by hand-written code, so `npm run typecheck` covers it whatever this list says.
+  // The RUST twin is covered by clippy inside the engine job, with the same argument.
+  'src/shared/dataServer/protocol.generated.ts',
+  // Cargo's build directory. Gitignored too; both lists need it.
+  'engine/target/**',
 ]
 
 /** The factoring layer. Numbers argued in the header. */
@@ -299,6 +311,21 @@ export default tseslint.config(
   {
     files: ['src/renderer/**/*.{ts,tsx}'],
     ...reactHooks.configs['recommended-latest'],
+  },
+
+  // ---- 2b. THE NO-MUNGING LAW (owner ruling 4, JOS-501) -------------------
+  // The renderer never filters, sorts or aggregates domain data; views arrive render-ready. The
+  // whole argument — what counts as domain data, why the test is on the element TYPE, why `.slice`
+  // is deliberately not flagged, and why exemptions are inline-with-a-reason rather than a
+  // per-file register — lives in the header of `eslint.domainMunging.mjs`. Read it before touching
+  // any of this. Renderer only, because it is a statement about which SIDE of the boundary derives.
+  {
+    files: ['src/renderer/**/*.{ts,tsx}'],
+    plugins: { eqc: domainMungingPlugin },
+    rules: {
+      'eqc/no-domain-munging': 'error',
+      'eqc/munging-exemptions-state-a-reason': 'error',
+    },
   },
 
   // ---- carve-out: files outside both tsconfigs ---------------------------
