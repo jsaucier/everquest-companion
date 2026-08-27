@@ -81,10 +81,27 @@ function listEntries(key: string): string[] {
   return out
 }
 
-/** The one `extraResources` matcher, as the three fields that decide everything below. */
+/** The one top-level `extraResources` matcher (Windows' filename), as the three fields that
+ *  decide everything below. */
 function engineMatcher(): { from: string; to: string; filter: string } {
   const block = /extraResources:\n\s*- from: (\S+)\n\s*to: (\S+)\n\s*filter:\n\s*- (\S+)\n/.exec(builderYml)
   assert.ok(block, 'electron-builder.yml must ship the engine via an extraResources matcher')
+  return { from: block[1], to: block[2], filter: block[3] }
+}
+
+/** The `linux:` block's OWN `extraResources` matcher. Platform blocks in electron-builder
+ *  REPLACE the top-level key of the same name rather than merge with it, so the Linux build
+ *  never sees the Windows-named filter above — it needs its own entry, spelled `engined`
+ *  (no `.exe`), or packaging silently ships no engine on Linux at all. */
+function linuxEngineMatcher(): { from: string; to: string; filter: string } {
+  const start = builderYml.indexOf('\nlinux:\n')
+  assert.notEqual(start, -1, 'electron-builder.yml has no top-level linux block')
+  const end = builderYml.indexOf('\nwin:\n', start)
+  assert.notEqual(end, -1, 'expected a win: block after linux:')
+  const block = /extraResources:\n\s*- from: (\S+)\n\s*to: (\S+)\n\s*filter:\n\s*- (\S+)\n/.exec(
+    builderYml.slice(start, end)
+  )
+  assert.ok(block, 'electron-builder.yml`s linux: block must ship the engine via its own extraResources matcher')
   return { from: block[1], to: block[2], filter: block[3] }
 }
 
@@ -119,6 +136,33 @@ test('the binary comes out of cargo`s RELEASE directory, and only the binary doe
   // deps/, build/, incremental/ and a 1.6 MB .pdb. `createFilter` prunes a non-matching directory
   // before walking into it, so the copy visits one file.
   assert.equal(filter, 'engined.exe')
+})
+
+test('LINUX HAS ITS OWN MATCHER, spelled without the Windows extension', () => {
+  // The top-level matcher above is Windows' filename. electron-builder's `linux:` block
+  // REPLACES `extraResources` rather than merging with it when present — so this is not
+  // optional belt-and-braces, it is the only thing that puts anything under `resources/engine`
+  // in the AppImage at all. `engine/crates/engined/Cargo.toml` names the binary `engined`;
+  // `.exe` is a Windows-toolchain artifact, never produced by `cargo build` on Linux.
+  const { from, to, filter } = linuxEngineMatcher()
+  assert.equal(from, 'engine/target/release')
+  assert.equal(to, 'engine')
+  assert.equal(filter, 'engined')
+  // …and it must be the resolver's own constant for THIS platform, not a third spelling of it —
+  // composed the same way the Windows candidate is proven below, rather than restated.
+  const shipped = `RES/${to}/${filter}`
+  const [firstPackagedCandidate] = engineBinaryCandidates({
+    appPath: '',
+    resourcesPath: 'RES',
+    binName: 'engined'
+  })
+  assert.equal(
+    shipped,
+    firstPackagedCandidate,
+    'the linux extraResources matcher must put the engine where engineBinaryCandidates looks ' +
+      'FIRST for a `linux`-platform binName — a mismatch here is an AppImage that silently runs ' +
+      'with no engine'
+  )
 })
 
 test('the engine is NOT in `files`, and therefore needs no asarUnpack entry', () => {

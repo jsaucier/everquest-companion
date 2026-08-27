@@ -180,6 +180,19 @@ linux:
     - '!**/*.{o,obj,map,ts,tsx}'
     - '!node_modules/onnxruntime-node/bin/napi-v3/{darwin,win32}/**'
     - '!node_modules/onnxruntime-node/bin/napi-v3/linux/arm64/**'
+  # THE ENGINE SHIPS HERE TOO. The top-level `extraResources` above filters for `engined.exe`,
+  # which is the Windows binary `cargo build` produces — on Linux the same crate leaves
+  # `engine/target/release/engined` (no extension: engineProtocol.ts's ENGINE_BIN_NAME is
+  # `process.platform === 'win32' ? 'engined.exe' : 'engined'`). Platform blocks in
+  # electron-builder REPLACE the matching top-level key rather than merge with it, so without
+  # this override the AppImage build inherits the Windows-only filter, matches nothing, and
+  # ships with no engine at all — the exact silent-absence failure the top-level block's own
+  # comment (line 93) warns about, just reached from the other platform.
+  extraResources:
+    - from: engine/target/release
+      to: engine
+      filter:
+        - engined
 
 win:
   target:
