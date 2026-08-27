@@ -149,6 +149,7 @@ impl Parser {
             || casts::classify_ally_pet_leader(&self.casts, name, c, out)
             || world::classify_death(&self.world, c, out)
             || world::classify_zone(&self.world, c, out)
+            || world::classify_instance_create(&self.world, c, out)
             || session::classify_session_start(c, out)
             || session::classify_camp(c, out)
             || session::classify_output_file(c, out)

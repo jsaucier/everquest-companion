@@ -159,6 +159,40 @@ mod tests {
         assert!(ev.finish().starts_with(r#"{"kind":"sessionStart""#));
     }
 
+    /// THE INSTANCE-CREATION NOTICE (JOS-521). Synthetic sentence, real shape: the player name is
+    /// invented, because the line this was learned from is a reporter's own log.
+    #[test]
+    fn the_instance_notice_names_the_creator_the_zone_and_the_id() {
+        let p = bare();
+        let raw =
+            "[Thu Aug 27 00:24:09 2026] Player Wanderling creating instance The Plane of Sky 6038.";
+        assert_eq!(
+            parse_one(&p, raw),
+            format!(
+                r#"{{"kind":"instanceCreate","seq":0,"ts":1787815449000,"raw":{},"player":"Wanderling","zone":"The Plane of Sky","instance":6038}}"#,
+                serde_json::to_string(raw).unwrap()
+            )
+        );
+    }
+
+    /// The id is the LAST number, so a zone whose own name ends in an ordinal keeps it — and a
+    /// notice with no id at all is not this line family and claims nothing.
+    #[test]
+    fn the_instance_id_never_eats_the_end_of_the_zone_name() {
+        let p = bare();
+        let out = parse_one(
+            &p,
+            "[Thu Aug 27 00:24:09 2026] Player Wanderling creating instance Befallen 2 6038.",
+        );
+        assert!(out.contains(r#""zone":"Befallen 2""#), "{out}");
+        assert!(out.contains(r#""instance":6038"#), "{out}");
+        let out = parse_one(
+            &p,
+            "[Thu Aug 27 00:24:09 2026] Player Wanderling creating instance The Plane of Sky.",
+        );
+        assert!(out.starts_with(r#"{"kind":"unknown""#), "{out}");
+    }
+
     #[test]
     fn the_group_kind_writes_change_before_the_envelope() {
         let p = bare();

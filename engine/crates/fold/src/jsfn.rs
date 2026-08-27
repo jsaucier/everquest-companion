@@ -83,6 +83,16 @@ pub fn zone_tier(zone: &str) -> (String, i64) {
     (base, tier)
 }
 
+/// `shared/zoneScope.ts zoneIdKey` — trim + lowercase, keeping every other byte of the name.
+///
+/// It lives beside [`zone_tier`] because both are folds of one zone name and a second spelling of
+/// either would be a second answer: `zoneKey` (not ported) strips the tier and the instance
+/// selector to name the PLACE, while this one is the ROW identity — `befallen 2 (adaptive)` and
+/// `befallen` are different rows over there and are different keys here.
+pub fn zone_id_key(zone: &str) -> String {
+    js_trim(zone).to_lowercase()
+}
+
 /// `main/log/reducers.ts isCountedKill`'s one test, `/^you\b/i.test(killer)`, spelled out.
 ///
 /// Written by hand rather than as a regex for two reasons: it runs on every death line in the log,
@@ -213,6 +223,20 @@ mod tests {
         assert_eq!(
             zone_tier("The Plane of Hate - Solo 4 (Refined)").0,
             "The Plane of Hate"
+        );
+    }
+
+    /// The ROW fold keeps every byte the name has; only case and the edges move.
+    #[test]
+    fn the_zone_row_key_is_trim_and_lowercase_and_nothing_else() {
+        assert_eq!(zone_id_key("  The Plane of Sky "), "the plane of sky");
+        assert_eq!(
+            zone_id_key("Befallen 2 (Adaptive)"),
+            "befallen 2 (adaptive)"
+        );
+        assert_ne!(
+            zone_id_key("Befallen 2 (Adaptive)"),
+            zone_id_key("Befallen")
         );
     }
 

@@ -270,6 +270,17 @@ pub struct FoldMark {
     pub total: u64,
     /// The `ts` of the last event folded, if one could be read.
     pub last_ts: Option<i64>,
+    /// WHICH LOOP TOOK THIS MEASUREMENT — false for the historical scan, [`eqlog::tail::LIVE`] for
+    /// the tail (JOS-518).
+    ///
+    /// IT IS A FACT ONLY THE INGEST HAS, and the reason it has to travel is that the NUMBERS beside
+    /// it cannot be read for it. A caught-up tail reports `pct` 100 with `events` climbing, which is
+    /// byte-for-byte what a scan that has just finished reports; a client deciding from frame
+    /// content whether a catch-up is still running therefore cannot decide at all. The app's launch
+    /// banner is that client, and it is what the 1.11.0 reports of a bar stuck at 100% were made of.
+    ///
+    /// It goes on the wire as `FoldProgress.live`, present only when true — see that field.
+    pub live: bool,
 }
 
 /// ONE FILE'S LAST-MODIFIED TIME, in epoch milliseconds, or `None` when there is no answer.
@@ -1535,6 +1546,11 @@ impl World {
                 // stuck one.
                 offset: i64::try_from(mark.checkpoint).unwrap_or(i64::MAX),
                 log_size: i64::try_from(mark.total).unwrap_or(i64::MAX),
+                // PRESENT ONLY WHEN TRUE (JOS-518), which is the `song`/`rare` idiom this wire
+                // already uses: a scan frame says nothing rather than saying false, so every frame
+                // a historical fold has ever emitted is byte-identical to what it emitted before
+                // this field existed.
+                live: if mark.live { Some(true) } else { None },
             }),
         });
         broadcast(&mut state, &frame);
@@ -1883,7 +1899,51 @@ mod tests {
             pct,
             total: 8192,
             last_ts: Some(1_787_181_707_000),
+            // These tests drive the world with the ingest replaced, and every mark they make stands
+            // in for a SCAN — the loop a landing fold ends in. The tail's own stamp is proven where
+            // there is a real tail: `tests/ingest.rs`.
+            live: false,
         }
+    }
+
+    #[test]
+    fn a_scan_frame_carries_no_live_flag_and_a_tail_frame_carries_it() {
+        // THE FLAG IS THE WHOLE OF JOS-518's ITEM 3 on this side: `report_progress` is the one place
+        // a `FoldMark` becomes a wire frame, so it is the one place the two loops can be told apart
+        // by anybody downstream. Both arms are read off the SAME call to make the asymmetry
+        // structural rather than a claim about two different code paths.
+        let world = world();
+        let membership = world.join();
+        let turn = generation(&world);
+
+        assert!(world.report_progress(turn, mark(10, 12.5)));
+        assert!(world.report_progress(
+            turn,
+            FoldMark {
+                live: true,
+                ..mark(11, 100.0)
+            }
+        ));
+
+        let mut flags = Vec::new();
+        for _ in 0..2 {
+            let EngineMessage::EpochMessage(epoch) = membership.inbox.recv().expect("a frame")
+            else {
+                panic!("a progress announcement is an epoch message");
+            };
+            flags.push(
+                epoch
+                    .progress
+                    .expect("a progress frame carries progress")
+                    .live,
+            );
+        }
+        assert_eq!(
+            flags,
+            vec![None, Some(true)],
+            "absent for the scan, `true` for the tail - never `false`, which would put a field \
+             with no reader on every frame of every historical fold"
+        );
     }
 
     #[test]

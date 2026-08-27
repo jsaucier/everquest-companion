@@ -106,6 +106,10 @@ fn append(path: &Path, line: &str) {
 struct Progress {
     pct: f64,
     events: i64,
+    /// WHICH LOOP EMITTED IT (JOS-518). Carried through this reduction rather than asserted at the
+    /// point of receipt because the interesting claim is about the whole sequence: EVERY frame of a
+    /// historical scan is unflagged, and the flag is not a property of the last one.
+    live: Option<bool>,
 }
 
 #[test]
@@ -157,6 +161,7 @@ fn an_attach_folds_the_log_and_the_wire_says_so() {
                     frames.push(Progress {
                         pct: carried.pct,
                         events: carried.events,
+                        live: carried.live,
                     });
                 }
                 EpochReason::Restart => panic!("nothing restarts here"),
@@ -206,6 +211,14 @@ fn an_attach_folds_the_log_and_the_wire_says_so() {
             "progress only goes forward: {pair:?}"
         );
     }
+    // …AND NOT ONE OF THEM CLAIMS TO BE LIVE (JOS-518). Every frame up to and including the landing
+    // one came out of the SCAN loop, so the flag is absent on all of them — which is what makes its
+    // presence, later, mean something. `Some(false)` would fail here too, deliberately: the field is
+    // present only when true.
+    assert!(
+        frames.iter().all(|frame| frame.live.is_none()),
+        "a historical scan flags nothing: {frames:?}"
+    );
     let last = *frames.last().expect("a frame");
     assert_eq!(
         last.events, expected,
@@ -281,6 +294,18 @@ fn a_line_appended_after_the_fold_lands_arrives_live() {
                         (progress.pct - 100.0).abs() < f64::EPSILON,
                         "a caught-up tail is at its ceiling: {}",
                         progress.pct
+                    );
+                    // THE FRAME SAYS WHICH LOOP MADE IT (JOS-518), and this is the assertion the
+                    // whole field exists for. Everything else about this frame — `pct` at 100, a
+                    // count one above the scan's — is what the LAST frame of a historical fold looks
+                    // like as well. Without the flag a client cannot tell "the catch-up finished"
+                    // from "the catch-up is still going and has reached the end of what it can see",
+                    // which is how a launch banner ends up reading 100% with the number rising for
+                    // the rest of a raid.
+                    assert_eq!(
+                        progress.live,
+                        Some(true),
+                        "a tail frame is flagged, and by the tail rather than by its numbers"
                     );
                     break;
                 }

@@ -85,6 +85,7 @@ pub enum Kind {
     Heal,
     HealUnstated,
     IllusionFade,
+    InstanceCreate,
     InvocationChange,
     ItemActivate,
     ItemMerge,
@@ -161,6 +162,7 @@ impl Kind {
             Kind::Heal => "heal",
             Kind::HealUnstated => "healUnstated",
             Kind::IllusionFade => "illusionFade",
+            Kind::InstanceCreate => "instanceCreate",
             Kind::InvocationChange => "invocationChange",
             Kind::ItemActivate => "itemActivate",
             Kind::ItemMerge => "itemMerge",
@@ -235,6 +237,7 @@ impl Kind {
             "heal" => Kind::Heal,
             "healUnstated" => Kind::HealUnstated,
             "illusionFade" => Kind::IllusionFade,
+            "instanceCreate" => Kind::InstanceCreate,
             "invocationChange" => Kind::InvocationChange,
             "itemActivate" => Kind::ItemActivate,
             "itemMerge" => Kind::ItemMerge,
@@ -277,7 +280,7 @@ impl Kind {
 
     /// Every kind this build knows, for the round-trip test. `Other` is deliberately absent: it is
     /// the answer to an unknown string, not a kind anything writes.
-    pub const ALL: [Kind; 62] = [
+    pub const ALL: [Kind; 63] = [
         Kind::AaActivate,
         Kind::AaGain,
         Kind::AaPotion,
@@ -305,6 +308,7 @@ impl Kind {
         Kind::Heal,
         Kind::HealUnstated,
         Kind::IllusionFade,
+        Kind::InstanceCreate,
         Kind::InvocationChange,
         Kind::ItemActivate,
         Kind::ItemMerge,
@@ -389,6 +393,7 @@ pub enum Key {
     Healer,
     Illusion,
     Incoming,
+    Instance,
     Invocation,
     Item,
     Killer,
@@ -406,6 +411,7 @@ pub enum Key {
     Party,
     Pct,
     Pet,
+    Player,
     Poison,
     Price,
     Race,
@@ -478,6 +484,7 @@ impl Key {
             Key::Healer => "healer",
             Key::Illusion => "illusion",
             Key::Incoming => "incoming",
+            Key::Instance => "instance",
             Key::Invocation => "invocation",
             Key::Item => "item",
             Key::Killer => "killer",
@@ -495,6 +502,7 @@ impl Key {
             Key::Party => "party",
             Key::Pct => "pct",
             Key::Pet => "pet",
+            Key::Player => "player",
             Key::Poison => "poison",
             Key::Price => "price",
             Key::Race => "race",
@@ -571,6 +579,7 @@ impl Key {
             "healer" => Key::Healer,
             "illusion" => Key::Illusion,
             "incoming" => Key::Incoming,
+            "instance" => Key::Instance,
             "invocation" => Key::Invocation,
             "item" => Key::Item,
             "killer" => Key::Killer,
@@ -588,6 +597,7 @@ impl Key {
             "party" => Key::Party,
             "pct" => Key::Pct,
             "pet" => Key::Pet,
+            "player" => Key::Player,
             "poison" => Key::Poison,
             "price" => Key::Price,
             "race" => Key::Race,
@@ -623,7 +633,7 @@ impl Key {
     }
 
     /// Every key, for the round-trip test.
-    pub const ALL: [Key; 81] = [
+    pub const ALL: [Key; 83] = [
         Key::Ability,
         Key::Action,
         Key::Amount,
@@ -658,6 +668,7 @@ impl Key {
         Key::Healer,
         Key::Illusion,
         Key::Incoming,
+        Key::Instance,
         Key::Invocation,
         Key::Item,
         Key::Killer,
@@ -675,6 +686,7 @@ impl Key {
         Key::Party,
         Key::Pct,
         Key::Pet,
+        Key::Player,
         Key::Poison,
         Key::Price,
         Key::Race,

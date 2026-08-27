@@ -1210,6 +1210,115 @@ mod tests {
         assert_eq!(mobs["a froglok"]["bestTier"], jsfn::TIER_UNKNOWN);
     }
 
+    /// JOS-521 — a base-difficulty raid instance prints a BARE zone line, so the creating-instance
+    /// notice is what says the kill happened inside an instance. Shapes are the real ones; the
+    /// player name is invented.
+    #[test]
+    fn a_bare_zone_with_a_creating_instance_notice_behind_it_is_d0() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"instanceCreate","seq":0,"ts":0,"raw":"i","player":"Wanderling","zone":"The Plane of Sky","instance":6038}"#,
+            r#"{"kind":"zone","seq":1,"ts":30000,"raw":"z","zone":"The Plane of Sky"}"#,
+            r#"{"kind":"expGain","seq":2,"ts":60000,"raw":"e","party":true}"#,
+            r#"{"kind":"death","seq":3,"ts":60000,"raw":"d","name":"Protector of Sky","bySelf":true}"#,
+        ]);
+        let mobs = state_of(&snaps, "kills")["mobs"].clone();
+        assert_eq!(mobs["protector of sky"]["bestTier"], 0);
+        assert_eq!(mobs["protector of sky"]["tiers"]["0"]["credited"], 1);
+    }
+
+    /// MEMORY, NOT PROXIMITY. The reported evening re-entered the same instance 46 minutes later
+    /// with no fresh notice — the instance already existed — and that clear counts too.
+    #[test]
+    fn a_bare_re_entry_with_no_fresh_notice_is_still_the_instance() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"instanceCreate","seq":0,"ts":0,"raw":"i","player":"Wanderling","zone":"The Plane of Sky","instance":6038}"#,
+            r#"{"kind":"zone","seq":1,"ts":30000,"raw":"z","zone":"The Plane of Sky"}"#,
+            r#"{"kind":"death","seq":2,"ts":60000,"raw":"d","name":"Gorgalosk","bySelf":true}"#,
+            // 46 minutes later, and the only thing between them is the world.
+            r#"{"kind":"zone","seq":3,"ts":2790000,"raw":"z","zone":"Innothule Swamp"}"#,
+            r#"{"kind":"zone","seq":4,"ts":2820000,"raw":"z","zone":"The Plane of Sky"}"#,
+            r#"{"kind":"death","seq":5,"ts":2830000,"raw":"d","name":"Gorgalosk","bySelf":true}"#,
+        ]);
+        let mobs = state_of(&snaps, "kills")["mobs"].clone();
+        assert_eq!(mobs["gorgalosk"]["tiers"]["0"]["count"], 2);
+        assert_eq!(mobs["gorgalosk"]["count"], 2);
+    }
+
+    /// …and the open world is still the open world. A bare zone nobody created an instance of
+    /// takes nothing off the week, which is the whole reason `TIER_OPEN_WORLD` exists.
+    #[test]
+    fn a_bare_zone_with_no_notice_is_still_the_open_world() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"instanceCreate","seq":0,"ts":0,"raw":"i","player":"Wanderling","zone":"The Plane of Sky","instance":6038}"#,
+            r#"{"kind":"zone","seq":1,"ts":30000,"raw":"z","zone":"Innothule Swamp"}"#,
+            r#"{"kind":"death","seq":2,"ts":60000,"raw":"d","name":"a froglok","bySelf":true}"#,
+        ]);
+        let mobs = state_of(&snaps, "kills")["mobs"].clone();
+        assert_eq!(mobs["a froglok"]["bestTier"], jsfn::TIER_OPEN_WORLD);
+    }
+
+    /// A notice older than the lockout period it belongs to is not evidence about tonight.
+    #[test]
+    fn a_notice_older_than_a_week_no_longer_converts_a_bare_zone() {
+        let week = 7 * 24 * 60 * 60 * 1000;
+        let snaps = fold_lines(&[
+            r#"{"kind":"instanceCreate","seq":0,"ts":0,"raw":"i","player":"Wanderling","zone":"The Plane of Sky","instance":6038}"#,
+            r#"{"kind":"zone","seq":1,"ts":10,"raw":"z","zone":"The Plane of Sky"}"#,
+            &format!(
+                r#"{{"kind":"death","seq":2,"ts":{},"raw":"d","name":"Bazzt Zzzt","bySelf":true}}"#,
+                week
+            ),
+            &format!(
+                r#"{{"kind":"death","seq":3,"ts":{},"raw":"d","name":"Sister of the Spire","bySelf":true}}"#,
+                week + 1
+            ),
+        ]);
+        let mobs = state_of(&snaps, "kills")["mobs"].clone();
+        // The last instant the notice answers for, and the first it does not.
+        assert_eq!(mobs["bazzt zzzt"]["bestTier"], 0);
+        assert_eq!(
+            mobs["sister of the spire"]["bestTier"],
+            jsfn::TIER_OPEN_WORLD
+        );
+    }
+
+    /// The epoch clears the instance memory exactly as it clears the KillMap: the notices named a
+    /// player, and the one they named is gone.
+    #[test]
+    fn the_epoch_forgets_the_instances_the_dead_character_stood_in() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"instanceCreate","seq":0,"ts":0,"raw":"i","player":"Wanderling","zone":"The Plane of Sky","instance":6038}"#,
+            r#"{"kind":"zone","seq":1,"ts":10,"raw":"z","zone":"The Plane of Sky"}"#,
+            r#"{"kind":"epoch","seq":2,"ts":20,"raw":"x"}"#,
+            r#"{"kind":"death","seq":3,"ts":30,"raw":"d","name":"Eye of Veeshan","bySelf":true}"#,
+        ]);
+        let mobs = state_of(&snaps, "kills")["mobs"].clone();
+        assert_eq!(mobs["eye of veeshan"]["bestTier"], jsfn::TIER_OPEN_WORLD);
+    }
+
+    /// THE OVERRIDE MOVES ONE ANSWER. A stated difficulty keeps its own, and a kill with no zone
+    /// line behind it stays unknown — a notice says an instance exists, never where you stand.
+    #[test]
+    fn the_notice_moves_the_open_world_answer_and_no_other() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"instanceCreate","seq":0,"ts":0,"raw":"i","player":"Wanderling","zone":"Najena 4 (Refined)","instance":6038}"#,
+            r#"{"kind":"zone","seq":1,"ts":10,"raw":"z","zone":"Najena 4 (Refined)"}"#,
+            r#"{"kind":"death","seq":2,"ts":20,"raw":"d","name":"a stone spider","bySelf":true}"#,
+        ]);
+        assert_eq!(
+            state_of(&snaps, "kills")["mobs"]["a stone spider"]["bestTier"],
+            4
+        );
+        let snaps = fold_lines(&[
+            r#"{"kind":"instanceCreate","seq":0,"ts":0,"raw":"i","player":"Wanderling","zone":"The Plane of Sky","instance":6038}"#,
+            r#"{"kind":"death","seq":1,"ts":20,"raw":"d","name":"Noble Dojorn","bySelf":true}"#,
+        ]);
+        assert_eq!(
+            state_of(&snaps, "kills")["mobs"]["noble dojorn"]["bestTier"],
+            jsfn::TIER_UNKNOWN
+        );
+    }
+
     /// A load opens a window; the burst settles ten quiet seconds later and the definition is
     /// stamped with the SETTLE time, not the load line's.
     #[test]

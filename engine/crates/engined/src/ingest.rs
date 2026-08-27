@@ -1240,6 +1240,11 @@ fn run(
                 // here — the file has no fixed size once EverQuest is appending to it.
                 total: live_total,
                 last_ts: sink.report().last_ts,
+                // THE TAIL SAYS SO (JOS-518), with the same constant it stamps on every event it
+                // folds three statements above. The frame is otherwise indistinguishable from the
+                // last frame of a scan — `pct` at its ceiling, the count moving — and a client that
+                // had to guess drew a catch-up bar for the rest of the session.
+                live: LIVE,
             };
             announced = seq;
             if !world.report_progress(generation, advanced) {
@@ -1594,6 +1599,11 @@ fn mark(core: &TailCore, size: u64, events: i64, sink: &dyn EventSink) -> FoldMa
         // `u64` and buys the loading bar its human units, which `pct` alone cannot reconstruct.
         total,
         last_ts: sink.report().last_ts,
+        // THE SCAN'S OWN STAMP (JOS-518). This helper is the scan's and only the scan's — the tail
+        // builds its `FoldMark` inline because its denominator is its own read offset rather than a
+        // file size taken at open — so the constant is honest here rather than a parameter every
+        // caller would have to be trusted to pass correctly.
+        live: false,
     }
 }
 

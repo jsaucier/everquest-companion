@@ -1,5 +1,5 @@
-//! `src/main/log/parseWorld.ts` — consider, deaths, zones, the loot family, item merges, turn-ins,
-//! levels, experience and the AA economy.
+//! `src/main/log/parseWorld.ts` — consider, deaths, zones, the instance-creation notice, the loot
+//! family, item merges, turn-ins, levels, experience and the AA economy.
 
 use crate::event::{Ev, Key, Kind};
 use crate::jsstr::js_trim;
@@ -22,6 +22,7 @@ pub struct WorldRes {
     destroy: Regex,
     zone: Regex,
     pseudo_zone: Regex,
+    instance_create: Regex,
     slain_self: Regex,
     slain_by: Regex,
     player_death: Regex,
@@ -83,6 +84,8 @@ impl WorldRes {
             destroy: Regex::new(r"^You successfully destroyed ([0-9]+) (.+?)\.$").unwrap(),
             zone: Regex::new(r"^You have entered (.+?)\.$").unwrap(),
             pseudo_zone: Regex::new(r"(?i)^an area where ").unwrap(),
+            instance_create: Regex::new(r"^Player (.+?) creating instance (.+?) ([0-9]+)\.$")
+                .unwrap(),
             slain_self: Regex::new(r"^You have slain (.+?)!$").unwrap(),
             slain_by: Regex::new(r"^(.+?) has been slain by (.+?)!$").unwrap(),
             player_death: Regex::new(r"^You have been slain by (.+?)!$").unwrap(),
@@ -213,6 +216,45 @@ pub fn classify_zone(r: &WorldRes, c: &Ctx, out: &mut Ev) -> bool {
     out.begin(Kind::Zone);
     out.envelope(c.seq, c.ts, c.raw);
     out.s(Key::Zone, js_trim(&m[1]));
+    true
+}
+
+/// THE INSTANCE-CREATION NOTICE (JOS-521) — `Player <Name> creating instance <Zone> <Id>.`
+///
+/// WHY IT IS PARSED AT ALL, since it says nothing about where you are standing. The zone line is
+/// the only sentence that states a difficulty, and it states an INSTANCE only two ways: an
+/// adjective parenthetical (d1-d4) or a `- Solo`/`- Group` suffix (d0). A base-difficulty RAID or
+/// personal instance prints NEITHER — `You have entered The Plane of Sky.`, byte-identical to the
+/// open-world entry — so a full instanced Sky clear read as open world and took nothing off the
+/// week. This notice is the sentence that separates them: the game only ever prints it when an
+/// instance of that zone is being created, so it is EVIDENCE THAT ONE EXISTS. What it is NOT is a
+/// statement about your position, and the fold that reads it (`fold::modules::kills`) is careful
+/// about that distinction.
+///
+/// The creator and the instance id are captured because they are real evidence and dropping them
+/// would make the event a worse record than the line it came from. Nothing downstream reads them
+/// today; the zone name is the whole of what the kills fold asks for.
+///
+/// The id is the LAST number, which is what anchoring `([0-9]+)\.$` buys: a zone whose own name
+/// ends in an ordinal (`Befallen 2 6038.`) backtracks into the zone capture rather than splitting
+/// the name.
+///
+/// ITS POSITION IN THE CASCADE is beside the zone line, and it is free rather than load-bearing:
+/// the line fell through every entry to `{kind:'unknown'}` before this existed, and a pattern
+/// requiring the literal `Player ` prefix, the literal ` creating instance `, and a trailing
+/// numeric id can shadow nothing that follows it.
+pub fn classify_instance_create(r: &WorldRes, c: &Ctx, out: &mut Ev) -> bool {
+    if !c.text.starts_with("Player ") {
+        return false;
+    }
+    let Some(m) = r.instance_create.captures(c.text) else {
+        return false;
+    };
+    out.begin(Kind::InstanceCreate);
+    out.envelope(c.seq, c.ts, c.raw);
+    out.s(Key::Player, js_trim(&m[1]));
+    out.s(Key::Zone, js_trim(&m[2]));
+    out.i(Key::Instance, m[3].parse().unwrap_or(0));
     true
 }
 

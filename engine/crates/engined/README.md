@@ -1733,6 +1733,20 @@ $ cd engine
 $ cargo test -p engined
 ```
 
+**`cargo test` LEAVES A DEBUG BINARY BEHIND, AND THE APP NO LONGER PICKS IT UP** (JOS-520). It used
+to: the Electron resolver probed `engine/target/debug/` before `engine/target/release/`, so the
+first `cargo test` in a checkout silently switched that machine's dev app to the unoptimized engine
+on its next restart — spell DB 4050 ms instead of 469 ms, parse ~10× slower. The dev app now
+resolves `target/release` and probes `target/debug` **only** when a launch opts in:
+
+```console
+$ EQC_ENGINE_PROFILE=debug npm run dev     # this launch, and no other, runs the debug engine
+```
+
+The opt-in is read per launch and never written down, so the next ordinary `npm run dev` is back on
+release; and whenever a non-release binary wins, the dev log carries one unmissable warning naming
+the profile and the opt-in that selected it. Full argument: `src/main/dataServer/README.md`.
+
 The integration suites spawn the built binary (`CARGO_BIN_EXE_engined`) and drive the whole contract
 through a real socket: the announce line, every op, a wrong token, a skewed `protocolVersion`, an
 unknown op, a malformed frame, four concurrent connections, a request delivered **one byte at a
