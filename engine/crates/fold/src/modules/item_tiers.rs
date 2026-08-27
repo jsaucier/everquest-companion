@@ -1,17 +1,17 @@
-//! `src/main/modules/itemTiers.ts` — the per-item OBSERVED item level for the items the CURRENT
-//! character has actually upgraded (Task #60).
+//! `src/main/modules/itemTiers.ts` — the per-item observed item level for items the current
+//! character has actually upgraded.
 //!
-//! WHAT COUNTS AS EVIDENCE (law 1: messages over inference; unknown is never zero) — only MERGE
-//! evidence, three shapes: an `itemMerge`; a loot with disposition `'combined'` (its `created` name
-//! is the result); and an `itemMergeFailed` of reason `'mismatch'`, whose line quotes YOUR item's
-//! name verbatim, tier suffix and all. Ordinary loot of a ` +N` drop is deliberately NOT evidence —
-//! an unmerged drop is routinely auto-sold or destroyed on pickup.
+//! Only MERGE evidence counts (law 1: messages over inference), in three shapes: an `itemMerge`; a
+//! loot with disposition `'combined'` (its `created` name is the result); and an `itemMergeFailed`
+//! of reason `'mismatch'`, whose line quotes your item's name verbatim with its tier suffix.
+//! Ordinary loot of a ` +N` drop is not evidence — an unmerged drop is routinely auto-sold or
+//! destroyed on pickup.
 //!
-//! A DESTROY RETIRES NOTHING HERE (JOS-401): `tier` is the HIGHEST tier ever OBSERVED for a base
-//! name, a fact about a merge that happened, never a claim about what is in your bags today.
+//! `tier` is the highest tier ever observed for a base name: a fact about a merge that happened,
+//! never a claim about what is in your bags. A destroy retires nothing.
 //!
-//! ABSENT MEANS UNKNOWN, NEVER TIER 0. A `'held'` first sighting with no tier creates no row at
-//! all, and a row with no tier omits both `tier` and `lastTier` rather than writing zero.
+//! Absent means unknown, never tier 0 — a `'held'` first sighting with no tier creates no row, and
+//! a row with no tier omits both `tier` and `lastTier` rather than writing zero.
 
 use crate::event::Event;
 use crate::jsfn::{item_base_name, item_tier_from_name, item_tier_key};
@@ -45,9 +45,7 @@ enum How {
 pub struct ItemTiersModule {
     rows: JsMap<ItemTierRow>,
     seq: i64,
-    /// THE ANNOUNCE CURSOR (JOS-509) — see [`crate::announce`]. Bumped inside `observe`, PAST its
-    /// refusals: a merge line for something with no tier in its name, and a `held` first sighting
-    /// that would create an empty row, both reach the map and leave it alone.
+    /// The announce cursor — see [`crate::announce`]. Bumped inside `observe`, past its refusals.
     announce: crate::announce::Announce,
 }
 
@@ -66,8 +64,7 @@ impl ItemTiersModule {
         let key = item_tier_key(raw);
         let tier = item_tier_from_name(raw);
         let Some(prev) = self.rows.get(&key).cloned() else {
-            // A 'held' first sighting with no tier tells us nothing at all — skip it rather than
-            // create an empty row (absent = unknown).
+            // A 'held' first sighting with no tier says nothing — no empty row (absent = unknown).
             if how == How::Held && tier.is_none() {
                 return;
             }
@@ -99,8 +96,8 @@ impl ItemTiersModule {
             ..prev
         };
         if let Some(t) = tier {
-            // THE HIGHEST EVER OBSERVED, not the latest: the owner levels several copies of the
-            // same item in parallel, so "latest" would report +3 for a bag holding a +4.
+            // Highest ever observed, not latest: players level several copies of one item in
+            // parallel, so "latest" would report +3 for a bag holding a +4.
             next.tier = Some(match prev_tier {
                 None => t,
                 Some(p) => p.max(t),
@@ -108,8 +105,7 @@ impl ItemTiersModule {
             next.last_tier = Some(t);
         }
         self.rows.insert(key, next);
-        // The row is rewritten whatever else was true of it — `last_at` is this observation's
-        // instant — so reaching here is always a published change.
+        // `last_at` is this observation's instant, so reaching here is always a published change.
         self.announce.changed(self.seq);
     }
 }
@@ -128,14 +124,14 @@ impl EqModule for ItemTiersModule {
     fn on_event(&mut self, ev: &Event, _live: bool) {
         self.seq = ev.seq();
         match ev.kind() {
-            // Character rebirth (Task #49): every merge before the boundary was performed by a
-            // dead same-name character, and their upgrades are not in this character's bags.
+            // Character rebirth: merges before the boundary belong to a dead same-name character,
+            // and their upgrades are not in this character's bags.
             "epoch" => {
                 self.rows.clear();
                 self.announce.changed(self.seq);
             }
-            // Tier-less results are SPELL-SCROLL merges (Roman rank), observedSpellRanks' half of
-            // the same sentence. Still a merge we observed — recorded as one, with no tier.
+            // A tier-less result is a spell-scroll merge (Roman rank), which observedSpellRanks
+            // owns. Still a merge we observed, so it is recorded as one with no tier.
             "itemMerge" => {
                 let item = ev.str("item").unwrap_or_default().to_string();
                 self.observe(&item, ev.ts(), How::Merge);
@@ -152,8 +148,7 @@ impl EqModule for ItemTiersModule {
                     }
                 }
             }
-            // `ev.disposition === 'combined' && ev.created` — the auto-merge-on-pickup line, whose
-            // `created` name is the result, same as an `itemMerge`.
+            // The auto-merge-on-pickup line, whose `created` name is the result of the merge.
             "loot" if ev.str("disposition") == Some("combined") => {
                 if let Some(created) = ev.str("created").map(str::to_string) {
                     if !created.is_empty() {
@@ -165,8 +160,7 @@ impl EqModule for ItemTiersModule {
         }
     }
 
-    /// THE DIRTY BIT (JOS-487, made honest by JOS-509) — an observation that reached the map. See
-    /// the `announce` field and `crate::announce`.
+    /// Moves on an observation that reached the map. See the `announce` field.
     fn published_seq(&self) -> Option<i64> {
         Some(self.announce.cursor())
     }

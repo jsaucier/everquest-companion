@@ -1,28 +1,25 @@
-//! `src/main/modules/spellSets.ts` — what is in your gems, and which named set holds it (JOS-391).
+//! `src/main/modules/spellSets.ts` — what is in your gems, and which named set holds it.
 //!
-//! A SAVE IS AN INSTANT, A LOAD IS A BURST. `Spell set primary saved.` is a photograph: the set's
-//! definition becomes the memorized state at that instant. `Spell set dam loaded.` is a starting
-//! pistol — measured in the owner's log, the load line is followed in the SAME SECOND by ten
-//! `You forget` lines and the memorizes trickle in over ten seconds — so a load opens a PENDING
-//! window and the definition is taken when the burst SETTLES.
+//! A save is an instant, a load is a burst. `Spell set primary saved.` is a photograph: the set's
+//! definition becomes the memorized state right then. `Spell set dam loaded.` is a starting pistol —
+//! measured in the real log, the load line is followed in the same second by a run of `You forget`
+//! lines and the memorizes trickle in over ten seconds — so a load opens a PENDING window and the
+//! definition is taken when the burst SETTLES.
 //!
-//! SETTLE = 10 s with no memorize/forget/begin line, OR the next spell-set line, whichever comes
-//! first. Both halves are needed; that file's header carries the log span that proves it.
+//! Settle = 10 s with no memorize/forget/begin line, OR the next spell-set line, whichever comes
+//! first. Both halves are needed.
 //!
-//! THE CLOCK IS THE LOG'S, and EVERY event advances it — a chat line at `load + 11s` is proof that
-//! eleven seconds passed with no gem activity. `on_tick` does the same from the wall clock for a
-//! live log that falls silent — driven since JOS-481 by `Fold::tick` engine-side as well as by the
-//! app's own heartbeat — and it is never called on a historical fold, which is what keeps the
-//! goldens a function of the bytes. Reading a wall clock anywhere else in this crate is forbidden
-//! outright (ruling 18).
+//! The clock is the log's, and every event advances it: a chat line at `load + 11 s` proves eleven
+//! seconds passed with no gem activity. `on_tick` does the same from the wall clock for a live log
+//! that falls silent, and is never called on a historical fold. Reading a wall clock anywhere else
+//! in this crate is forbidden.
 //!
-//! THE MEMORIZED MAP'S ORDER IS PUBLISHED. `memorized` and every set's `spells` are
-//! `[...map.values()]`, so the map's INSERTION order is the serialized array's — see `jsmap.rs`.
+//! The memorized map's order is published — `memorized` and every set's `spells` are
+//! `[...map.values()]`, so insertion order is the serialized array's.
 //!
-//! ONE QUIRK PORTED VERBATIM: the epoch branch calls the module's own `reset()`, which zeroes
-//! `seq` AFTER the `seq = ev.seq` at the top of `onEvent`. So this module — alone in the cluster —
-//! reports seq 0 between the epoch event and the next event it folds. It is faithful, not a bug to
-//! tidy: a golden recorded from a log whose LAST event trips the boundary would pin exactly that.
+//! One quirk ported verbatim: the epoch branch calls the module's own `reset()`, which zeroes `seq`
+//! AFTER the `seq = ev.seq` at the top of `on_event`. So this module reports seq 0 between the
+//! epoch event and the next event it folds. That is faithful, not a bug to tidy.
 
 use crate::event::Event;
 use crate::jsfn::memo_key;
@@ -60,15 +57,9 @@ pub struct SpellSetsModule {
     sets: JsMap<SpellSetDef>,
     pending: Option<PendingLoad>,
     seq: i64,
-    /// THE ANNOUNCE CURSOR (JOS-509) — see [`crate::announce`].
-    ///
-    /// TWO OF THIS MODULE'S THREE MUTATIONS ARE NOT EVENTS, which is why it is the first one here
-    /// that needs the cursor's out-of-band half. `pending` is not published — a load line changes
-    /// nothing a reader can see — but the SETTLE it opens is a real change to `sets`, and a settle
-    /// arrives either from the log's clock (any event, ten seconds later) or from the WALL clock
-    /// (`on_tick`, on a live log that has fallen silent). The wall-clock one has no event behind it
-    /// at all, and `Announce::changed` landing strictly above the fold position is exactly what
-    /// lets it announce: see `crate::announce`'s property 3.
+    /// The announce cursor — see [`crate::announce`]. It needs the cursor's out-of-band half:
+    /// `pending` is not published, but the SETTLE it opens is a real change to `sets`, and a settle
+    /// can arrive from the wall clock (`on_tick`) with no event behind it at all.
     announce: crate::announce::Announce,
 }
 
@@ -81,8 +72,8 @@ impl SpellSetsModule {
     fn on_memorize(&mut self, ts: i64, spell: &str, done: bool) {
         self.note_activity(ts);
         if !done {
-            // A BEGIN LINE PUBLISHES NOTHING. It only proves the player is still working, which
-            // keeps an open load window open — and the window is not state.
+            // A begin line publishes nothing: it only keeps an open load window open, and the
+            // window is not published state.
             return;
         }
         self.memorized
@@ -113,9 +104,9 @@ impl SpellSetsModule {
                 self.sets.remove(set);
                 self.announce.changed(self.seq);
             }
-            // `loaded`: the bar is about to be rewritten. Nothing changes until the burst settles —
-            // until then the set is still its PREVIOUS definition, which is the only reading that
-            // never states something false.
+            // `loaded`: the bar is about to be rewritten, and nothing changes until the burst
+            // settles. Until then the set keeps its previous definition, which is the only reading
+            // that never states something false.
             _ => {
                 self.pending = Some(PendingLoad {
                     set: set.to_string(),
@@ -136,8 +127,7 @@ impl SpellSetsModule {
                 source,
             },
         );
-        // Both callers (a `saved` line, and a settle closing a `loaded` one) rewrite the set's
-        // definition, so reaching here is always a published change.
+        // Both callers rewrite the set's definition, so reaching here is a published change.
         self.announce.changed(self.seq);
     }
 
@@ -152,10 +142,8 @@ impl SpellSetsModule {
         }
     }
 
-    /// Close an open load window NOW, recording the bar as it stands.
-    ///
-    /// `observedAt` is the SETTLE time rather than the load line's: the definition describes the
-    /// bar at the moment it was read.
+    /// Close an open load window now, recording the bar as it stands. `observedAt` is the SETTLE
+    /// time rather than the load line's: the definition describes the bar at the moment it was read.
     fn settle_now(&mut self, ts: i64) {
         let Some(open) = self.pending.take() else {
             return;
@@ -192,15 +180,10 @@ impl EqModule for SpellSetsModule {
             // A rebirth behind the same name is a different character's bar. See the header on
             // what this does to `seq`.
             self.reset();
-            // AFTER the reset, and off `ev.seq()` rather than `self.seq` — WHICH THE RESET JUST
-            // ZEROED. This module is the only one that calls its own `reset()` from an arm, and
-            // bumping off the zeroed field would put the cursor at 1, BELOW the log-line seq a
-            // client is still holding in `knownSeq` from the dead character's snapshot: the bar
-            // would be emptied here and left on screen there. Off the event's own position the
-            // cursor lands above anything that could have been hydrated before it. It also lands
-            // above the zero `seq` the snapshot now publishes, which is the one case the cursor
-            // deliberately outruns it — see `crate::announce`'s property 3 for why that costs at
-            // most one re-fetch and can never cost an update.
+            // After the reset, and off `ev.seq()` rather than `self.seq`, which the reset just
+            // zeroed: bumping off the zeroed field would put the cursor BELOW the log-line seq a
+            // client still holds in `knownSeq`, so the bar would be emptied here and left on
+            // screen there. The event's own position lands above anything already hydrated.
             self.announce.changed(ev.seq());
             return;
         }
@@ -226,17 +209,15 @@ impl EqModule for SpellSetsModule {
 
     /// The wall-clock half of the settle rule. Never called on a historical fold.
     ///
-    /// A SETTLE HERE HAS NO EVENT BEHIND IT and still moves the cursor — `settle_now` bumps, and
-    /// `Announce::changed` lands strictly above the fold position rather than at it, so a set that
-    /// settles on a log that has gone quiet is announced instead of waiting for the next line.
-    /// `buffTimers` is the precedent (its `on_tick` expires holds and moves its revision); a
-    /// heartbeat that changed published state silently is the JOS-87 defect wearing a clock.
+    /// A settle here has no event behind it and still moves the cursor: `Announce::changed` lands
+    /// strictly above the fold position, so a set that settles on a quiet log is announced instead
+    /// of waiting for the next line. A heartbeat that changed published state silently would be
+    /// exactly the defect the announce cursor exists to prevent.
     fn on_tick(&mut self, now_ms: i64, _rows: &[crate::modules::buff_timer_rows::BuffTimerRow]) {
         self.settle_if_idle(now_ms);
     }
 
-    /// THE DIRTY BIT (JOS-487, made honest by JOS-509) — a gem loaded or forgotten, a set defined,
-    /// deleted or settled. See the `announce` field and `crate::announce`.
+    /// Moves on a gem loaded or forgotten, or a set defined, deleted or settled. See `announce`.
     fn published_seq(&self) -> Option<i64> {
         Some(self.announce.cursor())
     }

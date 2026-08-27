@@ -1,5 +1,5 @@
-//! `src/main/log/parseWorld.ts` — consider, deaths, zones, the instance-creation notice, the loot
-//! family, item merges, turn-ins, levels, experience and the AA economy.
+//! Consider, deaths, zones, the instance-creation notice, the loot family, item merges, turn-ins,
+//! levels, experience and the AA economy.
 
 use crate::event::{Ev, Key, Kind};
 use crate::jsstr::js_trim;
@@ -41,7 +41,6 @@ pub struct WorldRes {
     item_tier: Regex,
 }
 
-/// See `AcquireRes`'s note: `Default` is `new`.
 impl Default for WorldRes {
     fn default() -> Self {
         Self::new()
@@ -119,7 +118,7 @@ impl WorldRes {
     }
 }
 
-/// `loot()` — the shared capture layout: optional stack count, item, source, disposition.
+/// The shared loot capture layout: optional stack count, item, source, disposition.
 fn loot(
     c: &Ctx,
     out: &mut Ev,
@@ -190,7 +189,7 @@ pub fn classify_death(r: &WorldRes, c: &Ctx, out: &mut Ev) -> bool {
             return true;
         }
     }
-    // The killerless MOB death. `bySelf:false` with NO killer is the honest shape.
+    // The killerless mob death: `bySelf:false` with no killer is the honest shape.
     if text.ends_with(" died.") {
         if let Some(m) = r.mob_died.captures(text) {
             out.begin(Kind::Death);
@@ -219,30 +218,19 @@ pub fn classify_zone(r: &WorldRes, c: &Ctx, out: &mut Ev) -> bool {
     true
 }
 
-/// THE INSTANCE-CREATION NOTICE (JOS-521) — `Player <Name> creating instance <Zone> <Id>.`
+/// `Player <Name> creating instance <Zone> <Id>.`
 ///
-/// WHY IT IS PARSED AT ALL, since it says nothing about where you are standing. The zone line is
-/// the only sentence that states a difficulty, and it states an INSTANCE only two ways: an
-/// adjective parenthetical (d1-d4) or a `- Solo`/`- Group` suffix (d0). A base-difficulty RAID or
-/// personal instance prints NEITHER — `You have entered The Plane of Sky.`, byte-identical to the
-/// open-world entry — so a full instanced Sky clear read as open world and took nothing off the
-/// week. This notice is the sentence that separates them: the game only ever prints it when an
-/// instance of that zone is being created, so it is EVIDENCE THAT ONE EXISTS. What it is NOT is a
-/// statement about your position, and the fold that reads it (`fold::modules::kills`) is careful
-/// about that distinction.
+/// The zone line is the only sentence that states a difficulty, and it marks an instance only two
+/// ways: an adjective parenthetical (d1-d4) or a `- Solo`/`- Group` suffix (d0). A base-difficulty
+/// raid or personal instance prints neither — the zone line is byte-identical to the open-world
+/// entry — so this notice is the only evidence that an instance of that zone exists. It is not a
+/// statement about your position, and the kills fold that reads it is careful about that.
 ///
-/// The creator and the instance id are captured because they are real evidence and dropping them
-/// would make the event a worse record than the line it came from. Nothing downstream reads them
-/// today; the zone name is the whole of what the kills fold asks for.
+/// The creator and the instance id are captured as evidence even though nothing reads them today;
+/// the zone name is all the kills fold asks for.
 ///
-/// The id is the LAST number, which is what anchoring `([0-9]+)\.$` buys: a zone whose own name
-/// ends in an ordinal (`Befallen 2 6038.`) backtracks into the zone capture rather than splitting
-/// the name.
-///
-/// ITS POSITION IN THE CASCADE is beside the zone line, and it is free rather than load-bearing:
-/// the line fell through every entry to `{kind:'unknown'}` before this existed, and a pattern
-/// requiring the literal `Player ` prefix, the literal ` creating instance `, and a trailing
-/// numeric id can shadow nothing that follows it.
+/// The id is the last number, which is what anchoring the trailing digits buys: a zone whose name
+/// ends in an ordinal backtracks into the zone capture rather than splitting the name.
 pub fn classify_instance_create(r: &WorldRes, c: &Ctx, out: &mut Ev) -> bool {
     if !c.text.starts_with("Player ") {
         return false;
@@ -339,7 +327,7 @@ pub fn classify_loot(r: &WorldRes, c: &Ctx, out: &mut Ev) -> bool {
             Some("combined"),
             m.get(1).map(|g| g.as_str()),
         );
-        // `{ ...loot(…), created }` — the spread first, then the one added key.
+        // The shared loot fields first, then the one added key.
         out.s(Key::Created, js_trim(&m[4]));
         return true;
     }
@@ -353,8 +341,7 @@ pub fn classify_item_merge(r: &WorldRes, c: &Ctx, out: &mut Ev) -> bool {
     }
     if let Some(m) = r.item_merge.captures(text) {
         let item = js_trim(&m[1]).to_string();
-        // `itemTierFromName` — a ` +N` result is an item level; a Roman-rank result is a merged
-        // SPELL SCROLL and carries no tier.
+        // A ` +N` tail is an item level; a Roman-rank tail is a merged spell scroll and has no tier.
         let tier = r
             .item_tier
             .captures(js_trim(&item))
@@ -425,7 +412,7 @@ pub fn classify_level(r: &WorldRes, c: &Ctx, out: &mut Ev) -> bool {
     true
 }
 
-/// Experience gains. `pct` is OMITTED — never 0 — when the line stated no percentage.
+/// Experience gains. `pct` is omitted, never 0, when the line stated no percentage.
 pub fn classify_exp(r: &WorldRes, c: &Ctx, out: &mut Ev) -> bool {
     if !c.text.starts_with("You gain ") {
         return false;

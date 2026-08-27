@@ -125,6 +125,22 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '1.14.0',
+    date: '2026-08-27',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'Your meters no longer vanish mid-session to an engine restart. A routine health check could mistake the engine\'s own status broadcasts for a fault and restart it - most often during the catch-up read, which then started over. The check now knows those messages are normal.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Kills in a base-difficulty raid or personal instance now count toward the weekly ladder. The game prints the same zone line for a base instance as for the open world, so those clears were filed as open-world kills - the app now reads the creating-instance notice and files them right, including your past clears.',
+        fromReport: true
+      }
+    ]
+  },
+  {
     version: '1.13.0',
     date: '2026-08-27',
     entries: [
