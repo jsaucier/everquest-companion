@@ -110,10 +110,16 @@ impl HoldGroup {
         // Clean only if it opened an EMPTY group and is alone in its round so far. The second half
         // is provisional: a later sibling in the same round retroactively dirties it.
         let clean = !contaminated && self.round_start_count == 0 && self.round_used == 0;
-        if self.round_used < self.round_start_count {
+        // `round_start_count` is a snapshot taken when the round opened, but `close_oldest` and
+        // `drop_expired` can shrink `holds` MID-ROUND (a wear-off/death/hygiene-expiry line sharing
+        // this round's second) without knowing a round is in progress. Clamping to the CURRENT
+        // length here is what keeps a round that lost holds out from under it degrading to "refresh
+        // whatever is left" instead of indexing a count that no longer exists.
+        let effective_start_count = self.round_start_count.min(self.holds.len());
+        if self.round_used < effective_start_count {
             // Refresh, newest first: the row never grows a ghost, the landing stops being
             // measurable, and the OLDEST clock — the one the next wear-off closes — stays put.
-            let at = self.round_start_count - 1 - self.round_used;
+            let at = effective_start_count - 1 - self.round_used;
             self.holds[at].started_ts = ts;
             self.holds[at].clean = false;
         } else {
@@ -245,6 +251,39 @@ mod tests {
             s.close_oldest(60_000).expect("a close").sample_ms,
             Some(40_000)
         );
+    }
+
+    /// A round's refresh math is snapshotted at round-open (`round_start_count`), but
+    /// `close_oldest`/`drop_expired` can shrink `holds` MID-ROUND from a wear-off or hygiene-expiry
+    /// line sharing the round's second, without knowing a round is in flight. Three landings open
+    /// the round; before its second refresh arrives, two same-second closes remove the front two
+    /// holds — reproducing the field panic (`len is 1 but the index is 1`) that this test pins.
+    #[test]
+    fn a_round_that_loses_holds_mid_round_refreshes_what_is_left_instead_of_panicking() {
+        let mut g = HoldGroup::new(false);
+        // Three prior holds, built by one same-second round so they append rather than refresh.
+        g.land(1000, false);
+        g.land(1000, false);
+        g.land(1000, false);
+        assert_eq!(g.count(), 3);
+
+        // A new round opens (ts 9000) with round_start_count snapshotted at 3. First refresh
+        // consumes index 2 (the newest of the three), leaving round_used at 1.
+        g.land(9000, false);
+
+        // Two same-second closes (deaths/wear-offs) shave the front of the vector down to 1 hold —
+        // exactly what `close_oldest`/`drop_expired` do, and exactly what the round's stale
+        // `round_start_count` of 3 does not know about.
+        g.close_oldest(9000);
+        g.close_oldest(9000);
+        assert_eq!(g.count(), 1);
+
+        // The round's second landing must not index the vector the round opened with. With only
+        // one hold left, the clamped `effective_start_count` (1) is no longer greater than
+        // `round_used` (1), so this falls through to the APPEND branch instead of a refresh —
+        // the round correctly stops pretending it still has two pre-round holds to refresh.
+        g.land(9000, false);
+        assert_eq!(g.count(), 2);
     }
 
     /// A close with nothing to close contaminates the group.
