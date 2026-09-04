@@ -62,6 +62,17 @@
 //
 // A bullet NEVER restates its neighbour, never names a file, a module or a wave, and never
 // explains how the app works internally (state, never process — the UI conventions).
+//
+// A BULLET IS SHORT (owner, 2026-09-03: "that's an incredibly long paragraph"). The shape is
+// three sentences at most and it is enforced by `tests/releaseNotes.test.mts`:
+//
+//   1. WHAT THE PLAYER SEES NOW — the fix or the feature, stated as the outcome. This sentence is
+//      the whole bullet for a small change.
+//   2. (optional) WHY IT WAS WRONG, in one sentence of cause and effect in the player's terms.
+//   3. (optional) WHAT CHANGED, in one clause. Never the layers of the fix, never the diagnostics
+//      that went in beside it — a second thing the player can see is a second bullet.
+//
+// If the sentence needs a comma-spliced tour of the mechanism, it is a ticket comment, not a note.
 
 /** Which sub-header an entry sits under. Absent ⇒ the entry is a bullet under no sub-header. */
 export type ReleaseEntryKind = 'new' | 'fixed' | 'changed'
@@ -124,6 +135,21 @@ export interface ReleaseNote {
  * still sees exactly the releases above it.
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
+  {
+    version: '1.16.0',
+    date: '2026-09-03',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'Fights no longer end after one second, and buff and debuff timers no longer run on the wrong clock. On some machines, most often under Wine, the engine could not learn your time zone and quietly assumed UTC, so it read every log line as hours old. The app now tells it the zone.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The performance panel shows which clock the engine is on and how far it sits from your machine\'s. Seconds are normal; whole hours mean a wrong time zone, and the panel says so.'
+      }
+    ]
+  },
   {
     version: '1.15.0',
     date: '2026-09-02',
