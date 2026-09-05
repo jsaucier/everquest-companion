@@ -252,12 +252,12 @@ mod tests {
         let p = bare();
         let out = parse_one(
             &p,
-            "[Wed Aug 19 16:21:54 2026] You gain experience (with bonus)! (3.288%)",
+            "[Wed Aug 19 16:21:54 2026] You gain experience (with a bonus)! (3.288%)",
         );
         assert!(out.ends_with(r#""party":false,"pct":3.288}"#), "{out}");
         let out = parse_one(
             &p,
-            "[Wed Aug 19 16:21:54 2026] You gain party experience (with bonus)! (2.878%)",
+            "[Wed Aug 19 16:21:54 2026] You gain party experience (with a bonus)! (2.878%)",
         );
         assert!(out.ends_with(r#""party":true,"pct":2.878}"#), "{out}");
     }
