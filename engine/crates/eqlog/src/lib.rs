@@ -246,6 +246,22 @@ mod tests {
         assert!(out.ends_with(r#""party":false}"#), "{out}");
     }
 
+    /// A bonus-XP session inserts `(with bonus)` before the `!` on both the solo and party lines.
+    #[test]
+    fn a_bonus_exp_line_parses_the_same_as_its_unbonused_twin() {
+        let p = bare();
+        let out = parse_one(
+            &p,
+            "[Wed Aug 19 16:21:54 2026] You gain experience (with bonus)! (3.288%)",
+        );
+        assert!(out.ends_with(r#""party":false,"pct":3.288}"#), "{out}");
+        let out = parse_one(
+            &p,
+            "[Wed Aug 19 16:21:54 2026] You gain party experience (with bonus)! (2.878%)",
+        );
+        assert!(out.ends_with(r#""party":true,"pct":2.878}"#), "{out}");
+    }
+
     #[test]
     fn the_spell_db_puts_a_candidate_list_on_a_landing() {
         let p = parser_for("Primitive", chrono_tz::America::Los_Angeles);
